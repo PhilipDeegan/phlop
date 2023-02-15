@@ -8,7 +8,7 @@ jobs:
   build:
     name: build python packages
     runs-on: ubuntu-latest
-    container: jeandet/manylinuxcpp2017
+
     steps:
     - uses: actions/checkout@v3
       with:
@@ -22,8 +22,6 @@ jobs:
     - run: |
         python3 -m pip install build twine pip --upgrade
         python3 -m build
-
-    - run: for wheel in $(ls dist); do auditwheel repair dist/$wheel; done
 
     - env:
         TWINE_USERNAME: __token__
