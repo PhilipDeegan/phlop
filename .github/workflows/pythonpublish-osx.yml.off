@@ -1,0 +1,36 @@
+name: Python packages OSX
+
+on:
+  release:
+    types: [published]
+
+env:
+  TICK_DEBUG: 0
+  TICK_WERROR: 0
+
+jobs:
+  build:
+    runs-on: macos-latest
+    strategy:
+      max-parallel: 4
+      matrix:
+        python-version: ['3.7', '3.8', '3.9', '3.10']
+    name: Python ${{ matrix.python-version }}
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: true
+
+    - uses: actions/setup-python@v1
+      with:
+        python-version: ${{ matrix.python-version }}
+        architecture: x64
+
+    - run: |
+        python3 -m pip install build wheel twine pip --upgrade
+        python -m build
+
+    - env:
+        TWINE_USERNAME: __token__
+        TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+      run: python3 -m twine upload dist/*

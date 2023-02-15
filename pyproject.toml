@@ -1,0 +1,26 @@
+[project]
+name = "phlop"
+version = "0.0.1"
+
+dependencies = [
+
+]
+
+description = "stuf and things"
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/PhilipDeegan/phlop/"
+"Bug Tracker" = "https://github.com/PhilipDeegan/phlop/issues"
+
+[build-system]
+requires = [
+    "setuptools>=42", "wheel", "packaging",
+]
+

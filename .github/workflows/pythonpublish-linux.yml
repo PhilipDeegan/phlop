@@ -1,0 +1,31 @@
+name: Python packages linux
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    name: build python packages
+    runs-on: ubuntu-latest
+    container: jeandet/manylinuxcpp2017
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: true
+
+    - uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        architecture: x64
+
+    - run: |
+        python3 -m pip install build twine pip --upgrade
+        python3 -m build
+
+    - run: for wheel in $(ls dist); do auditwheel repair dist/$wheel; done
+
+    - env:
+        TWINE_USERNAME: __token__
+        TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+      run: twine upload dist/*
