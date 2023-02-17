@@ -5,7 +5,7 @@ from multiprocessing import Process, Queue, cpu_count
 from phlop.proc import ProcessNonZeroExitCode, run
 
 
-def test_cmd(clazz, test_id):
+def test_cmd(clazz, test_id, cores):
     return f"python3 -m {clazz.__module__} {clazz.__name__}.{test_id}"
 
 
@@ -15,13 +15,13 @@ class TestBatch:
         self.cores = cores
 
 
-def load_test_cases_in(classes, cores=1, **kwargs):
-    test_cmd_fn = kwargs.get("test_cmd_fn", test_cmd)
+def load_test_cases_in(classes, cores=1, test_cmd_fn=None):
+    test_cmd_fn = test_cmd_fn if test_cmd_fn else test_cmd
 
     tests, loader = [], unittest.TestLoader()
     for test_class in classes:
         for suite in loader.loadTestsFromTestCase(test_class):
-            tests += [test_cmd(type(suite), suite._testMethodName)]
+            tests += [test_cmd_fn(type(suite), suite._testMethodName, cores)]
 
     return TestBatch(tests, cores)
 
