@@ -5,6 +5,10 @@ from multiprocessing import Process, Queue, cpu_count
 from phlop.proc import ProcessNonZeroExitCode, run
 
 
+class TestCaseFailure(Exception):
+    ...
+
+
 def test_cmd(clazz, test_id, cores):
     return f"python3 -m {clazz.__module__} {clazz.__name__}.{test_id}"
 
@@ -62,7 +66,7 @@ def print_tests(batches):
             print(test)
 
 
-def process(batches, n_cores=None, print_only=False):
+def process(batches, n_cores=None, print_only=False, fail_fast=False):
     if print_only:
         print_tests(batches)
         return
@@ -107,16 +111,22 @@ def process(batches, n_cores=None, print_only=False):
         return b
 
     def waiter(queue):
+        fail = 0
         while True:
             proc = queue.get()
             time.sleep(0.01)  # don't throttle!
             if isinstance(proc, CallableTest):
                 status = "finished" if proc.run.exitcode == 0 else "FAILED"
+                fail += proc.run.exitcode
+                if fail_fast and fail > 0:
+                    raise TestCaseFailure("Some tests have failed")
                 print(proc.cmd, f"{status} in {proc.run.run_time:.2f} seconds")
                 cc.cores_avail += batches[proc.batch_index].cores
                 cc.fin[proc.batch_index] += 1
                 launch_tests()
                 if finished():
+                    if fail > 0:
+                        raise TestCaseFailure("Some tests have failed")
                     break
 
     launch_tests()
