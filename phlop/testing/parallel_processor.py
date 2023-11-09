@@ -67,12 +67,12 @@ def print_tests(batches):
 
 
 def process(batches, n_cores=None, print_only=False, fail_fast=False):
+    if not isinstance(batches, list):
+        batches = [batches]
+
     if print_only:
         print_tests(batches)
         return
-
-    if not isinstance(batches, list):
-        batches = [batches]
 
     n_cores = n_cores if n_cores else cpu_count()
 
