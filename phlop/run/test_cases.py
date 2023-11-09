@@ -12,7 +12,9 @@ def parse_cli_args():
     parser.add_argument("-d", "--dir", help="", required=True)
     parser.add_argument("-r", "--retries", type=int, default=0, help="")
     parser.add_argument("-c", "--cores", type=int, default=1, help="")
-    parser.add_argument("-p", "--print_only", type=strtobool, default=False, help="")
+    parser.add_argument(
+        "-p", "--print_only", action="store_true", default=False, help=""
+    )
 
     return parser.parse_args()
 
