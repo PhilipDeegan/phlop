@@ -1,5 +1,6 @@
 import contextlib
 import os
+from pathlib import Path
 
 
 def scan_dir(path, files_only=False, dirs_only=False, drop=[]):
@@ -20,9 +21,19 @@ def scan_dir(path, files_only=False, dirs_only=False, drop=[]):
 def pushd(new_cwd):
     import os
 
+    if not os.path.exists(new_cwd):
+        raise RuntimeError("phlop.os.pushd: new_cwd does not exist")
+
     cwd = os.getcwd()
     os.chdir(new_cwd)
     try:
         yield
     finally:
         os.chdir(cwd)
+
+
+def write_to_file(file, contents, mode="w"):
+    if contents:
+        Path(file).parent.mkdir(parents=True, exist_ok=True)
+        with open(file, mode) as f:
+            f.write(contents)
