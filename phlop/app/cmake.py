@@ -1,3 +1,10 @@
+#
+#
+#
+#
+#
+
+
 import json
 from dataclasses import dataclass, field
 
@@ -49,7 +56,6 @@ class CTest_test:
                     self.env.update({bits[0]: "=".join(bits[1:])})
             elif p["name"] == "WORKING_DIRECTORY":
                 self.working_dir = p["value"]
-        # print("self.working_dir", self.working_dir)
 
     # [
     #   {

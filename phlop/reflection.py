@@ -1,9 +1,16 @@
+#
+#
+#
+#
+#
+
 import importlib
 import inspect
 import logging
 import os
-import sys
 from pathlib import Path
+
+from phlop.sys import extend_sys_path
 
 
 def classes_in_file(file, subclasses_only=None, fail_on_import_error=True):
@@ -13,23 +20,21 @@ def classes_in_file(file, subclasses_only=None, fail_on_import_error=True):
         subclasses_only = [subclasses_only]
 
     classes = []
-    old_path = sys.path
-    try:
-        sys.path += [os.getcwd()]
-        for name, cls in inspect.getmembers(
-            importlib.import_module(module), inspect.isclass
-        ):
-            should_add = subclasses_only == None or any(
-                [issubclass(cls, sub) for sub in subclasses_only]
-            )
-            if should_add:
-                classes += [cls]
-    except ModuleNotFoundError as e:
-        if fail_on_import_error:
-            raise e
-        logging.error(f"Skipping on error: {e} in module {module}")
-    finally:
-        sys.path = old_path
+
+    with extend_sys_path(os.getcwd()):
+        try:
+            for name, cls in inspect.getmembers(
+                importlib.import_module(module), inspect.isclass
+            ):
+                should_add = subclasses_only == None or any(
+                    [issubclass(cls, sub) for sub in subclasses_only]
+                )
+                if should_add:
+                    classes += [cls]
+        except (ValueError, ModuleNotFoundError) as e:
+            if fail_on_import_error:
+                raise e
+            logging.error(f"Skipping on error: {e} in module {module}")
 
     return classes
 

@@ -1,3 +1,10 @@
+#
+#
+#
+#
+#
+
+
 import os
 import unittest
 from dataclasses import dataclass, field
@@ -72,15 +79,18 @@ def python3_default_test_cmd(clazz, test_id):
     return f"python3 -m {clazz.__module__} {clazz.__name__}.{test_id}"
 
 
-def load_test_cases_in(classes, test_cmd_fn=None, **kwargs):
+def load_test_cases_in(
+    classes, test_cmd_pre="", test_cmd_post="", test_cmd_fn=None, **kwargs
+):
     test_cmd_fn = test_cmd_fn if test_cmd_fn else python3_default_test_cmd
     log_file_path = kwargs.pop("log_file_path", None)
     tests, loader = [], unittest.TestLoader()
     for test_class in classes:
         for suite in loader.loadTestsFromTestCase(test_class):
+            cmd = test_cmd_fn(type(suite), suite._testMethodName)
             tests += [
                 TestCase(
-                    cmd=test_cmd_fn(type(suite), suite._testMethodName),
+                    cmd=f"{test_cmd_pre} {cmd} {test_cmd_post}".strip(),
                     log_file_path=None
                     if not log_file_path
                     else f"{log_file_path}/{suite._testMethodName}",
@@ -94,9 +104,10 @@ def load_test_cases_from_cmake(ctest_test):
     ppath = f"{ctest_test.working_dir}:{ctest_test.env.get('PYTHONPATH','')}"
     ctest_test.env["PYTHONPATH"] = ppath
     with pushd(ctest_test.working_dir):
+        print("ctest_test", ctest_test.cmd)
         pyfile = ctest_test.cmd.split(" ")[-1]
         return load_test_cases_in(
-            classes_in_file(pyfile, unittest.TestCase),
+            classes_in_file(pyfile, unittest.TestCase, fail_on_import_error=False),
             env=ctest_test.env,
             working_dir=ctest_test.working_dir,
             log_file_path=_LOG_DIR
@@ -106,13 +117,13 @@ def load_test_cases_from_cmake(ctest_test):
 
 
 # probably return a list of TestBatch if we do some core count detection per test
-def load_cmake_tests(cmake_dir, cores=1, test_cmd_pre=""):
+def load_cmake_tests(cmake_dir, cores=1, test_cmd_pre="", test_cmd_post=""):
     cmake_tests = get_cmake_tests(cmake_dir)
     tests = []
     for cmake_test in cmake_tests:
         tests += [
             TestCase(
-                cmd=" ".join(cmake_test.command),
+                cmd=test_cmd_pre + " ".join(cmake_test.command) + " " + test_cmd_post,
                 env=cmake_test.env,
                 working_dir=cmake_test.working_dir,
             )

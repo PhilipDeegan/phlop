@@ -1,3 +1,10 @@
+#
+#
+#
+#
+#
+
+
 import time
 from multiprocessing import Process, Queue, cpu_count
 
@@ -34,7 +41,7 @@ class CallableTest:
 class CoreCount:
     def __init__(self, cores_avail):
         self.cores_avail = cores_avail
-        self.proces = []
+        self.procs = []
         self.fin = []
 
 
@@ -78,10 +85,7 @@ def process(batches, n_cores=None, print_only=False, fail_fast=False):
                     cc.procs[batch_index] += [
                         Process(
                             target=runner,
-                            args=(
-                                test,
-                                (pqueue),
-                            ),
+                            args=(test, (pqueue)),
                         )
                     ]
                     cc.procs[batch_index][-1].daemon = True
