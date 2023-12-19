@@ -1,3 +1,10 @@
+#
+#
+#
+#
+#
+
+
 import atexit
 import subprocess
 
@@ -26,11 +33,7 @@ def branch_exists(branch):
     return True
 
 
-def checkout(branch, create=False, recreate=False):
-    if recreate:
-        delete_branch(branch)
-        create = True
-
+def checkout(branch, create=False):
     if create and not branch_exists(branch):
         run(f"git checkout -b {branch}", check=True)
     else:

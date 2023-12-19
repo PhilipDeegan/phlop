@@ -1,48 +1,37 @@
+#
+#
+#
+#
+#
+
+
 import time
-import unittest
 from multiprocessing import Process, Queue, cpu_count
 
 from phlop.proc import ProcessNonZeroExitCode, run
+from phlop.testing.test_cases import *
 
 
 class TestCaseFailure(Exception):
     ...
 
 
-def test_cmd(clazz, test_id, cores):
-    return f"python3 -m {clazz.__module__} {clazz.__name__}.{test_id}"
-
-
-class TestBatch:
-    def __init__(self, tests, cores=1):
-        self.tests = tests
-        self.cores = cores
-
-
-def load_test_cases_in(classes, cores=1, test_cmd_fn=None):
-    test_cmd_fn = test_cmd_fn if test_cmd_fn else test_cmd
-
-    tests, loader = [], unittest.TestLoader()
-    for test_class in classes:
-        for suite in loader.loadTestsFromTestCase(test_class):
-            tests += [test_cmd_fn(type(suite), suite._testMethodName, cores)]
-
-    return TestBatch(tests, cores)
-
-
 class CallableTest:
-    def __init__(self, batch_index, cmd):
+    def __init__(self, batch_index, test_case):
         self.batch_index = batch_index
-        self.cmd = cmd
+        self.test_case = test_case
         self.run = None
 
     def __call__(self, **kwargs):
         self.run = run(
-            self.cmd.split(),
+            self.test_case.cmd.split(),
             shell=False,
             capture_output=True,
             check=True,
             print_cmd=False,
+            env=self.test_case.env,
+            working_dir=self.test_case.working_dir,
+            log_file_path=self.test_case.log_file_path,
         )
         if self.run.exitcode != 0:
             print(self.run.stderr)
@@ -52,7 +41,7 @@ class CallableTest:
 class CoreCount:
     def __init__(self, cores_avail):
         self.cores_avail = cores_avail
-        self.proces = []
+        self.procs = []
         self.fin = []
 
 
@@ -63,13 +52,14 @@ def runner(runnable, queue):
 def print_tests(batches):
     for batch in batches:
         for test in batch.tests:
-            print(test)
+            print(test.cmd)
 
 
 def process(batches, n_cores=None, print_only=False, fail_fast=False):
     if not isinstance(batches, list):
         batches = [batches]
-
+    if sum([len(t.tests) for t in batches]) == 0:
+        return  # nothing to do
     if print_only:
         print_tests(batches)
         return
@@ -95,10 +85,7 @@ def process(batches, n_cores=None, print_only=False, fail_fast=False):
                     cc.procs[batch_index] += [
                         Process(
                             target=runner,
-                            args=(
-                                test,
-                                (pqueue),
-                            ),
+                            args=(test, (pqueue)),
                         )
                     ]
                     cc.procs[batch_index][-1].daemon = True
@@ -120,7 +107,9 @@ def process(batches, n_cores=None, print_only=False, fail_fast=False):
                 fail += proc.run.exitcode
                 if fail_fast and fail > 0:
                     raise TestCaseFailure("Some tests have failed")
-                print(proc.cmd, f"{status} in {proc.run.run_time:.2f} seconds")
+                print(
+                    proc.test_case.cmd, f"{status} in {proc.run.run_time:.2f} seconds"
+                )
                 cc.cores_avail += batches[proc.batch_index].cores
                 cc.fin[proc.batch_index] += 1
                 launch_tests()

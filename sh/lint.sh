@@ -7,8 +7,13 @@ set -e
 
 PY_FILES=$(find . -name "*.py")
 
+python3 -m black phlop tests
+pylint --errors-only phlop tests
+isort phlop tests
+
 for FILE in ${PY_FILES[@]}; do
-  python3 -m black "$FILE"
+
   autoflake -i "$FILE"
-  isort "$FILE"
+
+
 done

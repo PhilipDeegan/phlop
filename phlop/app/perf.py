@@ -1,3 +1,10 @@
+#
+#
+#
+#
+#
+
+
 import csv
 import os
 
@@ -6,10 +13,10 @@ from phlop.proc import run, run_mp
 
 def version():
     # validated on perf version: 5.19
-    proc = run("perf -v", shell=True, capture_output=True)
+    proc = run("perf -v", shell=True, capture_output=True).out()
     if " " not in proc or "." not in proc:
         raise ValueError("Unparsable result from 'perf -v'")
-    return [int(digit) for digit in proc.split(" ").split(".")]
+    return [int(digit) for digit in proc.split(" ")[-1].split(".")]
 
 
 def check(force_kernel_space=False):

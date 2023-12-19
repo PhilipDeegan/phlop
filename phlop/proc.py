@@ -1,44 +1,14 @@
+#
+#
+#
+#
+#
+
 import subprocess
-import time
 
+from phlop.os import pushd, write_to_file
+from phlop.procs.runtimer import RunTimer
 from phlop.string import decode_bytes
-
-
-class RunTimer:
-    def __init__(
-        self,
-        cmd,
-        shell=True,
-        capture_output=True,
-        check=False,
-        print_cmd=True,
-        **kwargs,
-    ):
-        self.cmd = cmd
-        start = time.time()
-
-        self.run_time = time.time() - start
-        self.stdout = ""
-
-        try:
-            self.run = subprocess.run(
-                self.cmd,
-                shell=shell,
-                capture_output=capture_output,
-                check=check,
-                **kwargs,
-            )
-            self.run_time = time.time() - start
-            self.stdout = self.run.stdout
-            self.stderr = self.run.stderr
-            self.exitcode = self.run.returncode
-        except (
-            subprocess.CalledProcessError
-        ) as e:  # only triggers on failure if check=True
-            self.exitcode = e.returncode
-            self.stdout = decode_bytes(e.stdout)
-            self.stderr = decode_bytes(e.stderr)
-            self.run_time = time.time() - start
 
 
 class ProcessNonZeroExitCode(RuntimeError):
@@ -52,6 +22,13 @@ def run(cmd, shell=True, capture_output=True, check=False, print_cmd=True, **kwa
 
     return RunTimer(
         cmd, shell=shell, capture_output=capture_output, check=check, **kwargs
+    )
+
+
+def run_raw(args: list, shell=False, quiet=False):
+    pipe = subprocess.DEVNULL if quiet else None
+    return subprocess.Popen(
+        args, shell=shell, stdin=pipe, stdout=pipe, stderr=pipe, close_fds=True
     )
 
 
@@ -87,4 +64,4 @@ def binary_exists_on_path(bin):
     https://linux.die.net/man/1/which
     """
     raise ValueError("do better")
-    return run(f"which {bin}").returncode == 0
+    return run(f"which {bin}").exitcode == 0

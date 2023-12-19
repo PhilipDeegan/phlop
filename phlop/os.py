@@ -1,5 +1,13 @@
+#
+#
+#
+#
+#
+
+
 import contextlib
 import os
+from pathlib import Path
 
 
 def scan_dir(path, files_only=False, dirs_only=False, drop=[]):
@@ -18,7 +26,8 @@ def scan_dir(path, files_only=False, dirs_only=False, drop=[]):
 
 @contextlib.contextmanager
 def pushd(new_cwd):
-    import os
+    if not os.path.exists(new_cwd):
+        raise RuntimeError("phlop.os.pushd: new_cwd does not exist")
 
     cwd = os.getcwd()
     os.chdir(new_cwd)
@@ -26,3 +35,13 @@ def pushd(new_cwd):
         yield
     finally:
         os.chdir(cwd)
+
+
+def write_to_file(file, contents, mode="w", skip_if_empty=True):
+    if contents or not skip_if_empty:
+        try:
+            Path(file).parent.mkdir(parents=True, exist_ok=True)
+            with open(file, mode) as f:
+                f.write(contents)
+        except IOError as e:
+            raise RuntimeError(f"Failed to write to file {file}: {e}")
