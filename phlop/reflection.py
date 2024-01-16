@@ -14,7 +14,9 @@ from phlop.sys import extend_sys_path
 
 
 def classes_in_file(file, subclasses_only=None, fail_on_import_error=True):
+    assert file
     module = str(file).replace(os.path.sep, ".")[:-3]
+    assert module
 
     if subclasses_only is not None and not isinstance(subclasses_only, list):
         subclasses_only = [subclasses_only]

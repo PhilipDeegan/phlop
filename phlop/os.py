@@ -7,6 +7,7 @@
 
 import contextlib
 import os
+import platform
 from pathlib import Path
 
 
@@ -45,3 +46,7 @@ def write_to_file(file, contents, mode="w", skip_if_empty=True):
                 f.write(contents)
         except IOError as e:
             raise RuntimeError(f"Failed to write to file {file}: {e}")
+
+
+def env_sep():
+    return ";" if any(platform.win32_ver()) else ":"

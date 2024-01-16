@@ -5,6 +5,7 @@
 #
 
 
+import os
 import sys
 from contextlib import contextmanager
 
@@ -19,3 +20,14 @@ def extend_sys_path(paths):
         yield
     finally:
         sys.path = old_path
+
+
+@contextmanager
+def extend_env(**environ):
+    old_env = dict(os.environ)
+    os.environ.update(environ)
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(old_env)
