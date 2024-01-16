@@ -11,9 +11,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from phlop.app.cmake import list_tests as get_cmake_tests
-from phlop.os import pushd
+from phlop.os import env_sep
 from phlop.proc import run
 from phlop.reflection import classes_in_file
+from phlop.sys import extend_sys_path
 
 _LOG_DIR = Path(os.environ.get("PHLOP_LOG_DIR", os.getcwd()))
 
@@ -24,6 +25,9 @@ class TestCase:
     env: dict = field(default_factory=lambda: {})  # dict[str, str] # eventually
     working_dir: str = field(default_factory=lambda: None)
     log_file_path: str = field(default_factory=lambda: None)
+
+    def __post_init__(self):
+        self.cmd = self.cmd.strip()
 
 
 class TestBatch:
@@ -101,13 +105,11 @@ def load_test_cases_in(
 
 
 def load_test_cases_from_cmake(ctest_test):
-    ppath = f"{ctest_test.working_dir}:{ctest_test.env.get('PYTHONPATH','')}"
-    ctest_test.env["PYTHONPATH"] = ppath
-    with pushd(ctest_test.working_dir):
-        print("ctest_test", ctest_test.cmd)
+    ppath = ctest_test.env.get("PYTHONPATH", "")
+    with extend_sys_path([ctest_test.working_dir] + ppath.split(env_sep())):
         pyfile = ctest_test.cmd.split(" ")[-1]
         return load_test_cases_in(
-            classes_in_file(pyfile, unittest.TestCase, fail_on_import_error=False),
+            classes_in_file(pyfile, unittest.TestCase, fail_on_import_error=True),
             env=ctest_test.env,
             working_dir=ctest_test.working_dir,
             log_file_path=_LOG_DIR
