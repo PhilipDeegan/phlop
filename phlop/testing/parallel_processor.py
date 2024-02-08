@@ -60,6 +60,7 @@ def process(batches, n_cores=None, print_only=False, fail_fast=False):
         batches = [batches]
     if sum([len(t.tests) for t in batches]) == 0:
         return  # nothing to do
+
     if print_only:
         print_tests(batches)
         return
