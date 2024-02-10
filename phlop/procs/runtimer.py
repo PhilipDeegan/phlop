@@ -17,7 +17,7 @@ class RunTimer:
     def __init__(
         self,
         cmd,
-        shell=True,
+        shell=False,
         capture_output=True,
         check=False,
         print_cmd=True,
@@ -51,6 +51,7 @@ class RunTimer:
                     check=check,
                     env=benv,
                     capture_output=capture_output,
+                    close_fds=True,
                     **kwargs,
                     **ekwargs,
                 )

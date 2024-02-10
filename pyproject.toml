@@ -1,6 +1,6 @@
 [project]
 name = "phlop"
-version = "0.0.9"
+version = "0.0.10"
 
 dependencies = [
 
@@ -21,6 +21,6 @@ classifiers = [
 
 [build-system]
 requires = [
-    "setuptools>=42", "wheel", "packaging",
+    "setuptools>=42", "wheel", "packaging", "dill"
 ]
 

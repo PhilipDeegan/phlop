@@ -29,6 +29,8 @@ def cli_args_parser():
         print_only="Print only, no execution",
         prefix="Prepend string to execution string",
         postfix="Append string to execution string",
+        dump="Dump discovered tests as YAML, no execution",
+        load="Run tests exported from dump",
     )
 
     parser = argparse.ArgumentParser()
@@ -42,6 +44,12 @@ def cli_args_parser():
     )
     parser.add_argument("--prefix", default="", help=_help.prefix)
     parser.add_argument("--postfix", default="", help=_help.postfix)
+
+    parser.add_argument(
+        "--dump", default=None, action="store", nargs="?", help=_help.dump
+    )
+    parser.add_argument("--load", default=None, help=_help.load)
+
     return parser
 
 
@@ -70,15 +78,37 @@ def get_test_cases(cli_args):
     )
 
 
+def dump_batches(cli_args):
+    import codecs
+
+    import dill
+
+    with open(cli_args.dump, "w") as f:
+        f.write(
+            codecs.encode(
+                dill.dumps(pp.TestBatchesList(batch_list=get_test_cases(cli_args))),
+                "hex",
+            ).decode("utf8")
+        )
+
+
 def main():
     parser = cli_args_parser()
     cli_args = verify_cli_args(parser.parse_args())
     try:
+        if cli_args.dump and cli_args.load:
+            raise ValueError("Cannot use 'dump' and 'load' options simultaneously.")
+
+        if cli_args.dump:
+            dump_batches(cli_args)
+            return
+
         pp.process(
-            get_test_cases(cli_args),
+            pp.extract_load(cli_args) if cli_args.load else get_test_cases(cli_args),
             n_cores=cli_args.cores,
             print_only=cli_args.print_only,
         )
+
     except (Exception, SystemExit) as e:
         logger.exception(e)
         parser.print_help()
