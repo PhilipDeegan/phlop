@@ -9,6 +9,7 @@ import os
 import unittest
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import List
 
 from phlop.app.cmake import list_tests as get_cmake_tests
 from phlop.os import env_sep
@@ -34,10 +35,10 @@ class TestCase:
         self.cmd = self.cmd.strip()
 
 
+@dataclass
 class TestBatch:
-    def __init__(self, tests, cores=1):
-        self.tests = tests
-        self.cores = cores
+    tests: list
+    cores: int
 
 
 class DefaultTestCaseExtractor:
@@ -127,12 +128,9 @@ def load_py_test_cases_from_cmake(ctest_test):
 
 
 def determine_cores_for_test_case(test_case):
-    cores = 1
-
     try:
         if "mpirun -n" in test_case.cmd:
             bits = test_case.cmd.split(" ")
-            # print(bits)
             idx = [i for i, x in enumerate(bits) if "mpirun" in x][0]
             test_case.cores = int(bits[idx + 2])
     except Exception as e:
@@ -179,5 +177,38 @@ def load_cmake_tests(cmake_dir, cores=1, test_cmd_pre="", test_cmd_post=""):
             if res:
                 _add(res)
                 break
+
+    return [TestBatch(v, k) for k, v in test_batches.items()]
+
+
+@dataclass
+class TestBatchesList:
+    batch_list: List[TestBatch]
+
+
+def deserialize(s):
+    import codecs
+
+    import dill
+
+    return dill.loads(codecs.decode(s, "hex"))
+
+
+def extract_load(cli_args):
+    test_batches = {}
+
+    file_paths = list(Path(cli_args.dir).glob(cli_args.load))
+
+    if not file_paths:
+        raise ValueError("No load files found")
+
+    for path in file_paths:
+        with open(path, "r") as file:
+            batch_list = deserialize(file.read()).batch_list
+            for batch in batch_list:
+                for test_case in batch.tests:
+                    if batch.cores not in test_batches:
+                        test_batches[test_case.cores] = []
+                    test_batches[test_case.cores].append(test_case)
 
     return [TestBatch(v, k) for k, v in test_batches.items()]

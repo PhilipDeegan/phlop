@@ -23,4 +23,4 @@ def get_test_classes():
 
 
 if __name__ == "__main__":
-    pp.process(pp.TestBatch(get_test_classes()), n_cores=N_CORES, print_only=PRINT)
+    pp.process(pp.TestBatch(get_test_classes(), 1), n_cores=N_CORES, print_only=PRINT)
