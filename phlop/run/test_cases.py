@@ -74,7 +74,8 @@ def get_test_cases(cli_args):
             classes_in_directory(cli_args.dir, unittest.TestCase),
             test_cmd_pre=cli_args.prefix,
             test_cmd_post=cli_args.postfix,
-        )
+        ),
+        1,
     )
 
 
