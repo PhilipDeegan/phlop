@@ -33,13 +33,13 @@ def cli_args_parser():
         dump="Dump discovered tests as YAML, no execution",
         load="Run tests exported from dump",
         regex="Filter out non-matching execution strings",
+        nolog="Do not write test stdout/stderr to disk",
     )
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--cmake", action="store_true", default=False, help=_help.cmake)
-    parser.add_argument("-d", "--dir", default=".", help=_help.dir)
-    parser.add_argument("-R", "--retries", type=int, default=0, help="")
     parser.add_argument("-c", "--cores", type=int, default=1, help=_help.cores)
+    parser.add_argument("-d", "--dir", default=".", help=_help.dir)
     parser.add_argument("-f", "--filter", type=str, default="", help="")
     parser.add_argument(
         "-p", "--print_only", action="store_true", default=False, help=_help.print_only
@@ -52,6 +52,7 @@ def cli_args_parser():
     )
     parser.add_argument("--load", default=None, help=_help.load)
     parser.add_argument("-r", "--regex", default=None, help=_help.regex)
+    parser.add_argument("--nolog", action="store_true", default=False, help=_help.nolog)
 
     return parser
 
@@ -118,6 +119,22 @@ def filter_out_regex_fails(cli_args, test_batches):
     return [pp.TestBatch(v, k) for k, v in filtered.items() if v]
 
 
+def noLog(test_batches):
+    for tb in test_batches:
+        for test in tb.tests:
+            test.log_file_path = None
+    return test_batches
+
+
+def log(test_batches):
+    # synchronously make all directories before executions
+    for tb in test_batches:
+        for test in tb.tests:
+            if test.log_file_path:
+                Path(test.log_file_path).parent.mkdir(parents=True, exist_ok=True)
+    return test_batches
+
+
 def main():
     parser = cli_args_parser()
     cli_args = verify_cli_args(parser.parse_args())
@@ -132,8 +149,10 @@ def main():
         test_batches = (
             pp.extract_load(cli_args) if cli_args.load else get_test_cases(cli_args)
         )
+        test_batches = filter_out_regex_fails(cli_args, test_batches)
+
         pp.process(
-            filter_out_regex_fails(cli_args, test_batches),
+            noLog(test_batches) if cli_args.nolog else log(test_batches),
             n_cores=cli_args.cores,
             print_only=cli_args.print_only,
         )
