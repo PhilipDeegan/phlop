@@ -6,6 +6,7 @@
 
 
 import time
+from enum import Enum
 from multiprocessing import Process, Queue, cpu_count
 
 from phlop.proc import ProcessNonZeroExitCode, run
@@ -16,11 +17,18 @@ class TestCaseFailure(Exception):
     ...
 
 
+class LoggingMode(Enum):
+    OFF = 0
+    ON_NON_ZERO_EXIT_CODE = 1
+    ALWAYS = 2
+
+
 class CallableTest:
-    def __init__(self, batch_index, test_case):
+    def __init__(self, batch_index, test_case, logging):
         self.batch_index = batch_index
         self.test_case = test_case
         self.run = None
+        self.logging = logging
 
     def __call__(self, **kwargs):
         self.run = run(
@@ -32,8 +40,9 @@ class CallableTest:
             env=self.test_case.env,
             working_dir=self.test_case.working_dir,
             log_file_path=self.test_case.log_file_path,
+            logging=self.logging,
         )
-        if self.run.exitcode != 0:
+        if self.run.stderr and self.run.exitcode != 0:
             print(self.run.stderr)
         return self
 
@@ -55,7 +64,9 @@ def print_tests(batches):
             print(test.cmd)
 
 
-def process(batches, n_cores=None, print_only=False, fail_fast=False):
+def process(
+    batches, n_cores=None, print_only=False, fail_fast=False, logging: LoggingMode = 1
+):
     if not isinstance(batches, list):
         batches = [batches]
     if sum([len(t.tests) for t in batches]) == 0:
@@ -80,7 +91,7 @@ def process(batches, n_cores=None, print_only=False, fail_fast=False):
                 test_index += offset
                 if batch.cores <= cc.cores_avail:
                     test = CallableTest(
-                        batch_index, batches[batch_index].tests[test_index]
+                        batch_index, batches[batch_index].tests[test_index], logging
                     )
                     cc.cores_avail -= batch.cores
                     cc.procs[batch_index] += [
