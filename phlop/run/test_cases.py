@@ -61,6 +61,7 @@ def verify_cli_args(cli_args):
         raise RuntimeError(
             "phlop.run.test_cases error: directory provided does not exist"
         )
+    sys.argv = [sys.argv[0]]  # drop everything!
     return cli_args
 
 
@@ -69,14 +70,16 @@ def get_test_cases(cli_args):
         return pp.load_cmake_tests(
             cli_args.dir, test_cmd_pre=cli_args.prefix, test_cmd_post=cli_args.postfix
         )
-    return pp.TestBatch(
-        pp.load_test_cases_in(
-            classes_in_directory(cli_args.dir, unittest.TestCase),
-            test_cmd_pre=cli_args.prefix,
-            test_cmd_post=cli_args.postfix,
-        ),
-        1,
-    )
+    return [
+        pp.TestBatch(
+            pp.load_test_cases_in(
+                classes_in_directory(cli_args.dir, unittest.TestCase),
+                test_cmd_pre=cli_args.prefix,
+                test_cmd_post=cli_args.postfix,
+            ),
+            1,
+        )
+    ]
 
 
 def dump_batches(cli_args):
