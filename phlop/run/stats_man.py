@@ -58,6 +58,7 @@ def verify_cli_args(cli_args):
         cli_args.interval = int(cli_args.interval)
     except ValueError:
         raise ValueError("Interval must be an integer")
+    sys.argv = [sys.argv[0]]  # drop everything!
     return cli_args
 
 
