@@ -113,11 +113,11 @@ def process(batches, n_cores=None, print_only=False, fail_fast=False):
                 )
                 cc.cores_avail += batches[proc.batch_index].cores
                 cc.fin[proc.batch_index] += 1
-                launch_tests()
                 if finished():
                     if fail > 0:
                         raise TestCaseFailure("Some tests have failed")
                     break
+                launch_tests()
 
     launch_tests()
     waiter(pqueue)

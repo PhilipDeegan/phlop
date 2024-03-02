@@ -8,6 +8,7 @@
 import logging
 import multiprocessing
 import sys
+import re
 import unittest
 from pathlib import Path
 
@@ -31,12 +32,13 @@ def cli_args_parser():
         postfix="Append string to execution string",
         dump="Dump discovered tests as YAML, no execution",
         load="Run tests exported from dump",
+        regex="Filter out non-matching execution strings",
     )
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--cmake", action="store_true", default=False, help=_help.cmake)
     parser.add_argument("-d", "--dir", default=".", help=_help.dir)
-    parser.add_argument("-r", "--retries", type=int, default=0, help="")
+    parser.add_argument("-R", "--retries", type=int, default=0, help="")
     parser.add_argument("-c", "--cores", type=int, default=1, help=_help.cores)
     parser.add_argument("-f", "--filter", type=str, default="", help="")
     parser.add_argument(
@@ -49,6 +51,7 @@ def cli_args_parser():
         "--dump", default=None, action="store", nargs="?", help=_help.dump
     )
     parser.add_argument("--load", default=None, help=_help.load)
+    parser.add_argument("-r", "--regex", default=None, help=_help.regex)
 
     return parser
 
@@ -96,6 +99,25 @@ def dump_batches(cli_args):
         )
 
 
+def filter_out_regex_fails(cli_args, test_batches):
+    if not cli_args.regex:
+        return test_batches
+    try:
+        pattern = re.compile(cli_args.regex)
+        is_valid = True
+        op = lambda x: pattern.search(x)
+    except re.error:
+        print("regex invalid, resorting to 'str in str' approach")
+        is_valid = False
+        op = lambda x: regex in x
+    filtered = {tb.cores: [] for tb in test_batches}
+    for tb in test_batches:
+        for test in tb.tests:
+            if op(test.cmd):
+                filtered[tb.cores].append(test)
+    return [pp.TestBatch(v, k) for k, v in filtered.items() if v]
+
+
 def main():
     parser = cli_args_parser()
     cli_args = verify_cli_args(parser.parse_args())
@@ -107,12 +129,17 @@ def main():
             dump_batches(cli_args)
             return
 
+        test_batches = (
+            pp.extract_load(cli_args) if cli_args.load else get_test_cases(cli_args)
+        )
         pp.process(
-            pp.extract_load(cli_args) if cli_args.load else get_test_cases(cli_args),
+            filter_out_regex_fails(cli_args, test_batches),
             n_cores=cli_args.cores,
             print_only=cli_args.print_only,
         )
 
+    except pp.TestCaseFailure as e:
+        sys.exit(1)
     except (Exception, SystemExit) as e:
         logger.exception(e)
         parser.print_help()
