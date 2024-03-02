@@ -8,6 +8,7 @@
 import os
 import subprocess
 import time
+from copy import deepcopy
 
 from phlop.os import pushd, write_to_file
 from phlop.string import decode_bytes
@@ -24,6 +25,7 @@ class RunTimer:
         env: dict = {},  # dict[str, str] # eventually
         working_dir=None,
         log_file_path=None,
+        logging=2,
         **kwargs,
     ):
         self.cmd = cmd
@@ -31,8 +33,10 @@ class RunTimer:
 
         self.run_time = None
         self.stdout = ""
+        self.stderr = ""
         benv = os.environ.copy()
         benv.update(env)
+        self.logging = logging
 
         ekwargs = {}
         if not capture_output and log_file_path:
@@ -44,6 +48,7 @@ class RunTimer:
             )
 
         def run():
+            logging = deepcopy(self.logging)
             try:
                 self.run = subprocess.run(
                     self.cmd,
@@ -57,7 +62,7 @@ class RunTimer:
                 )
                 self.run_time = time.time() - start
                 self.exitcode = self.run.returncode
-                if capture_output:
+                if logging == 2 and capture_output:
                     self.stdout = decode_bytes(self.run.stdout)
                     self.stderr = decode_bytes(self.run.stderr)
             except (
@@ -65,10 +70,11 @@ class RunTimer:
             ) as e:  # only triggers on failure if check=True
                 self.exitcode = e.returncode
                 self.run_time = time.time() - start
-                if capture_output:
+                if logging >= 1 and capture_output:
                     self.stdout = decode_bytes(e.stdout)
                     self.stderr = decode_bytes(e.stderr)
-            if capture_output and log_file_path:
+                    logging = 2  # force logging as exception occurred
+            if logging == 2 and capture_output and log_file_path:
                 write_to_file(f"{log_file_path}.stdout", self.stdout)
                 write_to_file(f"{log_file_path}.stderr", self.stderr)
 

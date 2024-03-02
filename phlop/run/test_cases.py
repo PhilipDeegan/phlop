@@ -33,7 +33,7 @@ def cli_args_parser():
         dump="Dump discovered tests as YAML, no execution",
         load="Run tests exported from dump",
         regex="Filter out non-matching execution strings",
-        nolog="Do not write test stdout/stderr to disk",
+        logging="0=off, 1=on non zero exit code, 2=always",
     )
 
     parser = argparse.ArgumentParser()
@@ -52,7 +52,7 @@ def cli_args_parser():
     )
     parser.add_argument("--load", default=None, help=_help.load)
     parser.add_argument("-r", "--regex", default=None, help=_help.regex)
-    parser.add_argument("--nolog", action="store_true", default=False, help=_help.nolog)
+    parser.add_argument("--logging", type=int, default=1, help=_help.logging)
 
     return parser
 
@@ -65,6 +65,7 @@ def verify_cli_args(cli_args):
         raise RuntimeError(
             "phlop.run.test_cases error: directory provided does not exist"
         )
+    pp.LoggingMode(cli_args.logging)  # check convertible
     sys.argv = [sys.argv[0]]  # drop everything!
     return cli_args
 
@@ -151,10 +152,16 @@ def main():
         )
         test_batches = filter_out_regex_fails(cli_args, test_batches)
 
+        if cli_args.logging == 0:
+            test_batches = noLog(test_batches)
+        else:
+            test_batches = log(test_batches)
+
         pp.process(
-            noLog(test_batches) if cli_args.nolog else log(test_batches),
+            test_batches,
             n_cores=cli_args.cores,
             print_only=cli_args.print_only,
+            logging=cli_args.logging,
         )
 
     except pp.TestCaseFailure as e:
