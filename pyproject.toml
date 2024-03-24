@@ -1,6 +1,6 @@
 [project]
 name = "phlop"
-version = "0.0.14"
+version = "0.0.15"
 
 dependencies = [
 
@@ -21,6 +21,12 @@ classifiers = [
 
 [build-system]
 requires = [
-    "setuptools>=42", "wheel", "packaging", "dill"
+    "setuptools>=62", "wheel", "packaging", "dill"
 ]
 
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+include = ["/phlop*"]
+exclude = ["/sh*", "/tests*"]
