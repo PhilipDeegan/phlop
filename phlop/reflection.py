@@ -19,7 +19,6 @@ FORCE_RAISE_ON_IMPORT_ERROR = os.getenv(
 
 def classes_in_file(file_path, subclasses_only=None, fail_on_import_error=False):
     file = Path(file_path)
-    assert file.exists()
     module = str(file).replace(os.path.sep, ".")[:-3]
     assert module
 
