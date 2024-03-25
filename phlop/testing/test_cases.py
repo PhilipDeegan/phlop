@@ -152,12 +152,9 @@ def load_cmake_tests(cmake_dir, cores=1, test_cmd_pre="", test_cmd_post=""):
     cmake_tests = get_cmake_tests(cmake_dir)
     tests = []
     for cmake_test in cmake_tests:
+        cmd = f"{test_cmd_pre} " + " ".join(cmake_test.command) + f" {test_cmd_post}"
         tests += [
-            TestCase(
-                cmd=test_cmd_pre + " ".join(cmake_test.command) + " " + test_cmd_post,
-                env=cmake_test.env,
-                working_dir=cmake_test.working_dir,
-            )
+            TestCase(cmd=cmd, env=cmake_test.env, working_dir=cmake_test.working_dir)
         ]
 
     test_batches = {}
