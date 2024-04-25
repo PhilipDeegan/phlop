@@ -17,14 +17,21 @@ jobs:
         os: [ubuntu-20.04] #, macos-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         submodules: true
+
+    - run: |
+        curl -Lo mkn https://github.com/mkn/mkn/releases/download/latest/mkn_nix
+        chmod +x mkn
+        ./mkn clean build -p scope_timer test -a "-fPIC -std=c++17"
 
     - uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
         architecture: x64
 
-    - run: ./sh/test.sh
-
+    - run: |
+        python3 -m pip install numpy
+        export PATH="$PWD:$PATH"
+        ./sh/test.sh

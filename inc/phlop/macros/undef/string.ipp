@@ -1,0 +1,7 @@
+// NO HEADER GUARDS!
+
+#undef _PHLOP_TO_STR
+#undef PHLOP_TO_STR
+
+#undef PHLOP_TO_STR_2
+#undef PHLOP_STR_CAT

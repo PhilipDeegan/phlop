@@ -1,0 +1,14 @@
+
+name: phlop
+parent: base
+
+profile:
+- name: base
+  inc: inc
+
+- name: scope_timer
+  parent: base
+  src: src/phlop/timing/scope_timer.cpp # static instance lives here
+  mode: shared
+  test: tests/timing/test_scope_timer.cpp
+

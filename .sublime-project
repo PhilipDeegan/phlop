@@ -7,6 +7,12 @@
 	],
 	"settings":
 	{
+		"ClangFormat":
+		{
+			"binary": "clang-format",
+			"format_on_save": true,
+			"style": "file"
+		},
 		"python-black":
 		{
 			"format_on_save": true,

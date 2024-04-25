@@ -5,6 +5,13 @@ cd "$CWD"/..
 
 set -ex
 
-PYTHONPATH=$PWD python3 -Om phlop.run.test_cases -d tests -p
-PYTHONPATH=$PWD python3 -Om phlop.run.test_cases -d tests -c 10
-PYTHONPATH=$PWD python3 -O tests/all_concurrent.py
+py(){
+    PYTHONPATH=$PWD python3 $@
+}
+
+py -Om phlop.run.test_cases -d tests -p
+py -Om phlop.run.test_cases -d tests -c 10
+py -O tests/all_concurrent.py
+
+mkn test -p scope_timer
+py -O tests/timing/test_scope_timer.py test_scope_timer -f scope_timer.txt
