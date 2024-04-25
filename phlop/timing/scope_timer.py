@@ -15,8 +15,8 @@ class RunTimerNode:
 
 @dataclass
 class ScopeTimerFile:
-    id_keys: dict = field(default_factory=lambda: {})
-    roots: list = field(default_factory=lambda: [])
+    id_keys: dict
+    roots: list
 
     def fn_for(self, id):
         return self.id_keys[id]
