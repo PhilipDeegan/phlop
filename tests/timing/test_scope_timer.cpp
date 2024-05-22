@@ -1,18 +1,22 @@
 
 #include "phlop/timing/scope_timer.hpp"
 
+#include "magic_enum/magic_enum_all.hpp"
+
+using namespace std::chrono_literals;
+
 void fny()
 {
     PHLOP_SCOPE_TIMER("fny");
-    using namespace std::chrono_literals;
-    std::this_thread::sleep_for(100ms);
+
+    std::this_thread::sleep_for(10ms);
 }
 
 void fn0()
 {
     PHLOP_SCOPE_TIMER("fn0");
-    using namespace std::chrono_literals;
-    std::this_thread::sleep_for(100ms);
+
+    std::this_thread::sleep_for(10ms);
 
     fny();
 
@@ -22,8 +26,8 @@ void fn0()
 void fn1()
 {
     PHLOP_SCOPE_TIMER("fn1");
-    using namespace std::chrono_literals;
-    std::this_thread::sleep_for(100ms);
+
+    std::this_thread::sleep_for(10ms);
     PHLOP_SCOPE_TIMER("fn1b");
     fn0();
 }
@@ -31,8 +35,8 @@ void fn1()
 void fn2()
 {
     PHLOP_SCOPE_TIMER("fn2");
-    using namespace std::chrono_literals;
-    std::this_thread::sleep_for(100ms);
+
+    std::this_thread::sleep_for(10ms);
     fn0();
 }
 

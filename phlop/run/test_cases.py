@@ -111,7 +111,7 @@ def filter_out_regex_fails(cli_args, test_batches):
     except re.error:
         print("regex invalid, resorting to 'str in str' approach")
         is_valid = False
-        op = lambda x: regex in x
+        op = lambda x: cli_args.regex in x
     filtered = {tb.cores: [] for tb in test_batches}
     for tb in test_batches:
         for test in tb.tests:

@@ -1,3 +1,5 @@
+.mkn
+bin
 __pycache__
 dist
 phlop.egg-info/
