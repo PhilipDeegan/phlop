@@ -1,8 +1,6 @@
 
 #include "phlop/timing/scope_timer.hpp"
 
-#include "magic_enum/magic_enum_all.hpp"
-
 using namespace std::chrono_literals;
 
 void fny()
@@ -27,7 +25,7 @@ void fn1()
 {
     PHLOP_SCOPE_TIMER("fn1");
 
-    std::this_thread::sleep_for(10ms);
+    std::this_thread::sleep_for(100ms);
     PHLOP_SCOPE_TIMER("fn1b");
     fn0();
 }

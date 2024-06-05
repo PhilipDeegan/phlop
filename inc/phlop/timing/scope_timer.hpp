@@ -15,8 +15,6 @@
 #include <string_view>
 #include <unordered_map>
 
-// #include "core/logger.hpp"
-// #include "core/utilities/mpi_utils.hpp"
 #include "phlop/macros/def/string.hpp"
 
 namespace phlop
@@ -95,7 +93,7 @@ struct ScopeTimerMan
 
 struct RunTimerReportSnapshot
 {
-    RunTimerReportSnapshot(RunTimerReport* s, RunTimerReport* p, std::uint32_t&& t)
+    RunTimerReportSnapshot(RunTimerReport* s, RunTimerReport* p, std::uint64_t const& t)
         : self{s}
         , parent{p}
         , time{t}
