@@ -112,26 +112,36 @@ def append_yaml(file, pid):
     stats = now(pid)
     vals = {"v": ",".join([str(stats[key]) for key in keys])}
     sdump = "- " + yaml.dump(vals, indent=2)
-    with open(file, "a") as f:
-        f.write(sdump)
+    try:
+        with open(file, "a") as f:
+            f.write(sdump)
+    except IOError as e:
+        logger.error(f"phlop detected IO error: {e}")
 
 
 def init_yaml(cli_args, pid, info):
     file = cli_args.yaml
     headers = {"headers": [str(i) for i in list(now(pid).keys())]}
     cli = {"cli_args": dict(interval=cli_args.interval)}
-    with open(file, "w") as f:
-        f.write("---\n")
-        yaml.dump(info, f, default_flow_style=False)
-        yaml.dump(cli, f, default_flow_style=False)
-        yaml.dump(headers, f, default_flow_style=False)
-        f.write(f"start: {timestamp_now()} \n")
-        f.write(f"snapshots:\n")
+
+    try:
+        with open(file, "w") as f:
+            f.write("---\n")
+            yaml.dump(info, f, default_flow_style=False)
+            yaml.dump(cli, f, default_flow_style=False)
+            yaml.dump(headers, f, default_flow_style=False)
+            f.write(f"start: {timestamp_now()} \n")
+            f.write("snapshots:\n")
+    except IOError as e:
+        logger.error(f"phlop detected IO error: {e}")
 
 
 def end_yaml(file):
-    with open(file, "a") as f:
-        f.write(f"end: {timestamp_now()} \n")
+    try:
+        with open(file, "a") as f:
+            f.write(f"end: {timestamp_now()} \n")
+    except IOError as e:
+        logger.error(f"phlop detected IO error: {e}")
 
 
 class RuntimeStatsManager:

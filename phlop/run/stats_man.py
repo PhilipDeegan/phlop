@@ -1,8 +1,8 @@
 #
 #
 
-import sys
 import logging
+import sys
 
 from phlop.app import stats_man as sman
 
