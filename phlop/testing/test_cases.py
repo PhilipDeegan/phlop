@@ -72,7 +72,7 @@ class GoogleTestCaseExtractor:
 
 class PythonUnitTestCaseExtractor:
     def __call__(self, ctest_test):
-        if "python3 " in ctest_test.cmd:  # hacky
+        if "python3" in ctest_test.cmd:  # hacky
             return load_py_test_cases_from_cmake(ctest_test)
         return None
 
