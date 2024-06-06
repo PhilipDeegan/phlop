@@ -1,15 +1,10 @@
 #
 #
 
-import logging
 import sys
+import logging
 
-import numpy as np
-import psutil
-import yaml
 from phlop.app import stats_man as sman
-from phlop.dict import ValDict
-from phlop.proc import run_raw
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)

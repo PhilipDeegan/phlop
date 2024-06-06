@@ -100,9 +100,11 @@ def load_test_cases_in(
             tests += [
                 TestCase(
                     cmd=f"{test_cmd_pre} {cmd} {test_cmd_post}".strip(),
-                    log_file_path=None
-                    if not log_file_path
-                    else f"{log_file_path}/{suite._testMethodName}",
+                    log_file_path=(
+                        None
+                        if not log_file_path
+                        else f"{log_file_path}/{suite._testMethodName}"
+                    ),
                     **kwargs,
                 )
             ]

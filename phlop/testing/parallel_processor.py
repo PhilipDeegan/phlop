@@ -13,8 +13,7 @@ from phlop.proc import ProcessNonZeroExitCode, run
 from phlop.testing.test_cases import *
 
 
-class TestCaseFailure(Exception):
-    ...
+class TestCaseFailure(Exception): ...
 
 
 class LoggingMode(Enum):
