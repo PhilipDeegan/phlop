@@ -15,8 +15,6 @@
 #include <string_view>
 #include <unordered_map>
 
-// #include "core/logger.hpp"
-// #include "core/utilities/mpi_utils.hpp"
 #include "phlop/macros/def/string.hpp"
 
 namespace phlop
@@ -55,6 +53,8 @@ struct ScopeTimerMan
             traces.clear();
             reports.clear();
         }
+        _headers.clear();
+        active = false;
     }
 
     auto& file_name(std::string const& fn)
@@ -63,10 +63,28 @@ struct ScopeTimerMan
         return *this;
     }
 
+    auto& force_strings(bool const b = true)
+    {
+        _force_strings = b;
+        return *this;
+    }
+
+    template<typename... Args>
+    auto& headers(Args const... args)
+    {
+        _headers.clear();
+        (_headers.emplace_back(args), ...);
+        return *this;
+    }
+
+
+
     static void reset() { INSTANCE().shutdown(); }
 
-    bool active = false;
+    bool active         = false;
+    bool _force_strings = false;
     std::string timer_file;
+    std::vector<std::string> _headers;
     std::vector<RunTimerReport*> reports;
     std::vector<RunTimerReportSnapshot*> traces;
     RunTimerReport* report_stack_ptr = nullptr;
@@ -75,7 +93,7 @@ struct ScopeTimerMan
 
 struct RunTimerReportSnapshot
 {
-    RunTimerReportSnapshot(RunTimerReport* s, RunTimerReport* p, std::uint32_t&& t)
+    RunTimerReportSnapshot(RunTimerReport* s, RunTimerReport* p, std::uint64_t const& t)
         : self{s}
         , parent{p}
         , time{t}
@@ -215,11 +233,37 @@ struct BinaryTimerFile
     void write(std::string const& filename) const
     {
         std::ofstream f{filename, std::ios::binary};
-        for (auto const& [i, k] : id_to_key)
-            _byte_write(f, i, " ", k);
-        f << std::endl; // break between function id map and function times
-        for (auto const& root : roots)
-            _write(f, root);
+
+        if (ScopeTimerMan::INSTANCE()._force_strings)
+        {
+            if (ScopeTimerMan::INSTANCE()._headers.size())
+            {
+                f << ScopeTimerMan::INSTANCE()._headers[0];
+                for (std::size_t i = 1; i < ScopeTimerMan::INSTANCE()._headers.size(); ++i)
+                    f << "," << ScopeTimerMan::INSTANCE()._headers[i];
+                f << std::endl;
+            }
+            for (auto const& root : roots)
+                _write_strings(f, root);
+        }
+        else
+        {
+            for (auto const& [i, k] : id_to_key)
+                _byte_write(f, i, " ", k);
+            f << std::endl; // break between function id map and function times
+            for (auto const& root : roots)
+                _write(f, root);
+        }
+    }
+
+    void _write_strings(std::ofstream& file, BinaryTimerFileNode const& node,
+                        std::uint16_t tabs = 0) const
+    {
+        for (std::size_t ti = 0; ti < tabs; ++ti)
+            file << " ";
+        file << id_to_key.at(node.fn_id) << node.time << std::endl;
+        for (auto const& n : node.kinder)
+            _write_strings(file, n, tabs + 1);
     }
 
     void _write(std::ofstream& file, BinaryTimerFileNode const& node, std::uint16_t tabs = 0) const

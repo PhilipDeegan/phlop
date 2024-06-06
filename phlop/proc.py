@@ -11,8 +11,7 @@ from phlop.procs.runtimer import RunTimer
 from phlop.string import decode_bytes
 
 
-class ProcessNonZeroExitCode(RuntimeError):
-    ...
+class ProcessNonZeroExitCode(RuntimeError): ...
 
 
 def run(cmd, shell=True, capture_output=True, check=False, print_cmd=True, **kwargs):

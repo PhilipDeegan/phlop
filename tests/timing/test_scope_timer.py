@@ -1,14 +1,15 @@
 # various plotting tools for PHARE development, NOT physics!
 #
 
-import sys
-import logging
 import argparse
+import logging
+import sys
+
 import numpy as np
+import phlop.timing.scope_timer as scope_timer
 
 # from pathlib import Path
 
-import phlop.timing.scope_timer as scope_timer
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
