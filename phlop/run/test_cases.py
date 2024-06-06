@@ -29,6 +29,7 @@ def cli_args_parser():
         dump="Dump discovered tests as YAML, no execution",
         load="Run tests exported from dump",
         regex="Filter out non-matching execution strings",
+        reverse="reverse order - higher core count tests preferred",
         logging="0=off, 1=on non zero exit code, 2=always",
     )
 
@@ -48,6 +49,9 @@ def cli_args_parser():
     )
     parser.add_argument("--load", default=None, help=_help.load)
     parser.add_argument("-r", "--regex", default=None, help=_help.regex)
+    parser.add_argument(
+        "-R", "--reverse", action="store_true", default=False, help=_help.reverse
+    )
     parser.add_argument("--logging", type=int, default=1, help=_help.logging)
 
     return parser
@@ -152,6 +156,9 @@ def main():
             test_batches = noLog(test_batches)
         else:
             test_batches = log(test_batches)
+
+        if cli_args.reverse:
+            test_batches = list(reversed(test_batches))
 
         pp.process(
             test_batches,
