@@ -85,11 +85,13 @@ def list_tests(build_dir=None):
             if s
         ]
     )
+
     return [
         CTest_test(**test)
         for test in json.loads(decode_bytes(run(cmd, capture_output=True).stdout))[
             "tests"
         ]
+        if "command" in test
     ]
 
 
