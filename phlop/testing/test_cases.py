@@ -13,7 +13,6 @@ from typing import List
 
 from phlop.app.cmake import list_tests as get_cmake_tests
 from phlop.os import env_sep
-from phlop.proc import run
 from phlop.reflection import classes_in_file
 from phlop.sys import extend_sys_path
 
@@ -169,7 +168,6 @@ def load_cmake_tests(cmake_dir, cores=1, test_cmd_pre="", test_cmd_post=""):
                 test_batches[test_case.cores] = []
             test_batches[test_case.cores].append(test_case)
 
-    test_cases = []
     for test in tests:
         for extractor in EXTRACTORS:
             res = extractor(test)

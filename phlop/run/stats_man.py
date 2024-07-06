@@ -2,7 +2,6 @@
 #
 
 import logging
-import sys
 
 from phlop.app import stats_man as sman
 
@@ -21,9 +20,6 @@ def main():
     except (Exception, SystemExit) as e:
         logger.exception(e)
         parser.print_help()
-    except:
-        e = sys.exc_info()[0]
-        print(f"Error: Unknown Error {e}")
 
 
 if __name__ == "__main__":

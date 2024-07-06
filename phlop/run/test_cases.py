@@ -11,6 +11,7 @@ from pathlib import Path
 from phlop.dict import ValDict
 from phlop.reflection import classes_in_directory
 from phlop.testing import parallel_processor as pp
+from phlop.testing.test_cases import load_test_cases_in
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -77,7 +78,7 @@ def get_test_cases(cli_args):
         )
     return [
         pp.TestBatch(
-            pp.load_test_cases_in(
+            load_test_cases_in(
                 classes_in_directory(cli_args.dir, unittest.TestCase),
                 test_cmd_pre=cli_args.prefix,
                 test_cmd_post=cli_args.postfix,
@@ -106,12 +107,16 @@ def filter_out_regex_fails(cli_args, test_batches):
         return test_batches
     try:
         pattern = re.compile(cli_args.regex)
-        is_valid = True
-        op = lambda x: pattern.search(x)
+
+        def op(x):
+            return pattern.search(x)
+
     except re.error:
         print("regex invalid, resorting to 'str in str' approach")
-        is_valid = False
-        op = lambda x: cli_args.regex in x
+
+        def op(x):
+            return cli_args.regex in x
+
     filtered = {tb.cores: [] for tb in test_batches}
     for tb in test_batches:
         for test in tb.tests:
@@ -167,14 +172,11 @@ def main():
             logging=cli_args.logging,
         )
 
-    except pp.TestCaseFailure as e:
+    except pp.TestCaseFailure:
         sys.exit(1)
     except (Exception, SystemExit) as e:
         logger.exception(e)
         parser.print_help()
-    except:
-        e = sys.exc_info()[0]
-        print(f"Error: Unknown Error {e}")
 
 
 if __name__ == "__main__":
