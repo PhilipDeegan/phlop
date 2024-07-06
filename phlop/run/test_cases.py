@@ -10,8 +10,8 @@ from pathlib import Path
 
 from phlop.dict import ValDict
 from phlop.reflection import classes_in_directory
+from phlop.testing import test_cases as tc
 from phlop.testing import parallel_processor as pp
-from phlop.testing.test_cases import load_test_cases_in
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -77,8 +77,8 @@ def get_test_cases(cli_args):
             cli_args.dir, test_cmd_pre=cli_args.prefix, test_cmd_post=cli_args.postfix
         )
     return [
-        pp.TestBatch(
-            load_test_cases_in(
+        tc.TestBatch(
+            tc.load_test_cases_in(
                 classes_in_directory(cli_args.dir, unittest.TestCase),
                 test_cmd_pre=cli_args.prefix,
                 test_cmd_post=cli_args.postfix,

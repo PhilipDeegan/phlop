@@ -1,0 +1,9 @@
+numpy
+black
+ruff
+autoflake
+isort
+pylint
+pydantic
+ddt
+pyyaml
