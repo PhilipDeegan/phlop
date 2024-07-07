@@ -7,3 +7,4 @@ pylint
 pydantic
 ddt
 pyyaml
+psutil

@@ -10,8 +10,8 @@ from pathlib import Path
 
 from phlop.dict import ValDict
 from phlop.reflection import classes_in_directory
-from phlop.testing import test_cases as tc
 from phlop.testing import parallel_processor as pp
+from phlop.testing import test_cases as tc
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
