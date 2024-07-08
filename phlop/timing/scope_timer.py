@@ -76,3 +76,23 @@ def file_parser(times_filepath):
                 white_space = idx
             curr = node
     return ScopeTimerFile(id_keys, roots)
+
+
+def print_scope_timings(scope_timer_file, percentages=True, sort_worst_first=True):
+    """:|"""
+    stf = scope_timer_file  # alias
+    if sort_worst_first:
+        stf.roots.sort(reverse=True, key=lambda x: x.t)
+
+    def kinder(tot, n, tabs=0):
+        o = " " * tabs
+        for i in range(len(n.c)):
+            c = n.c[i]
+            pc = float(c.t) / tot * 100.0
+            print(o, f"{pc:.2f}%", stf(c.k), c.t)
+            kinder(tot, c, tabs + 1)
+
+    for root in stf.roots:
+        total = float(root.t)
+        print("100%", stf(root.k), root.t)
+        kinder(total, root)

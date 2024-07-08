@@ -34,7 +34,7 @@ void fn2()
 {
     PHLOP_SCOPE_TIMER("fn2");
 
-    std::this_thread::sleep_for(10ms);
+    std::this_thread::sleep_for(200ms);
     fn0();
 }
 
