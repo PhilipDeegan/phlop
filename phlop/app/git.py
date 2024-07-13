@@ -8,8 +8,11 @@
 import atexit
 import subprocess
 
+from phlop.logger import getLogger
 from phlop.proc import run
 from phlop.string import decode_bytes
+
+logger = getLogger(__name__)
 
 
 def current_branch():
@@ -28,7 +31,7 @@ def log(N=10, use_short=False):
 def branch_exists(branch):
     try:
         run(f"git show-branch {branch}", check=True)
-    except subprocess.CalledProcessError as e:
+    except subprocess.CalledProcessError:
         return False  # exit failure means branch does not exist
     return True
 

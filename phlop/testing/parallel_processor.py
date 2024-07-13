@@ -9,8 +9,7 @@ import time
 from enum import Enum
 from multiprocessing import Process, Queue, cpu_count
 
-from phlop.proc import ProcessNonZeroExitCode, run
-from phlop.testing.test_cases import *
+from phlop.proc import run
 
 
 class TestCaseFailure(Exception): ...

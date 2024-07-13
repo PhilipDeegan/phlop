@@ -1,31 +1,29 @@
 # various plotting tools for PHARE development, NOT physics!
 #
-
 import argparse
 import logging
 import sys
 
 import numpy as np
-import phlop.timing.scope_timer as scope_timer
 
-# from pathlib import Path
-
+from phlop.timing import scope_timer
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
-def test_scope_timer(scope_timer_file=None):
-    if scope_timer_file is None:  # assume cli
+def test_scope_timer(scope_timer_filepath=None):
+    if scope_timer_filepath is None:  # assume cli
         parser = argparse.ArgumentParser()
         parser.add_argument("-f", "--file", default=None, help="timer file")
-        scope_timer_file = parser.parse_args().file
-        if not scope_timer_file:
+        scope_timer_filepath = parser.parse_args().file
+        if not scope_timer_filepath:
             parser.print_help()
             sys.exit(1)
 
-    results = scope_timer.file_parser(scope_timer_file)
-    np.testing.assert_equal(results(results.roots[0].k), "fn1")
+    scope_timer_file = scope_timer.file_parser(scope_timer_filepath)
+    np.testing.assert_equal(scope_timer_file(scope_timer_file.roots[0].k), "fn1")
+    scope_timer.print_scope_timings(scope_timer_file)
 
 
 if __name__ == "__main__":

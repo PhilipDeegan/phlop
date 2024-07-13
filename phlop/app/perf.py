@@ -1,14 +1,24 @@
 #
 #
 #
-#
-#
 
-
-import csv
 import os
 
+from phlop.dict import ValDict
 from phlop.proc import run, run_mp
+
+# can be modified
+perf_events = [
+    "duration_time",
+    "cycles",
+    "instructions",
+    "cache-references",
+    "cache-misses",
+    "L1-dcache-loads",
+    "L1-dcache-load-misses",
+]
+# "perf stat" can support more events than "perf record"
+stat_events = perf_events + ["bus-cycles"]
 
 
 def version():
@@ -41,6 +51,8 @@ def parse_key(key, force_kernel_space):
 
 
 def parse_stat_csv(file, force_kernel_space=False):
+    import csv
+
     comments_lines = 2  # validate
     row_val_idx, row_id_idx = 0, 2
     with open(file, newline="") as csvfile:
@@ -49,6 +61,13 @@ def parse_stat_csv(file, force_kernel_space=False):
             parse_key(row[row_id_idx], force_kernel_space): row[row_val_idx]
             for row in csv.reader(csvfile, delimiter=",")
         }
+
+
+def parse_stat_json(file):
+    import json
+
+    with open(file, newline="") as f:
+        return json.loads(f)
 
 
 # https://perf.wiki.kernel.org/index.php/Tutorial
@@ -65,10 +84,11 @@ def out_str(output_file):
 
 
 def stat_cmd(exe, events, output_file, options=""):
+    return f"perf stat -j {options} {out_str(output_file)} {events_str(events)} {exe}"
     return f"perf stat -x , {options} {out_str(output_file)} {events_str(events)} {exe}"
 
 
-def stat(exe, events, output_file=None):
+def stat(exe, events=stat_events, output_file=None):
     return run(stat_cmd(exe, events, output_file), check=True)
 
 
@@ -82,3 +102,33 @@ def record(exe, events, output_file=None):
 
 def stat_mp(exe, events, output_files):
     return run_mp([stat_cmd(exe, events, out) for out in output_files])
+
+
+def cli_args_parser():
+    import argparse
+
+    _help = ValDict(
+        dir="working directory",
+        quiet="Redirect output to /dev/null",
+        cores="Parallism core/thread count",
+        infiles="infiles",
+        print_only="Print only, no execution",
+        regex="Filter out non-matching execution strings",
+        logging="0=off, 1=on non zero exit code, 2=always",
+    )
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("remaining", nargs=argparse.REMAINDER)
+    parser.add_argument("-d", "--dir", default=".", help=_help.dir)
+    parser.add_argument("-c", "--cores", type=int, default=1, help=_help.cores)
+    parser.add_argument(
+        "-p", "--print_only", action="store_true", default=False, help=_help.print_only
+    )
+    parser.add_argument("-i", "--infiles", default=None, help=_help.infiles)
+    parser.add_argument("-r", "--regex", default=None, help=_help.regex)
+    parser.add_argument("--logging", type=int, default=1, help=_help.logging)
+    return parser
+
+
+def verify_cli_args(cli_args):
+    return cli_args

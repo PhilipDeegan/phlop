@@ -2,13 +2,10 @@
 #
 #
 #
-#
-
 import subprocess
+import sys
 
-from phlop.os import pushd, write_to_file
 from phlop.procs.runtimer import RunTimer
-from phlop.string import decode_bytes
 
 
 class ProcessNonZeroExitCode(RuntimeError): ...
@@ -51,7 +48,10 @@ def run_mp(cmds, N_CORES=None, **kwargs):
                     raise future.exception()
             except Exception as exc:
                 if kwargs.get("check", False):
-                    executor.shutdown(wait=False, cancel_futures=True)
+                    dic = {"wait": False}
+                    if sys.version_info > (3, 8):
+                        dic["cancel_futures"] = True
+                    executor.shutdown(**dic)
                     raise exc
                 else:
                     print(f"run_mp generated an exception: {exc}")

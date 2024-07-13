@@ -15,3 +15,8 @@ py -O tests/all_concurrent.py
 
 mkn test -p scope_timer
 py -O tests/timing/test_scope_timer.py test_scope_timer -f scope_timer.txt
+
+py -Om phlop.run.valgrind echo yes
+py -Om phlop.run.valgrind --tool=massif echo yes
+
+py -Om phlop.run.perf echo yes || echo "perf failed, assumed CI"

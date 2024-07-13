@@ -1,7 +1,6 @@
 #
 #
 
-import logging
 import multiprocessing
 import re
 import sys
@@ -9,11 +8,12 @@ import unittest
 from pathlib import Path
 
 from phlop.dict import ValDict
+from phlop.logger import getLogger
 from phlop.reflection import classes_in_directory
 from phlop.testing import parallel_processor as pp
+from phlop.testing import test_cases as tc
 
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 
 def cli_args_parser():
@@ -72,12 +72,12 @@ def verify_cli_args(cli_args):
 
 def get_test_cases(cli_args):
     if cli_args.cmake:
-        return pp.load_cmake_tests(
+        return tc.load_cmake_tests(
             cli_args.dir, test_cmd_pre=cli_args.prefix, test_cmd_post=cli_args.postfix
         )
     return [
-        pp.TestBatch(
-            pp.load_test_cases_in(
+        tc.TestBatch(
+            tc.load_test_cases_in(
                 classes_in_directory(cli_args.dir, unittest.TestCase),
                 test_cmd_pre=cli_args.prefix,
                 test_cmd_post=cli_args.postfix,
@@ -95,7 +95,7 @@ def dump_batches(cli_args):
     with open(cli_args.dump, "w") as f:
         f.write(
             codecs.encode(
-                dill.dumps(pp.TestBatchesList(batch_list=get_test_cases(cli_args))),
+                dill.dumps(tc.TestBatchesList(batch_list=get_test_cases(cli_args))),
                 "hex",
             ).decode("utf8")
         )
@@ -106,18 +106,22 @@ def filter_out_regex_fails(cli_args, test_batches):
         return test_batches
     try:
         pattern = re.compile(cli_args.regex)
-        is_valid = True
-        op = lambda x: pattern.search(x)
+
+        def op(x):
+            return pattern.search(x)
+
     except re.error:
         print("regex invalid, resorting to 'str in str' approach")
-        is_valid = False
-        op = lambda x: cli_args.regex in x
+
+        def op(x):
+            return cli_args.regex in x
+
     filtered = {tb.cores: [] for tb in test_batches}
     for tb in test_batches:
         for test in tb.tests:
             if op(test.cmd):
                 filtered[tb.cores].append(test)
-    return [pp.TestBatch(v, k) for k, v in filtered.items() if v]
+    return [tc.TestBatch(v, k) for k, v in filtered.items() if v]
 
 
 def noLog(test_batches):
@@ -167,14 +171,12 @@ def main():
             logging=cli_args.logging,
         )
 
-    except pp.TestCaseFailure as e:
+    except pp.TestCaseFailure:
         sys.exit(1)
     except (Exception, SystemExit) as e:
         logger.exception(e)
         parser.print_help()
-    except:
-        e = sys.exc_info()[0]
-        print(f"Error: Unknown Error {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

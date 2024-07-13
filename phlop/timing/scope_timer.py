@@ -46,7 +46,7 @@ def file_parser(times_filepath):
             if not line:
                 break
             bits = line.split(" ")
-            id_keys[bits[0]] = bits[1]
+            id_keys[int(bits[0])] = bits[1]
         while line := file.readline():
             line = line.rstrip()  # drop new line characters
             stripped_line = line.strip()
@@ -54,7 +54,7 @@ def file_parser(times_filepath):
                 continue
             idx = len(line) - len(stripped_line)  # how many space indents from left
             bits = stripped_line.split(" ")
-            node = RunTimerNode(*bits)
+            node = RunTimerNode(*[int(b) for b in bits])
             if idx == 0:  # is root node
                 stack[0] = len(roots)
                 roots.append(node)
@@ -76,3 +76,23 @@ def file_parser(times_filepath):
                 white_space = idx
             curr = node
     return ScopeTimerFile(id_keys, roots)
+
+
+def print_scope_timings(scope_timer_file, percentages=True, sort_worst_first=True):
+    """:|"""
+    stf = scope_timer_file  # alias
+    if sort_worst_first:
+        stf.roots.sort(reverse=True, key=lambda x: x.t)
+
+    def kinder(tot, n, tabs=0):
+        o = " " * tabs
+        for i in range(len(n.c)):
+            c = n.c[i]
+            pc = c.t / tot * 100.0
+            print(o, f"{pc:.2f}%", stf(c.k), c.t)
+            kinder(tot, c, tabs + 1)
+
+    for root in stf.roots:
+        total = root.t
+        print("100%", stf(root.k), root.t)
+        kinder(total, root)

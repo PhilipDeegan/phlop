@@ -5,7 +5,7 @@ import logging
 import os
 import sys
 
-from phlop.app import stats_man as sman
+from phlop.app import perf as p
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -17,7 +17,7 @@ def verify_cli_args(cli_args):
     try:
         cli_args.interval = int(cli_args.interval)
     except ValueError:
-        raise ValueError("Interval must be an integer")
+        raise ValueError("Interval must be an integer") from None
     if cli_args.yaml:
         cli_args.yaml = f"{cli_args.yaml}.{MPI_RANK}.yaml"
         cli_args.summary = False
@@ -26,13 +26,10 @@ def verify_cli_args(cli_args):
 
 
 def main():
-    parser = sman.cli_args_parser()
-    cli_args = verify_cli_args(parser.parse_args())
+    parser = p.cli_args_parser()
+    # cli_args = verify_cli_args(parser.parse_args())
     try:
-        info = dict(exe=cli_args.remaining, rank=MPI_RANK)
-        statsman = sman.RuntimeStatsManager(cli_args, info).join()
-        if cli_args.summary:
-            sman.print_summary(statsman)
+        ...
     except (Exception, SystemExit) as e:
         logger.exception(e)
         parser.print_help()

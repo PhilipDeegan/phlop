@@ -32,7 +32,7 @@ def classes_in_file(file_path, subclasses_only=None, fail_on_import_error=False)
             for name, cls in inspect.getmembers(
                 importlib.import_module(module), inspect.isclass
             ):
-                should_add = subclasses_only == None or any(
+                should_add = subclasses_only is None or any(
                     [issubclass(cls, sub) for sub in subclasses_only]
                 )
                 if should_add:
