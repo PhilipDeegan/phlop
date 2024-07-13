@@ -8,8 +8,7 @@ import sys
 from phlop.procs.runtimer import RunTimer
 
 
-class ProcessNonZeroExitCode(RuntimeError):
-    ...
+class ProcessNonZeroExitCode(RuntimeError): ...
 
 
 def run(cmd, shell=True, capture_output=True, check=False, print_cmd=True, **kwargs):

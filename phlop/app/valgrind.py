@@ -5,24 +5,16 @@ from phlop.proc import run
 
 
 def run_massif(cli_args):
-    run(
-        " ".join(
-            [
-                "valgrind",
-                "--tool=massif",
-                "--massif-out-file=massif.phlop",
-                *cli_args.remaining,
-            ]
-        ),
-        capture_output=True,
+    outfile = cli_args.outfile if cli_args.outfile else "massif.phlop"
+    cmd = f"valgrind --tool=massif --massif-out-file={outfile} " + " ".join(
+        cli_args.remaining
     )
+    run(cmd, capture_output=True)
 
 
 def run_memcheck(cli_args):
-    run(
-        " ".join(["valgrind", *cli_args.remaining]),
-        capture_output=True,
-    )
+    cmd = "valgrind " + " ".join(cli_args.remaining)
+    run(cmd, capture_output=True)
 
 
 def run_valgrind(cli_args):

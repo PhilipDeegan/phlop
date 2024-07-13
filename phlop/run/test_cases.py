@@ -13,7 +13,6 @@ from phlop.reflection import classes_in_directory
 from phlop.testing import parallel_processor as pp
 from phlop.testing import test_cases as tc
 
-
 logger = getLogger(__name__)
 
 
@@ -177,6 +176,7 @@ def main():
     except (Exception, SystemExit) as e:
         logger.exception(e)
         parser.print_help()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

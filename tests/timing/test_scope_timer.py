@@ -3,7 +3,9 @@
 import argparse
 import logging
 import sys
+
 import numpy as np
+
 from phlop.timing import scope_timer
 
 logging.basicConfig(level=logging.DEBUG)

@@ -1,6 +1,7 @@
 #
 #
 
+import sys
 from pathlib import Path
 
 from phlop.app import perf as p
@@ -77,6 +78,7 @@ def main():
     except (Exception, SystemExit) as e:
         logger.exception(e)
         parser.print_help()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

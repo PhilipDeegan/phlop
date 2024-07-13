@@ -98,7 +98,7 @@ def load_test_cases_in(
         for suite in loader.loadTestsFromTestCase(test_class):
             cmd = test_cmd_fn(type(suite), suite._testMethodName)
 
-            def logfile():
+            def logfile(test_class=test_class, suite=suite):
                 filename = Path(sys.modules[test_class.__module__].__file__).stem
                 return str((Path(log_file_path) / filename / suite._testMethodName))
 

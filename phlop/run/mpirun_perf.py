@@ -17,7 +17,7 @@ def verify_cli_args(cli_args):
     try:
         cli_args.interval = int(cli_args.interval)
     except ValueError:
-        raise ValueError("Interval must be an integer")
+        raise ValueError("Interval must be an integer") from None
     if cli_args.yaml:
         cli_args.yaml = f"{cli_args.yaml}.{MPI_RANK}.yaml"
         cli_args.summary = False
@@ -33,6 +33,7 @@ def main():
     except (Exception, SystemExit) as e:
         logger.exception(e)
         parser.print_help()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

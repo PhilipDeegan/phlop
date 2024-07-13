@@ -1,6 +1,7 @@
 #
 #
 
+import sys
 
 from phlop.app import valgrind as vg
 from phlop.dict import ValDict
@@ -15,6 +16,7 @@ def cli_args_parser():
     _help = ValDict(
         quiet="Redirect output to /dev/null",
         tool="which valgrind tool to pick (massif/etc)",
+        outfile="outfile path base if available",
     )
     parser = argparse.ArgumentParser()
     parser.add_argument("remaining", nargs=argparse.REMAINDER)
@@ -22,6 +24,7 @@ def cli_args_parser():
         "-q", "--quiet", action="store_true", default=False, help=_help.quiet
     )
     parser.add_argument("-t", "--tool", default="", help=_help.tool)
+    parser.add_argument("-o", "--outfile", default="", help=_help.outfile)
     return parser
 
 
@@ -38,6 +41,7 @@ def main():
     except (Exception, SystemExit) as e:
         logger.exception(e)
         parser.print_help()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
