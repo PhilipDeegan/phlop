@@ -6,6 +6,7 @@
 
 
 import os
+import sys
 import unittest
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -96,14 +97,15 @@ def load_test_cases_in(
     for test_class in classes:
         for suite in loader.loadTestsFromTestCase(test_class):
             cmd = test_cmd_fn(type(suite), suite._testMethodName)
+
+            def logfile():
+                filename = Path(sys.modules[test_class.__module__].__file__).stem
+                return str((Path(log_file_path) / filename / suite._testMethodName))
+
             tests += [
                 TestCase(
                     cmd=f"{test_cmd_pre} {cmd} {test_cmd_post}".strip(),
-                    log_file_path=(
-                        None
-                        if not log_file_path
-                        else f"{log_file_path}/{suite._testMethodName}"
-                    ),
+                    log_file_path=(None if not log_file_path else logfile()),
                     **kwargs,
                 )
             ]

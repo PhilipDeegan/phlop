@@ -1,7 +1,6 @@
 #
 #
 
-import logging
 import multiprocessing
 import re
 import sys
@@ -9,12 +8,13 @@ import unittest
 from pathlib import Path
 
 from phlop.dict import ValDict
+from phlop.logger import getLogger
 from phlop.reflection import classes_in_directory
 from phlop.testing import parallel_processor as pp
 from phlop.testing import test_cases as tc
 
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+
+logger = getLogger(__name__)
 
 
 def cli_args_parser():
@@ -73,7 +73,7 @@ def verify_cli_args(cli_args):
 
 def get_test_cases(cli_args):
     if cli_args.cmake:
-        return pp.load_cmake_tests(
+        return tc.load_cmake_tests(
             cli_args.dir, test_cmd_pre=cli_args.prefix, test_cmd_post=cli_args.postfix
         )
     return [
@@ -96,7 +96,7 @@ def dump_batches(cli_args):
     with open(cli_args.dump, "w") as f:
         f.write(
             codecs.encode(
-                dill.dumps(pp.TestBatchesList(batch_list=get_test_cases(cli_args))),
+                dill.dumps(tc.TestBatchesList(batch_list=get_test_cases(cli_args))),
                 "hex",
             ).decode("utf8")
         )
@@ -122,7 +122,7 @@ def filter_out_regex_fails(cli_args, test_batches):
         for test in tb.tests:
             if op(test.cmd):
                 filtered[tb.cores].append(test)
-    return [pp.TestBatch(v, k) for k, v in filtered.items() if v]
+    return [tc.TestBatch(v, k) for k, v in filtered.items() if v]
 
 
 def noLog(test_batches):
