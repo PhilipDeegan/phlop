@@ -10,7 +10,7 @@ from phlop.logger import getLogger
 logger = getLogger(__name__)
 
 
-def cli_args_parser():
+def cli_args_parser(description="valgrinding"):
     import argparse
 
     _help = ValDict(
@@ -18,7 +18,9 @@ def cli_args_parser():
         tool="which valgrind tool to pick (massif/etc)",
         outfile="outfile path base if available",
     )
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description=description, formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     parser.add_argument("remaining", nargs=argparse.REMAINDER)
     parser.add_argument(
         "-q", "--quiet", action="store_true", default=False, help=_help.quiet

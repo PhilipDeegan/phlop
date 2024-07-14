@@ -104,7 +104,7 @@ def stat_mp(exe, events, output_files):
     return run_mp([stat_cmd(exe, events, out) for out in output_files])
 
 
-def cli_args_parser():
+def cli_args_parser(description="Perf tool"):
     import argparse
 
     _help = ValDict(
@@ -117,7 +117,9 @@ def cli_args_parser():
         logging="0=off, 1=on non zero exit code, 2=always",
     )
 
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description=description, formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     parser.add_argument("remaining", nargs=argparse.REMAINDER)
     parser.add_argument("-d", "--dir", default=".", help=_help.dir)
     parser.add_argument("-c", "--cores", type=int, default=1, help=_help.cores)

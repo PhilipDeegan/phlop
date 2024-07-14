@@ -8,9 +8,11 @@ from phlop.logger import getLogger
 
 logger = getLogger(__name__)
 
+USAGE = """Stats Manager - see CPU/RAM/FD usage"""
+
 
 def main():
-    parser = sman.cli_args_parser()
+    parser = sman.cli_args_parser(USAGE)
     cli_args = sman.verify_cli_args(parser.parse_args())
     try:
         info = dict(exe=cli_args.remaining)

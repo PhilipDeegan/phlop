@@ -14,7 +14,9 @@ logger = logging.getLogger(__name__)
 
 def test_scope_timer(scope_timer_filepath=None):
     if scope_timer_filepath is None:  # assume cli
-        parser = argparse.ArgumentParser()
+        parser = argparse.ArgumentParser(
+            formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        )
         parser.add_argument("-f", "--file", default=None, help="timer file")
         scope_timer_filepath = parser.parse_args().file
         if not scope_timer_filepath:
