@@ -87,7 +87,6 @@ def write_scope_timings(scope_timer_file, outfile, sort_worst_first=True):
 
 
 def print_scope_timings(scope_timer_file, sort_worst_first=True):
-    """:|"""
     stf = scope_timer_file  # alias
     if sort_worst_first:
         stf.roots.sort(reverse=True, key=lambda x: x.t)
@@ -124,8 +123,6 @@ def write_root_as_csv(scope_timer_file, outfile, headers=None, regex=None):
 
 
 def print_root_as_csv(scope_timer_file, headers=None, regex=None):
-    """:|"""
-
     stf = scope_timer_file  # alias
     stf = file_parser(stf) if isinstance(stf, str) else stf
 
