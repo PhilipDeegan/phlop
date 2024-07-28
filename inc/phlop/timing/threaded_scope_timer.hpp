@@ -40,8 +40,6 @@ struct ScopeTimerMan
     ScopeTimerMan()
         : timer_file{file_name_default}
     {
-        // reports.reserve(5);
-        // traces.reserve(5);
     }
     ~ScopeTimerMan() {}
 
@@ -55,12 +53,9 @@ struct ScopeTimerMan
         {
             if (write)
                 detail::write_timer_file();
-            // local().traces.clear();
-            // local().reports.clear();
         }
         _headers.clear();
         thread_storage.clear();
-        // thread_storage = std::move(std::vector<per_thread>{});
         active = false;
     }
 
@@ -92,9 +87,6 @@ struct ScopeTimerMan
     bool _force_strings = false;
     std::string timer_file;
     std::vector<std::string> _headers;
-    // std::vector<RunTimerReport*> reports;
-    // std::vector<RunTimerReportSnapshot*> traces;
-    // RunTimerReport* report_stack_ptr = nullptr;
 
     struct per_thread
     {
@@ -108,7 +100,6 @@ struct ScopeTimerMan
         per_thread(per_thread const&) = delete;
         ~per_thread()
         {
-            std::cout << __FILE__ << " " << __LINE__ << " " << movable << std::endl;
             if (movable)
                 move(); // backup on thread death
         }

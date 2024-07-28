@@ -51,10 +51,13 @@ int main()
     for (std::size_t i = 0; i < 2; ++i)
         fn2();
 
-    std::thread{[&]() {
-        for (std::size_t i = 0; i < 2; ++i)
-            fny();
-    }}.join();
+    {
+        PHLOP_SCOPE_TIMER("thread_scope");
+        std::thread{[&]() {
+            for (std::size_t i = 0; i < 2; ++i)
+                fny();
+        }}.join();
+    }
 
 
     phlop::threaded::ScopeTimerMan::INSTANCE().shutdown();
