@@ -11,6 +11,7 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 MPI_RANK = os.environ.get("OMPI_COMM_WORLD_RANK")
+USAGE = """MPI Stats Manager - see CPU/RAM/FD usage"""
 
 
 def verify_cli_args(cli_args):
@@ -26,7 +27,7 @@ def verify_cli_args(cli_args):
 
 
 def main():
-    parser = sman.cli_args_parser()
+    parser = sman.cli_args_parser(USAGE)
     cli_args = verify_cli_args(parser.parse_args())
     try:
         info = dict(exe=cli_args.remaining, rank=MPI_RANK)

@@ -104,7 +104,7 @@ def stat_mp(exe, events, output_files):
     return run_mp([stat_cmd(exe, events, out) for out in output_files])
 
 
-def cli_args_parser():
+def cli_args_parser(description="Perf tool"):
     import argparse
 
     _help = ValDict(
@@ -115,9 +115,13 @@ def cli_args_parser():
         print_only="Print only, no execution",
         regex="Filter out non-matching execution strings",
         logging="0=off, 1=on non zero exit code, 2=always",
+        outfile="path for saved file if active",
+        tool="stat/record/etc",
     )
 
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description=description, formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     parser.add_argument("remaining", nargs=argparse.REMAINDER)
     parser.add_argument("-d", "--dir", default=".", help=_help.dir)
     parser.add_argument("-c", "--cores", type=int, default=1, help=_help.cores)
@@ -126,6 +130,8 @@ def cli_args_parser():
     )
     parser.add_argument("-i", "--infiles", default=None, help=_help.infiles)
     parser.add_argument("-r", "--regex", default=None, help=_help.regex)
+    parser.add_argument("-o", "--outfile", default=None, help=_help.outfile)
+    parser.add_argument("-t", "--tool", default="stat", help=_help.tool)
     parser.add_argument("--logging", type=int, default=1, help=_help.logging)
     return parser
 

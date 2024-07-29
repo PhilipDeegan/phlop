@@ -15,6 +15,8 @@ from phlop.testing import test_cases as tc
 
 logger = getLogger(__name__)
 
+USAGE = """Flexible parallel test runner"""
+
 
 def cli_args_parser():
     import argparse
@@ -26,18 +28,19 @@ def cli_args_parser():
         print_only="Print only, no execution",
         prefix="Prepend string to execution string",
         postfix="Append string to execution string",
-        dump="Dump discovered tests as YAML, no execution",
-        load="Run tests exported from dump",
+        dump="Dump discovered tests as YAML to filepath, no execution",
+        load="globbing filepath for files exported from dump",
         regex="Filter out non-matching execution strings",
         reverse="reverse order - higher core count tests preferred",
         logging="0=off, 1=on non zero exit code, 2=always",
     )
 
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description=USAGE, formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     parser.add_argument("--cmake", action="store_true", default=False, help=_help.cmake)
     parser.add_argument("-c", "--cores", type=int, default=1, help=_help.cores)
     parser.add_argument("-d", "--dir", default=".", help=_help.dir)
-    parser.add_argument("-f", "--filter", type=str, default="", help="")
     parser.add_argument(
         "-p", "--print_only", action="store_true", default=False, help=_help.print_only
     )
@@ -152,7 +155,9 @@ def main():
             return
 
         test_batches = (
-            pp.extract_load(cli_args) if cli_args.load else get_test_cases(cli_args)
+            pp.extract_load(cli_args.dir, cli_args.load)
+            if cli_args.load
+            else get_test_cases(cli_args)
         )
         test_batches = filter_out_regex_fails(cli_args, test_batches)
 
