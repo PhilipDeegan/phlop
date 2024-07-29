@@ -92,11 +92,11 @@ def print_scope_timings(scope_timer_file, sort_worst_first=True):
         stf.roots.sort(reverse=True, key=lambda x: x.t)
 
     def loss(n):
-        l = n.t if n.c else 0
+        lss = n.t if n.c else 0
         for c in n.c:
-            l -= c.t
+            lss -= c.t
 
-        return "-" if l < 1e-2 else float(f"{l / n.t * 100:.2f}")
+        return "-" if lss < 1e-2 else float(f"{lss / n.t * 100:.2f}")
 
     def kinder(tot, n, tabs, rem):
         if not n.c:
