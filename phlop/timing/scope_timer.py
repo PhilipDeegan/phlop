@@ -78,21 +78,65 @@ def file_parser(times_filepath):
     return ScopeTimerFile(id_keys, roots)
 
 
-def print_scope_timings(scope_timer_file, percentages=True, sort_worst_first=True):
-    """:|"""
+def write_scope_timings(scope_timer_file, outfile, sort_worst_first=True):
+    from contextlib import redirect_stdout
+
+    with open(outfile, "w") as f:
+        with redirect_stdout(f):
+            print_scope_timings(scope_timer_file, sort_worst_first)
+
+
+def print_scope_timings(scope_timer_file, sort_worst_first=True):
     stf = scope_timer_file  # alias
     if sort_worst_first:
         stf.roots.sort(reverse=True, key=lambda x: x.t)
 
-    def kinder(tot, n, tabs=0):
+    def loss(n):
+        lss = n.t if n.c else 0
+        for c in n.c:
+            lss -= c.t
+
+        return "-" if lss < 1e-2 else float(f"{lss / n.t * 100:.2f}")
+
+    def kinder(tot, n, tabs, rem):
+        if not n.c:
+            return
         o = " " * tabs
         for i in range(len(n.c)):
             c = n.c[i]
             pc = c.t / tot * 100.0
-            print(o, f"{pc:.2f}%", stf(c.k), c.t)
-            kinder(tot, c, tabs + 1)
+            print(o, f"{pc:.2f}% loss({loss(c)})", stf(c.k), c.t)
+            kinder(tot, c, tabs + 1, c.t)
 
     for root in stf.roots:
         total = root.t
-        print("100%", stf(root.k), root.t)
-        kinder(total, root)
+        print(f"100% loss({loss(root)})", stf(root.k), root.t)
+        kinder(total, root, 0, total)
+
+
+def write_root_as_csv(scope_timer_file, outfile, headers=None, regex=None):
+    from contextlib import redirect_stdout
+
+    with open(outfile, "w") as f:
+        with redirect_stdout(f):
+            print_root_as_csv(scope_timer_file, headers, regex)
+
+
+def print_root_as_csv(scope_timer_file, headers=None, regex=None):
+    stf = scope_timer_file  # alias
+    stf = file_parser(stf) if isinstance(stf, str) else stf
+
+    if headers:
+        print(",".join(headers))
+    for root in stf.roots:
+        s = stf(root.k)
+
+        if regex and regex not in s:
+            continue
+
+        bits = s.split(",")
+        dim = int(bits[1])
+
+        ppc = 32**dim * 100
+
+        print(f"{s}{root.t},{root.t/ppc}")

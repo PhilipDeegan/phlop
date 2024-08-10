@@ -193,10 +193,10 @@ def deserialize(s):
     return dill.loads(codecs.decode(s, "hex"))
 
 
-def extract_load(cli_args):
+def extract_load(directory, globbing):
     test_batches = {}
 
-    file_paths = list(Path(cli_args.dir).glob(cli_args.load))
+    file_paths = list(Path(directory).glob(globbing))
 
     if not file_paths:
         raise ValueError("No load files found")

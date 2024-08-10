@@ -8,7 +8,6 @@ import numpy as np
 
 from phlop.timing import scope_timer
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
@@ -23,7 +22,6 @@ def test_scope_timer(scope_timer_filepath=None):
 
     scope_timer_file = scope_timer.file_parser(scope_timer_filepath)
     np.testing.assert_equal(scope_timer_file(scope_timer_file.roots[0].k), "fn1")
-    scope_timer.print_scope_timings(scope_timer_file)
 
 
 if __name__ == "__main__":

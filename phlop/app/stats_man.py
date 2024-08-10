@@ -34,7 +34,7 @@ class ProcessCaptureInfo:
     timestamps: list = field(default_factory=lambda: [])
 
 
-def cli_args_parser():
+def cli_args_parser(description=""):
     import argparse
 
     _help = ValDict(
@@ -43,7 +43,9 @@ def cli_args_parser():
         yaml="write yaml file during execution",
         summary="prints summary on end",
     )
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description=description, formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     parser.add_argument("remaining", nargs=argparse.REMAINDER)
     parser.add_argument(
         "-q", "--quiet", action="store_true", default=False, help=_help.quiet
@@ -196,8 +198,41 @@ class RuntimeStatsManager:
             end_yaml(this.cli_args.yaml)
 
 
-def attach_to_this_process():
-    return RuntimeStatsManager(os.getpid())
+class AttachableRuntimeStatsManager:
+    def __init__(self, cli_args, info={}):
+        self.pid = os.getpid()
+        self.cli_args = cli_args
+        init_yaml(self.cli_args, self.pid, info)
+        self.data = {}
+        self.p = Process(target=AttachableRuntimeStatsManager._run, args=(self,))
+
+    def start(self):
+        self.daemon = True
+        self.p.start()
+        return self
+
+    def kill(self):
+        if self and self.p and check_pid(self.p.pid):
+            os.kill(self.p.pid, signal.SIGINT)
+        return self
+
+    def join(self):
+        if not self.p.pid:
+            return
+        while self.p.exitcode is None and check_pid(self.p.pid):
+            time.sleep(1)
+        self.pid = 0
+        return self
+
+    @staticmethod
+    def _run(this):
+        while check_pid(this.pid):
+            try:
+                append_yaml(this.cli_args.yaml, this.pid)
+                time.sleep(this.cli_args.interval)
+            except (KeyboardInterrupt, psutil.AccessDenied):
+                break
+        end_yaml(this.cli_args.yaml)
 
 
 def print_summary(statsman):
