@@ -155,7 +155,7 @@ def main():
             return
 
         test_batches = (
-            pp.extract_load(cli_args.dir, cli_args.load)
+            tc.extract_load(cli_args.dir, cli_args.load)
             if cli_args.load
             else get_test_cases(cli_args)
         )
