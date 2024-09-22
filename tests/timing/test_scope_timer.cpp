@@ -1,6 +1,8 @@
 
 #include "phlop/timing/scope_timer.hpp"
 
+#include <thread>
+
 using namespace std::chrono_literals;
 
 void fny()
