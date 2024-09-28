@@ -8,8 +8,27 @@ from dataclasses import dataclass, field
 @dataclass
 class RunTimerNode:
     k: int
+    s: int
     t: int
     c: list = field(default_factory=lambda: [])
+
+    @staticmethod
+    def from_scope_timer(line):
+        key, start_and_run_time = line.split(" ")
+        start_time, run_time = start_and_run_time.split(":")
+        return RunTimerNode(*[int(e) for e in (key, start_time, run_time)])
+
+    @property
+    def key(self) -> int:
+        return self.k
+
+    @property
+    def start_time(self) -> int:
+        return self.s
+
+    @property
+    def run_time(self) -> int:
+        return self.t
 
 
 @dataclass
@@ -53,8 +72,7 @@ def file_parser(times_filepath):
             if not stripped_line:  # last line might be blank
                 continue
             idx = len(line) - len(stripped_line)  # how many space indents from left
-            bits = stripped_line.split(" ")
-            node = RunTimerNode(*[int(b) for b in bits])
+            node = RunTimerNode.from_scope_timer(stripped_line)
             if idx == 0:  # is root node
                 stack[0] = len(roots)
                 roots.append(node)
