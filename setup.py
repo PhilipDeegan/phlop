@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="phlop",
-    version="0.0.26",
+    version="0.0.27",
     cmdclass={},
     classifiers=[],
     include_package_data=True,
