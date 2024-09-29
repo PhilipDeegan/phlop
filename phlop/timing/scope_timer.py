@@ -2,6 +2,8 @@
 # parsing PHARE scope funtion timers
 #
 
+import numpy as np
+from pathlib import Path
 from dataclasses import dataclass, field
 
 
@@ -132,29 +134,46 @@ def print_scope_timings(scope_timer_file, sort_worst_first=True):
         kinder(total, root, 0, total)
 
 
-def write_root_as_csv(scope_timer_file, outfile, headers=None, regex=None):
+def write_variance_across(scope_timer_file_glob, outfile):
     from contextlib import redirect_stdout
 
     with open(outfile, "w") as f:
         with redirect_stdout(f):
-            print_root_as_csv(scope_timer_file, headers, regex)
+            print_variance_across(scope_timer_file_glob)
 
 
-def print_root_as_csv(scope_timer_file, headers=None, regex=None):
-    stf = scope_timer_file  # alias
-    stf = file_parser(stf) if isinstance(stf, str) else stf
+def print_variance_across(scope_timer_file_glob, root_id=None):
+    scope_timer_files = [file_parser(f) for f in Path.cwd().glob(scope_timer_file_glob)]
+    if not scope_timer_files:
+        return
 
-    if headers:
-        print(",".join(headers))
-    for root in stf.roots:
-        s = stf(root.k)
+    stacks = [[] for _ in range(len(scope_timer_files))]
 
-        if regex and regex not in s:
-            continue
+    def map_graph(n, k, t=0):
+        stacks[k].append((n.k, t, n.s, n.t))
+        if not n.c:
+            return
+        for i in range(len(n.c)):
+            map_graph(n.c[i], k, t + 1)
 
-        bits = s.split(",")
-        dim = int(bits[1])
+    for i, stf in enumerate(scope_timer_files):
+        for root in stf.roots:
+            if root_id and root_id != root.k:
+                continue
+            map_graph(root, i)
 
-        ppc = 32**dim * 100
+    numerics = []
+    for data in stacks[0]:
+        numerics.append((data, [], []))
 
-        print(f"{s}{root.t},{root.t/ppc}")
+    for stack in stacks:
+        for i, data in enumerate(stack):
+            numerics[i][1].append(data[2])
+            numerics[i][2].append(data[3])
+
+    stf = scope_timer_files[0]
+    for num in numerics:
+        data, starts, times = num
+        key, tabs, _, __ = data
+        o = " " * tabs
+        print(o, stf(key), int(np.std(starts)), int(np.std(times)))
