@@ -142,7 +142,7 @@ struct scope_timer
     std::uint64_t static now()
     {
         return std::chrono::duration_cast<std::chrono::nanoseconds>(
-                   std::chrono::system_clock::now().time_since_epoch())
+                   std::chrono::steady_clock::now().time_since_epoch())
             .count();
     }
 
