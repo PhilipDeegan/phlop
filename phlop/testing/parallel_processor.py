@@ -11,8 +11,11 @@ from multiprocessing import Process, Queue, cpu_count
 
 from phlop.proc import run
 
+timeout = 60  # seconds - give chance to interrupt
 
-class TestCaseFailure(Exception): ...
+
+class TestCaseFailure(Exception):
+    ...
 
 
 class LoggingMode(Enum):
@@ -32,7 +35,7 @@ class CallableTest:
         self.run = run(
             self.test_case.cmd.split(),
             shell=False,
-            capture_output=True,
+            capture_output=False,
             check=True,
             print_cmd=False,
             env=self.test_case.env,
@@ -93,10 +96,7 @@ def process(
                     )
                     cc.cores_avail -= batch.cores
                     cc.procs[batch_index] += [
-                        Process(
-                            target=runner,
-                            args=(test, (pqueue)),
-                        )
+                        Process(target=runner, args=(test, (pqueue)))
                     ]
                     cc.procs[batch_index][-1].daemon = True
                     cc.procs[batch_index][-1].start()
@@ -110,7 +110,13 @@ def process(
     def waiter(queue):
         fail = 0
         while True:
-            proc = queue.get()
+            proc = None
+            try:
+                proc = queue.get(timeout=timeout)
+            except Exception:
+                print("Queue Exception! - no jobs finished - polling")
+                continue
+
             time.sleep(0.01)  # don't throttle!
             if isinstance(proc, CallableTest):
                 status = "finished" if proc.run.exitcode == 0 else "FAILED"
