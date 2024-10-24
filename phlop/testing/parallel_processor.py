@@ -9,7 +9,12 @@ import time
 from enum import Enum
 from multiprocessing import Process, Queue, cpu_count
 
+from phlop.logger import getLogger
+from phlop.os import read_file
 from phlop.proc import run
+
+timeout = 60 * 60  # seconds - give chance to interrupt
+logger = getLogger(__name__)
 
 
 class TestCaseFailure(Exception): ...
@@ -32,7 +37,7 @@ class CallableTest:
         self.run = run(
             self.test_case.cmd.split(),
             shell=False,
-            capture_output=True,
+            capture_output=False,
             check=True,
             print_cmd=False,
             env=self.test_case.env,
@@ -43,6 +48,13 @@ class CallableTest:
         if self.run.stderr and self.run.exitcode != 0:
             print(self.run.stderr)
         return self
+
+    def print_log_files(self):
+        print(self.run.stdout)
+        print(self.run.stderr)
+        if self.test_case.log_file_path:
+            print(read_file(f"{self.test_case.log_file_path}.stdout"))
+            print(read_file(f"{self.test_case.log_file_path}.stdout"))
 
 
 class CoreCount:
@@ -93,10 +105,7 @@ def process(
                     )
                     cc.cores_avail -= batch.cores
                     cc.procs[batch_index] += [
-                        Process(
-                            target=runner,
-                            args=(test, (pqueue)),
-                        )
+                        Process(target=runner, args=(test, (pqueue)))
                     ]
                     cc.procs[batch_index][-1].daemon = True
                     cc.procs[batch_index][-1].start()
@@ -110,10 +119,18 @@ def process(
     def waiter(queue):
         fail = 0
         while True:
-            proc = queue.get()
+            proc = None
+            try:
+                proc = queue.get(timeout=timeout)
+            except Exception:
+                logger.info("Queue timeout - polling")
+                continue
+
             time.sleep(0.01)  # don't throttle!
             if isinstance(proc, CallableTest):
                 status = "finished" if proc.run.exitcode == 0 else "FAILED"
+                if proc.run.exitcode > 0:
+                    proc.print_log_files()
                 fail += proc.run.exitcode
                 if fail_fast and fail > 0:
                     raise TestCaseFailure("Some tests have failed")

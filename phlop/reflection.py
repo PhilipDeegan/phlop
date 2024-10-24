@@ -2,7 +2,6 @@
 #
 #
 #
-#
 
 import importlib
 import inspect
@@ -17,7 +16,7 @@ FORCE_RAISE_ON_IMPORT_ERROR = os.getenv(
 ).lower() in ("true", "1", "t")
 
 
-def classes_in_file(file_path, subclasses_only=None, fail_on_import_error=False):
+def classes_in_file(file_path, subclasses_only=None, fail_on_import_error=True):
     file = Path(file_path)
     module = str(file).replace(os.path.sep, ".")[:-3]
     assert module

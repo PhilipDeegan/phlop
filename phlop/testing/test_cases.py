@@ -18,7 +18,6 @@ from phlop.reflection import classes_in_file
 from phlop.sys import extend_sys_path
 
 _LOG_DIR = Path(os.environ.get("PHLOP_LOG_DIR", os.getcwd()))
-
 CMD_PREFIX = ""
 CMD_POSTFIX = ""
 
@@ -143,8 +142,10 @@ def determine_cores_for_test_case(test_case):
 
 
 def binless(test_case):
-    if test_case.cmd.startswith("/usr/bin/"):
-        test_case.cmd = test_case.cmd[9:]
+    if test_case.cmd.startswith("/usr/"):
+        bits = test_case.cmd.split(" ")
+        test_case.cmd = " ".join([bits[0].split("/")[-1]] + bits[1:])
+    # print("test_case.cmd ", test_case.cmd)
     return test_case
 
 
