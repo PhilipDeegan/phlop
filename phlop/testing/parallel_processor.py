@@ -10,6 +10,7 @@ from enum import Enum
 from multiprocessing import Process, Queue, cpu_count
 
 from phlop.logger import getLogger
+from phlop.os import read_file
 from phlop.proc import run
 
 timeout = 60 * 60  # seconds - give chance to interrupt
@@ -47,6 +48,13 @@ class CallableTest:
         if self.run.stderr and self.run.exitcode != 0:
             print(self.run.stderr)
         return self
+
+    def print_log_files(self):
+        print(self.run.stdout)
+        print(self.run.stderr)
+        if self.test_case.log_file_path:
+            print(read_file(f"{self.test_case.log_file_path}.stdout"))
+            print(read_file(f"{self.test_case.log_file_path}.stdout"))
 
 
 class CoreCount:
@@ -121,6 +129,8 @@ def process(
             time.sleep(0.01)  # don't throttle!
             if isinstance(proc, CallableTest):
                 status = "finished" if proc.run.exitcode == 0 else "FAILED"
+                if proc.run.exitcode > 0:
+                    proc.print_log_files()
                 fail += proc.run.exitcode
                 if fail_fast and fail > 0:
                     raise TestCaseFailure("Some tests have failed")

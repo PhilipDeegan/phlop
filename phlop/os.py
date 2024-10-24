@@ -48,5 +48,14 @@ def write_to_file(file, contents, mode="w", skip_if_empty=True):
             raise RuntimeError(f"Failed to write to file {file}: {e}")
 
 
+def read_file(file):
+    try:
+        Path(file).parent.mkdir(parents=True, exist_ok=True)
+        with open(file, "r") as f:
+            return f.read()
+    except IOError as e:
+        raise RuntimeError(f"Failed to read file {file}: {e}")
+
+
 def env_sep():
     return ";" if any(platform.win32_ver()) else ":"
