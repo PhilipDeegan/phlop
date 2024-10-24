@@ -9,13 +9,14 @@ import time
 from enum import Enum
 from multiprocessing import Process, Queue, cpu_count
 
+from phlop.logger import getLogger
 from phlop.proc import run
 
-timeout = 60  # seconds - give chance to interrupt
+timeout = 60 * 60  # seconds - give chance to interrupt
+logger = getLogger(__name__)
 
 
-class TestCaseFailure(Exception):
-    ...
+class TestCaseFailure(Exception): ...
 
 
 class LoggingMode(Enum):
@@ -114,7 +115,7 @@ def process(
             try:
                 proc = queue.get(timeout=timeout)
             except Exception:
-                print("Queue Exception! - no jobs finished - polling")
+                logger.info("Queue timeout - polling")
                 continue
 
             time.sleep(0.01)  # don't throttle!
