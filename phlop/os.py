@@ -50,9 +50,16 @@ def write_to_file(file, contents, mode="w", skip_if_empty=True):
 
 def read_file(file):
     try:
-        Path(file).parent.mkdir(parents=True, exist_ok=True)
         with open(file, "r") as f:
             return f.read()
+    except IOError as e:
+        raise RuntimeError(f"Failed to read file {file}: {e}")
+
+
+def read_last_lines_of(file, n=10):
+    try:
+        with open(file, "r") as f:
+            return f.readlines()[:10]
     except IOError as e:
         raise RuntimeError(f"Failed to read file {file}: {e}")
 

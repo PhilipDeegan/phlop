@@ -4,16 +4,15 @@
 #
 #
 
-
-import time
+import os
 from enum import Enum
 from multiprocessing import Process, Queue, cpu_count
 
 from phlop.logger import getLogger
-from phlop.os import read_file
+from phlop.os import read_file, read_last_lines_of
 from phlop.proc import run
 
-timeout = 60 * 60  # seconds - give chance to interrupt
+timeout = 60 * 60
 logger = getLogger(__name__)
 
 
@@ -30,8 +29,8 @@ class CallableTest:
     def __init__(self, batch_index, test_case, logging):
         self.batch_index = batch_index
         self.test_case = test_case
-        self.run = None
         self.logging = logging
+        self.run = None
 
     def __call__(self, **kwargs):
         self.run = run(
@@ -74,6 +73,24 @@ def print_tests(batches):
             print(test.cmd)
 
 
+def print_pending(cc, batches, logging):
+    print("pending jobs start")
+    for batch_index, batch in enumerate(batches):
+        for pid, proc in enumerate(cc.procs[batch_index]):
+            if not proc.is_alive():
+                continue
+            test_case = batch.tests[pid]
+            print("cmd: ", test_case.cmd)
+            if test_case.log_file_path:
+                stdout = read_last_lines_of(f"{test_case.log_file_path}.stdout")
+                if stdout:
+                    print(f"stdout:{os.linesep}", " ".join(stdout))
+                stderr = read_last_lines_of(f"{test_case.log_file_path}.stderr")
+                if stderr:
+                    print(f"stderr:{os.linesep}", " ".join(stderr))
+    print("pending jobs end")
+
+
 def process(
     batches, n_cores=None, print_only=False, fail_fast=False, logging: LoggingMode = 1
 ):
@@ -97,24 +114,22 @@ def process(
     def launch_tests():
         for batch_index, batch in enumerate(batches):
             offset = len(cc.procs[batch_index])
-            for test_index, test in enumerate(batch.tests[offset:]):
+            for test_index, test_case in enumerate(batch.tests[offset:]):
                 test_index += offset
                 if batch.cores <= cc.cores_avail:
-                    test = CallableTest(
-                        batch_index, batches[batch_index].tests[test_index], logging
-                    )
+                    test = CallableTest(batch_index, test_case, logging)
                     cc.cores_avail -= batch.cores
                     cc.procs[batch_index] += [
-                        Process(target=runner, args=(test, (pqueue)))
+                        Process(target=runner, args=(test, pqueue))
                     ]
                     cc.procs[batch_index][-1].daemon = True
                     cc.procs[batch_index][-1].start()
 
     def finished():
-        b = True
         for batch_index, batch in enumerate(batches):
-            b &= cc.fin[batch_index] == len(batch.tests)
-        return b
+            if cc.fin[batch_index] != len(batch.tests):
+                return False
+        return True
 
     def waiter(queue):
         fail = 0
@@ -122,21 +137,23 @@ def process(
             proc = None
             try:
                 proc = queue.get(timeout=timeout)
+
             except Exception:
                 logger.info("Queue timeout - polling")
+                print_pending(cc, batches, logging)
                 continue
 
-            time.sleep(0.01)  # don't throttle!
             if isinstance(proc, CallableTest):
                 status = "finished" if proc.run.exitcode == 0 else "FAILED"
-                if proc.run.exitcode > 0:
-                    proc.print_log_files()
-                fail += proc.run.exitcode
-                if fail_fast and fail > 0:
-                    raise TestCaseFailure("Some tests have failed")
+
                 print(
                     proc.test_case.cmd, f"{status} in {proc.run.run_time:.2f} seconds"
                 )
+                if proc.run.exitcode > 0:
+                    proc.print_log_files()
+                    if fail_fast:
+                        raise TestCaseFailure("Some tests have failed")
+                fail += proc.run.exitcode
                 cc.cores_avail += batches[proc.batch_index].cores
                 cc.fin[proc.batch_index] += 1
                 if finished():
