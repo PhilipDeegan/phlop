@@ -57,10 +57,10 @@ class RunTimer:
 
         def go():
             if popen:
-                self._popen(*kwargs, **ekwargs)
+                self._popen(**ekwargs, **kwargs)
             else:
                 self._run(
-                    check=check, capture_output=capture_output, *kwargs, **ekwargs
+                    check=check, capture_output=capture_output, **ekwargs, **kwargs
                 )
 
         if working_dir:

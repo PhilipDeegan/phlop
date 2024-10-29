@@ -16,7 +16,8 @@ timeout = 60 * 60
 logger = getLogger(__name__)
 
 
-class TestCaseFailure(Exception): ...
+class TestCaseFailure(Exception):
+    ...
 
 
 class LoggingMode(Enum):
@@ -145,11 +146,10 @@ def process(
 
             if isinstance(proc, CallableTest):
                 status = "finished" if proc.run.exitcode == 0 else "FAILED"
-
                 print(
                     proc.test_case.cmd, f"{status} in {proc.run.run_time:.2f} seconds"
                 )
-                if proc.run.exitcode > 0:
+                if proc.run.exitcode != 0:
                     proc.print_log_files()
                     if fail_fast:
                         raise TestCaseFailure("Some tests have failed")
