@@ -2,9 +2,10 @@
 # parsing PHARE scope funtion timers
 #
 
-import numpy as np
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
+
+import numpy as np
 
 
 @dataclass

@@ -48,5 +48,21 @@ def write_to_file(file, contents, mode="w", skip_if_empty=True):
             raise RuntimeError(f"Failed to write to file {file}: {e}")
 
 
+def read_file(file):
+    try:
+        with open(file, "r") as f:
+            return f.read()
+    except IOError as e:
+        raise RuntimeError(f"Failed to read file {file}: {e}")
+
+
+def read_last_lines_of(file, n=10):
+    try:
+        with open(file, "r") as f:
+            return f.readlines()[:10]
+    except IOError as e:
+        raise RuntimeError(f"Failed to read file {file}: {e}")
+
+
 def env_sep():
     return ";" if any(platform.win32_ver()) else ":"

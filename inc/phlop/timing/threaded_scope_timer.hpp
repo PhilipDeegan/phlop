@@ -141,9 +141,11 @@ struct ScopeTimerMan
 
 struct RunTimerReportSnapshot
 {
-    RunTimerReportSnapshot(RunTimerReport* s, RunTimerReport* p, std::uint64_t const& t)
+    RunTimerReportSnapshot(RunTimerReport* s, RunTimerReport* p, std::uint64_t const st,
+                           std::uint64_t const t)
         : self{s}
         , parent{p}
+        , start{st}
         , time{t}
     {
         childs.reserve(2);
@@ -152,6 +154,7 @@ struct RunTimerReportSnapshot
     RunTimerReport const* const self;
     RunTimerReport const* const parent;
 
+    std::uint64_t const start;
     std::uint64_t const time;
     std::vector<RunTimerReportSnapshot*> childs;
 };
@@ -190,7 +193,7 @@ struct scope_timer
     std::uint64_t static now()
     {
         return std::chrono::duration_cast<std::chrono::nanoseconds>(
-                   std::chrono::system_clock::now().time_since_epoch())
+                   std::chrono::steady_clock::now().time_since_epoch())
             .count();
     }
 
@@ -215,14 +218,17 @@ struct scope_timer
 
 struct BinaryTimerFileNode
 {
-    BinaryTimerFileNode(std::uint16_t _fn_id, std::uint64_t _time)
+    BinaryTimerFileNode(std::uint16_t const& _fn_id, std::uint64_t const _start,
+                        std::uint64_t const _time)
         : fn_id{_fn_id}
+        , start{_start}
         , time{_time}
     {
     }
 
-    std::uint16_t fn_id;
-    std::uint64_t time;
+    std::uint16_t const fn_id;
+    std::uint64_t const start;
+    std::uint64_t const time;
 
     std::vector<BinaryTimerFileNode> kinder{};
 };
@@ -240,8 +246,8 @@ struct BinaryTimerFile
             for (auto const& [reports, traces] : ScopeTimerMan::INSTANCE().thread_storage)
                 for (auto const& trace : traces)
                     recurse_traces_for_nodes(
-                        trace,
-                        roots.emplace_back(key_ids[std::string{trace->self->k}], trace->time));
+                        trace, roots.emplace_back(key_ids[std::string{trace->self->k}],
+                                                  trace->start, trace->time));
         }
     }
 
@@ -252,7 +258,7 @@ struct BinaryTimerFile
         for (std::size_t i = 0; i < c->childs.size(); ++i)
             recurse_traces_for_nodes(
                 c->childs[i], node.kinder.emplace_back(key_ids[std::string{c->childs[i]->self->k}],
-                                                       c->childs[i]->time));
+                                                       c->childs[i]->start, c->childs[i]->time));
     }
 
     template<typename Trace>
@@ -322,7 +328,7 @@ struct BinaryTimerFile
     {
         for (std::size_t ti = 0; ti < tabs; ++ti)
             file << " ";
-        file << node.fn_id << " " << node.time << std::endl;
+        file << node.fn_id << " " << node.start << ":" << node.time << std::endl;
         for (auto const& n : node.kinder)
             _write(file, n, tabs + 1);
     }
