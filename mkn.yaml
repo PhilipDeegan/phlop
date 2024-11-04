@@ -1,3 +1,4 @@
+#! clean build test run -p scope_timer,threaded_scope_timer -Oa "-fPIC -std=c++20" -W 9
 
 name: phlop
 parent: base
@@ -8,6 +9,12 @@ profile:
 
 - name: scope_timer
   parent: base
-  src: src/phlop/timing/scope_timer.cpp # static instance lives here
+  src: src/phlop/timing/scope_timer.cpp
   mode: shared
   test: tests/timing/test_scope_timer.cpp
+
+- name: threaded_scope_timer
+  parent: base
+  src: src/phlop/timing/threaded_scope_timer.cpp
+  mode: shared
+  test: tests/timing/test_threaded_scope_timer.cpp

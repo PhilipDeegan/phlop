@@ -38,7 +38,7 @@ scope_timer::~scope_timer()
         detail::_current_scope_timer = this->pscope;
 
         auto& s = *r.snapshots.emplace_back( // allocated in construtor
-            std::make_shared<RunTimerReportSnapshot>(&r, parent, now() - start));
+            std::make_shared<RunTimerReportSnapshot>(&r, parent, start, now() - start));
 
         if (this->pscope)
             pscope->childs.emplace_back(&s);

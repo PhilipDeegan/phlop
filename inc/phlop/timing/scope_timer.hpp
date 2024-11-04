@@ -90,8 +90,8 @@ struct ScopeTimerMan
 
 struct RunTimerReportSnapshot
 {
-    RunTimerReportSnapshot(RunTimerReport* s, RunTimerReport* p, std::uint64_t const& st,
-                           std::uint64_t const& t)
+    RunTimerReportSnapshot(RunTimerReport* s, RunTimerReport* p, std::uint64_t const st,
+                           std::uint64_t const t)
         : self{s}
         , parent{p}
         , start{st}
@@ -167,17 +167,17 @@ struct scope_timer
 
 struct BinaryTimerFileNode
 {
-    BinaryTimerFileNode(std::uint16_t const& _fn_id, std::uint64_t const& _start,
-                        std::uint64_t const& _time)
+    BinaryTimerFileNode(std::uint16_t const& _fn_id, std::uint64_t const _start,
+                        std::uint64_t const _time)
         : fn_id{_fn_id}
         , start{_start}
         , time{_time}
     {
     }
 
-    std::uint16_t fn_id;
-    std::uint64_t start;
-    std::uint64_t time;
+    std::uint16_t const fn_id;
+    std::uint64_t const start;
+    std::uint64_t const time;
 
     std::vector<BinaryTimerFileNode> kinder{};
 };
