@@ -7,7 +7,6 @@ import sys
 
 from phlop.app import stats_man as sman
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 MPI_RANK = os.environ.get("OMPI_COMM_WORLD_RANK")

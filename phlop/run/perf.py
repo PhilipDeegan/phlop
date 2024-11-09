@@ -19,11 +19,11 @@ wget -O /usr/share/d3-flame-graph/d3-flamegraph-base.html https://cdn.jsdelivr.n
 """
 
 
-def perf_stat_cmd(cli_args, path, line):
+def perf_stat_cmd(cli_args, path, line, options):
     file = Path(line.split(" ")[-1]).stem
     outpath = logpath / path.stem
     outpath.mkdir(parents=True, exist_ok=True)
-    return p.stat_cmd(line, p.stat_events, outpath / f"{file}.json")
+    return p.stat_cmd(line, p.stat_events, outpath / f"{file}.json", options)
 
 
 def get_from_files(cli_args):
@@ -50,7 +50,11 @@ def get_remaining(cli_args):
     test_batches = {}
     path = Path(cli_args.remaining[-1]).parent
     test_case = tc.determine_cores_for_test_case(
-        tc.TestCase(cmd=perf_stat_cmd(cli_args, path, " ".join(cli_args.remaining)))
+        tc.TestCase(
+            cmd=perf_stat_cmd(
+                cli_args, path, " ".join(cli_args.remaining), cli_args.extra
+            )
+        )
     )
     test_batches[test_case.cores] = [test_case]
     return [tc.TestBatch(v, k) for k, v in test_batches.items()]

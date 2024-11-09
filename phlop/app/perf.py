@@ -117,6 +117,7 @@ def cli_args_parser(description="Perf tool"):
         logging="0=off, 1=on non zero exit code, 2=always",
         outfile="path for saved file if active",
         tool="stat/record/etc",
+        extra="forward string to perf command",
     )
 
     parser = argparse.ArgumentParser(
@@ -133,6 +134,8 @@ def cli_args_parser(description="Perf tool"):
     parser.add_argument("-o", "--outfile", default=None, help=_help.outfile)
     parser.add_argument("-t", "--tool", default="stat", help=_help.tool)
     parser.add_argument("--logging", type=int, default=1, help=_help.logging)
+    parser.add_argument("-e", "--extra", type=str, default="", help=_help.extra)
+
     return parser
 
 

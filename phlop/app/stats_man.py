@@ -20,7 +20,6 @@ import yaml
 from phlop.dict import ValDict
 from phlop.proc import run_raw
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 _default_interval = 2

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
-CWD="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-cd "$CWD"/..
+CWD="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )" && cd "$CWD"/..
 
 set -ex
 
@@ -19,4 +18,7 @@ py -O tests/timing/test_scope_timer.py test_scope_timer -f scope_timer.txt
 py -Om phlop.run.valgrind echo yes
 py -Om phlop.run.valgrind --tool=massif echo yes
 
-py -Om phlop.run.perf echo yes || echo "perf failed, assumed CI"
+py -Om phlop.run.perf -e="--all-user" echo yes || echo "perf failed, assumed CI"
+
+# install via ./sh/setup_pfm.sh
+[ -d "tpp/pfm" ] && py -O tests/_phlop/app/pfm/test_pfm.py || echo "pfm missing, skipped"
