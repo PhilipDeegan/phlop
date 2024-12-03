@@ -112,8 +112,6 @@ def cli_args_parser(description="Perf tool"):
         quiet="Redirect output to /dev/null",
         cores="Parallism core/thread count",
         infiles="infiles",
-        print_only="Print only, no execution",
-        regex="Filter out non-matching execution strings",
         logging="0=off, 1=on non zero exit code, 2=always",
         outfile="path for saved file if active",
         tool="stat/record/etc",
@@ -130,7 +128,6 @@ def cli_args_parser(description="Perf tool"):
         "-p", "--print_only", action="store_true", default=False, help=_help.print_only
     )
     parser.add_argument("-i", "--infiles", default=None, help=_help.infiles)
-    parser.add_argument("-r", "--regex", default=None, help=_help.regex)
     parser.add_argument("-o", "--outfile", default=None, help=_help.outfile)
     parser.add_argument("-t", "--tool", default="stat", help=_help.tool)
     parser.add_argument("--logging", type=int, default=1, help=_help.logging)

@@ -6,7 +6,7 @@
 
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, as_dict
 from pathlib import Path
 
 from phlop.os import pushd
@@ -78,4 +78,6 @@ def get_evt_info():
 
 
 if __name__ == "__main__":
-    print(get_evt_info())
+    import json
+
+    print(json.dumps(as_dict(get_evt_info()), tabs=2))
