@@ -56,6 +56,7 @@ struct ScopeTimerMan
         }
         _headers.clear();
         thread_storage.clear();
+        thread_reports.clear();
         active = false;
     }
 
@@ -132,10 +133,16 @@ struct ScopeTimerMan
         std::unique_lock<std::mutex> lk(work_);
         thread_storage.emplace_back(std::move(pt.reports), std::move(pt.traces));
     }
+    void move(std::shared_ptr<RunTimerReport>& report)
+    {
+        std::unique_lock<std::mutex> lk(work_);
+        thread_reports.emplace_back(std::move(report));
+    }
 
     std::mutex work_;
     std::vector<std::pair<std::vector<RunTimerReport*>, std::vector<RunTimerReportSnapshot*>>>
         thread_storage;
+    std::vector<std::shared_ptr<RunTimerReport>> thread_reports; // keep alive
 };
 
 
@@ -159,9 +166,11 @@ struct RunTimerReportSnapshot
     std::vector<RunTimerReportSnapshot*> childs;
 };
 
+
 struct RunTimerReport
 {
-    std::string_view k, f;
+    std::string const k; // key
+    std::string const f; // function
     std::uint32_t l = 0;
 
     RunTimerReport(std::string_view const& _k, std::string_view const& _f, std::uint32_t const& _l)
@@ -175,6 +184,7 @@ struct RunTimerReport
 
     ~RunTimerReport() {}
 
+
     auto operator()(std::size_t i) { return snapshots[i].get(); }
     auto size() { return snapshots.size(); }
 
@@ -182,6 +192,12 @@ struct RunTimerReport
 };
 
 
+struct ThreadLifeWatcher
+{
+    ~ThreadLifeWatcher() { ScopeTimerMan::INSTANCE().move(report); }
+
+    std::shared_ptr<RunTimerReport> report;
+};
 
 
 struct scope_timer
@@ -264,7 +280,9 @@ struct BinaryTimerFile
     template<typename Trace>
     void recurse_traces_for_keys(Trace const& c)
     {
-        std::string s{c->self->k};
+        assert(c);
+        assert(c->self);
+        auto const& s = c->self->k;
         if (!key_ids.count(s))
         {
             auto [it, b] = key_ids.emplace(s, key_ids.size());
@@ -359,11 +377,13 @@ namespace detail
 #endif
 
 #define PHLOP_SCOPE_TIMER(key)                                                                     \
-    static phlop::threaded::RunTimerReport PHLOP_STR_CAT(ridx_, __LINE__){key, __FILE__,           \
-                                                                          __LINE__};               \
+    static thread_local auto PHLOP_STR_CAT(ridx_, __LINE__)                                        \
+        = std::make_shared<phlop::threaded::RunTimerReport>(key, __FILE__, __LINE__);              \
+    static thread_local phlop::threaded::ThreadLifeWatcher PHLOP_STR_CAT(_watcher_, __LINE__){     \
+        PHLOP_STR_CAT(ridx_, __LINE__)};                                                           \
     phlop::threaded::scope_timer PHLOP_STR_CAT(_scope_timer_,                                      \
-                                               __LINE__){PHLOP_STR_CAT(ridx_, __LINE__)};          \
-    phlop::threaded::ScopeTimerMan::local().report_stack_ptr = &PHLOP_STR_CAT(ridx_, __LINE__);
+                                               __LINE__){*PHLOP_STR_CAT(ridx_, __LINE__)};         \
+    phlop::threaded::ScopeTimerMan::local().report_stack_ptr = PHLOP_STR_CAT(ridx_, __LINE__).get();
 
 
 #endif /*_PHLOP_TIMING_THREADED_SCOPE_TIMER_HPP_*/
