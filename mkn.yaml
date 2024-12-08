@@ -7,28 +7,6 @@ profile:
 - name: base
   inc: inc
 
-- name: pfm
-  inc: tpp/pfm/include
-  sub: pfm&tpp/pfm(git://perfmon2.git.sourceforge.net/gitroot/perfmon2/libpfm4)
-
-- name: pfm_lib
-  parent: pfm
-  mode: static
-  inc: |
-    tpp/pfm/include
-    tpp/pfm/lib, 0
-  src: tpp/pfm/lib
-
-- name: pfm_events
-  self: pfm_lib
-  main: tpp/pfm/examples/check_events.c
-  out: check_events
-
-- name: pfm_info
-  self: pfm_lib
-  main: tpp/pfm/examples/showevtinfo.c
-  out: showevtinfo
-
 - name: scope_timer
   parent: base
   src: src/phlop/timing/scope_timer.cpp
@@ -40,5 +18,3 @@ profile:
   src: src/phlop/timing/threaded_scope_timer.cpp
   mode: shared
   test: tests/timing/test_threaded_scope_timer.cpp
-
-

@@ -21,11 +21,17 @@ metrics = [
 
 
 def build_command(cli_args):
-    return f"compute-sanitizer --tool {cli_args.tool} {cli_args.remaining}"
+    cmd_parts = [
+        "compute-sanitizer",
+        f"--tool {cli_args.tool}",
+        cli_args.extra if cli_args.extra else "",
+        " ".join(cli_args.remaining) if cli_args.remaining else "",
+    ]
+    return " ".join(filter(None, cmd_parts))
 
 
 def exec(cli_args):
-    return run(build_command(cli_args), check=True)
+    return run(build_command(cli_args), check=True, cwd=cli_args.dir)
 
 
 def cli_args_parser(description="compute-sanitizer tool"):
@@ -36,7 +42,7 @@ def cli_args_parser(description="compute-sanitizer tool"):
         quiet="Redirect output to /dev/null",
         logging="0=off, 1=on non zero exit code, 2=always",
         outfile="path for saved file if active",
-        tool="",
+        tool="Sanitizer tool to use (memcheck, racecheck, initcheck, synccheck)",
         extra="forward string to csan command",
     )
 
@@ -45,7 +51,6 @@ def cli_args_parser(description="compute-sanitizer tool"):
     )
     parser.add_argument("remaining", nargs=argparse.REMAINDER)
     parser.add_argument("-d", "--dir", default=".", help=_help.dir)
-    parser.add_argument("-i", "--infiles", default=None, help=_help.infiles)
     parser.add_argument("-o", "--outfile", default=None, help=_help.outfile)
     parser.add_argument("-t", "--tool", default="memcheck", help=_help.tool)
     parser.add_argument("--logging", type=int, default=1, help=_help.logging)

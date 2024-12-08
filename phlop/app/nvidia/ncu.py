@@ -45,7 +45,6 @@ def cli_args_parser(description="ncu tool"):
     )
     parser.add_argument("remaining", nargs=argparse.REMAINDER)
     parser.add_argument("-d", "--dir", default=".", help=_help.dir)
-    parser.add_argument("-i", "--infiles", default=None, help=_help.infiles)
     parser.add_argument("-o", "--outfile", default=None, help=_help.outfile)
     parser.add_argument("-t", "--tool", default="stat", help=_help.tool)
     parser.add_argument("--logging", type=int, default=1, help=_help.logging)
