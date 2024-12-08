@@ -6,7 +6,7 @@
 
 
 import logging
-from dataclasses import dataclass, field, as_dict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from phlop.os import pushd
@@ -32,7 +32,26 @@ class EVTInfo:
     pmu: str
     name: str
     umask: dict = field(default_factory=lambda: {})
-    ect: dict = field(default_factory=lambda: {})
+    etc: dict = field(default_factory=lambda: {})
+
+
+@dataclass
+class EVTInfos:
+    data: list = field(default_factory=lambda: [])
+
+    def __iter__(self):
+        return self.data.__iter__()
+
+    def umasks(self):
+        return EVTInfos(data=[d for d in self.data if d.umask])
+
+    def umasks_in(self, needle):
+        return EVTInfos(
+            data=[d for d in self.data if any(needle in k for k in d.umask)]
+        )
+
+    def append(self, ev: EVTInfo):
+        self.data.append(ev)
 
 
 def _parse_evtinfo(bits_list):
@@ -57,7 +76,7 @@ def parse_evtinfo_output(lines):
         if line.strip() == EVTINFO_delimiter:
             break
 
-    bits_list, results = [], []
+    bits_list, results = [], EVTInfos()
     for line in lines[start_idx:]:
         if line == EVTINFO_delimiter:
             results.append(_parse_evtinfo(bits_list))
@@ -80,4 +99,4 @@ def get_evt_info():
 if __name__ == "__main__":
     import json
 
-    print(json.dumps(as_dict(get_evt_info()), tabs=2))
+    print(json.dumps(asdict(get_evt_info()), tabs=2))

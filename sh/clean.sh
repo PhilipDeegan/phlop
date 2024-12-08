@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-set -e
-CWD="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-cd "$CWD"/..
+set -ex
+CWD="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )" && cd "$CWD"/..
 
 RM_RF=(
-  __pycache__
+  __pycache__ .ruff_cache phlop.egg-info dist
 )
 
 for RM in ${RM_RF[@]}; do

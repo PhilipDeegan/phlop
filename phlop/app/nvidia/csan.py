@@ -7,11 +7,11 @@
 #  compute-sanitizer --tool racecheck [sanitizer_options] app_name [app_options]
 #
 #
+#
 
-import os
 
 from phlop.dict import ValDict
-from phlop.proc import run, run_mp
+from phlop.proc import run
 
 metrics = [
     "all",
@@ -20,13 +20,15 @@ metrics = [
 ]
 
 
-def run(exe, events, output_file=None):
-    env = {}
-    cmd = f""
-    return run(record_cmd(exe, events, output_file), check=True)
+def build_command(cli_args):
+    return f"compute-sanitizer --tool {cli_args.tool} {cli_args.remaining}"
 
 
-def cli_args_parser(description="Perf tool"):
+def exec(cli_args):
+    return run(build_command(cli_args), check=True)
+
+
+def cli_args_parser(description="compute-sanitizer tool"):
     import argparse
 
     _help = ValDict(
@@ -45,7 +47,7 @@ def cli_args_parser(description="Perf tool"):
     parser.add_argument("-d", "--dir", default=".", help=_help.dir)
     parser.add_argument("-i", "--infiles", default=None, help=_help.infiles)
     parser.add_argument("-o", "--outfile", default=None, help=_help.outfile)
-    parser.add_argument("-t", "--tool", default="stat", help=_help.tool)
+    parser.add_argument("-t", "--tool", default="memcheck", help=_help.tool)
     parser.add_argument("--logging", type=int, default=1, help=_help.logging)
     parser.add_argument("-e", "--extra", type=str, default="", help=_help.extra)
 

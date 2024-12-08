@@ -3,15 +3,15 @@
 # https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html
 
 ## samples
+#  ncu --help
 #  ncu --metrics all
 #  ncu --metrics l1tex__data_bank_conflicts_pipe_lsu_mem_shared_op_st.sum
-#
+#  ncu --target-processes all -o <report-name> mpirun [mpi arguments] <app> [app arguments]
 #
 
-import os
 
 from phlop.dict import ValDict
-from phlop.proc import run, run_mp
+from phlop.proc import run
 
 metrics = [
     "all",
@@ -20,14 +20,15 @@ metrics = [
 ]
 
 
-def run(exe, events, output_file=None):
-    env = {}
-    cmd = f""
-    # ncu --target-processes all -o <report-name> mpirun [mpi arguments] <app> [app arguments]
-    return run(cmd, check=True)
+def build_command(cli_args):
+    return f"ncu {cli_args.remaining}"
 
 
-def cli_args_parser(description="Perf tool"):
+def exec(cli_args):
+    return run(build_command(cli_args), check=True)
+
+
+def cli_args_parser(description="ncu tool"):
     import argparse
 
     _help = ValDict(
