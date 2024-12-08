@@ -16,8 +16,7 @@ timeout = 60 * 60
 logger = getLogger(__name__)
 
 
-class TestCaseFailure(Exception):
-    ...
+class TestCaseFailure(Exception): ...
 
 
 class LoggingMode(Enum):

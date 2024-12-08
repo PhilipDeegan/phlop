@@ -1,0 +1,29 @@
+#! clean build test run -p scope_timer,threaded_scope_timer -Oa "-fPIC -std=c++20" -W 9
+
+# run script first: ./sh/setup_pfm.sh
+
+name: phlop.pfm
+parent: base
+
+profile:
+- name: base
+  inc: inc
+
+- name: pfm
+  inc: tpp/pfm/include
+
+- name: pfm_lib
+  parent: pfm
+  mode: static
+  inc: tpp/pfm/lib, 0
+  src: tpp/pfm/lib
+
+- name: pfm_events
+  self: pfm_lib
+  main: tpp/pfm/examples/check_events.c
+  out: check_events
+
+- name: pfm_info
+  self: pfm_lib
+  main: tpp/pfm/examples/showevtinfo.c
+  out: showevtinfo
