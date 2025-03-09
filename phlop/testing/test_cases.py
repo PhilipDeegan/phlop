@@ -87,24 +87,34 @@ def python3_default_test_cmd(clazz, test_id):
     return f"python3 -Oum {clazz.__module__} {clazz.__name__}.{test_id}"
 
 
+def logfile(log_file_path, test_class, suite):
+    if not log_file_path:
+        return None
+    pyfile = Path(sys.modules[test_class.__module__].__file__)
+    logfile = str(
+        log_file_path
+        / pyfile.parent.relative_to(_LOG_DIR)
+        / pyfile.stem
+        / suite._testMethodName
+    )
+    return logfile
+
+
 def load_test_cases_in(
     classes, test_cmd_pre="", test_cmd_post="", test_cmd_fn=None, **kwargs
 ):
     test_cmd_fn = test_cmd_fn if test_cmd_fn else python3_default_test_cmd
-    log_file_path = kwargs.pop("log_file_path", None)
+    log_file_path = kwargs.pop("log_file_path", _LOG_DIR / ".phlop")
+
     tests, loader = [], unittest.TestLoader()
     for test_class in classes:
         for suite in loader.loadTestsFromTestCase(test_class):
             cmd = test_cmd_fn(type(suite), suite._testMethodName)
 
-            def logfile(test_class=test_class, suite=suite):
-                filename = Path(sys.modules[test_class.__module__].__file__).stem
-                return str((Path(log_file_path) / filename / suite._testMethodName))
-
             tests += [
                 TestCase(
                     cmd=f"{test_cmd_pre} {cmd} {test_cmd_post}".strip(),
-                    log_file_path=(None if not log_file_path else logfile()),
+                    log_file_path=logfile(log_file_path, test_class, suite),
                     **kwargs,
                 )
             ]
