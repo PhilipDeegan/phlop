@@ -104,7 +104,6 @@ def load_test_cases_in(
     classes, test_cmd_pre="", test_cmd_post="", test_cmd_fn=None, **kwargs
 ):
     test_cmd_fn = test_cmd_fn if test_cmd_fn else python3_default_test_cmd
-    log_file_path = kwargs.pop("log_file_path", _LOG_DIR / ".phlop")
 
     tests, loader = [], unittest.TestLoader()
     for test_class in classes:
@@ -114,7 +113,7 @@ def load_test_cases_in(
             tests += [
                 TestCase(
                     cmd=f"{test_cmd_pre} {cmd} {test_cmd_post}".strip(),
-                    log_file_path=logfile(log_file_path, test_class, suite),
+                    log_file_path=logfile(_LOG_DIR / ".phlop", test_class, suite),
                     **kwargs,
                 )
             ]
@@ -132,9 +131,6 @@ def load_py_test_cases_from_cmake(ctest_test):
             classes_in_file(pyfile, unittest.TestCase, fail_on_import_error=True),
             env=ctest_test.env,
             working_dir=ctest_test.working_dir,
-            log_file_path=_LOG_DIR
-            / ".phlop"
-            / f"{Path(ctest_test.working_dir).relative_to(_LOG_DIR)}",
             test_cmd_pre=CMD_PREFIX + prefix + CMD_POSTFIX,
         )
 
