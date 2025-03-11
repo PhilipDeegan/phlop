@@ -33,6 +33,7 @@ def cli_args_parser():
         regex="Filter out non-matching execution strings",
         reverse="reverse order - higher core count tests preferred",
         logging="0=off, 1=on non zero exit code, 2=always",
+        rerun="number of times to re-execute discovered tests",
     )
 
     parser = argparse.ArgumentParser(
@@ -55,6 +56,7 @@ def cli_args_parser():
     parser.add_argument(
         "-R", "--reverse", action="store_true", default=False, help=_help.reverse
     )
+    parser.add_argument("--rerun", type=int, default=1, help=_help.rerun)
     parser.add_argument("--logging", type=int, default=1, help=_help.logging)
 
     return parser
@@ -143,6 +145,24 @@ def log(test_batches):
     return test_batches
 
 
+def duplicate_reruns(cli_args, test_batches):
+    if cli_args.rerun == 1:
+        return test_batches
+
+    import copy
+
+    duped = {tb.cores: [] for tb in test_batches}
+
+    for tb in test_batches:
+        for test in tb.tests:
+            for i in range(cli_args.rerun):
+                duped[tb.cores].append(copy.copy(test))
+                if duped[tb.cores][-1].log_file_path:
+                    duped[tb.cores][-1].log_file_path += f"_{i}"
+
+    return [tc.TestBatch(v, k) for k, v in duped.items() if v]
+
+
 def main():
     parser = cli_args_parser()
     cli_args = verify_cli_args(parser.parse_args())
@@ -165,6 +185,8 @@ def main():
             test_batches = noLog(test_batches)
         else:
             test_batches = log(test_batches)
+
+        test_batches = duplicate_reruns(cli_args, test_batches)
 
         if cli_args.reverse:
             test_batches = list(reversed(test_batches))

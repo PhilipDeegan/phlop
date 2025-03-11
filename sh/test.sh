@@ -10,6 +10,7 @@ py(){
 
 py -Om phlop.run.test_cases -d tests -p
 py -Om phlop.run.test_cases -d tests -c 10
+py -m phlop.run.test_cases -d tests -c 1 --rerun 2 --logging 2
 py -O tests/all_concurrent.py
 
 mkn test -p scope_timer

@@ -116,6 +116,7 @@ def cli_args_parser(description="Perf tool"):
         outfile="path for saved file if active",
         tool="stat/record/etc",
         extra="forward string to perf command",
+        print_only="Print only, no execution",
     )
 
     parser = argparse.ArgumentParser(
