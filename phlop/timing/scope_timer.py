@@ -107,8 +107,46 @@ def write_scope_timings(scope_timer_file, outfile, sort_worst_first=True):
             print_scope_timings(scope_timer_file, sort_worst_first)
 
 
-def print_scope_timings(scope_timer_file, sort_worst_first=True):
-    stf = scope_timer_file  # alias
+@dataclass
+class LossLine:
+    padding: int
+    tot: int
+    key: str
+    n: RunTimerNode
+    par: RunTimerNode | None
+
+    def __repr__(self):
+        if self.par:
+            pc = self.n.t / self.tot * 100.0
+            return (
+                self.padding
+                + f"{pc:.2f}% loss({LossLine.loss(self.n)}) {self.key} {self.n.t}"
+            )
+
+        else:
+            return f"100% loss({LossLine.loss(self.n)}) {self.key} {self.n.t}"
+
+    def root_time(self):
+        if self.par:
+            return self.par.root_time()
+        return self.n.t
+
+    @staticmethod
+    def loss(n):
+        lss = n.t if n.c else 0
+        for c in n.c:
+            lss -= c.t
+        return "-" if lss < 1e-2 else float(f"{lss / n.t * 100:.2f}")
+
+
+def print_basic_scope_timings(
+    scope_timer_file_glob, sort_worst_first=True, root_id=None, printer=print
+):
+    scope_timer_files = [file_parser(f) for f in Path.cwd().glob(scope_timer_file_glob)]
+    if not scope_timer_files:
+        return
+
+    stf = scope_timer_files[0]
     if sort_worst_first:
         stf.roots.sort(reverse=True, key=lambda x: x.t)
 
@@ -119,20 +157,44 @@ def print_scope_timings(scope_timer_file, sort_worst_first=True):
 
         return "-" if lss < 1e-2 else float(f"{lss / n.t * 100:.2f}")
 
-    def kinder(tot, n, tabs, rem):
+    def kinder(n, tabs, tot):
         if not n.c:
             return
         o = " " * tabs
-        for i in range(len(n.c)):
-            c = n.c[i]
-            pc = c.t / tot * 100.0
-            print(o, f"{pc:.2f}% loss({loss(c)})", stf(c.k), c.t)
-            kinder(tot, c, tabs + 1, c.t)
+        for c in n.c:
+            printer(LossLine(o, tot, stf(c.k), c, n))
+            kinder(c, tabs + 1, tot)
 
     for root in stf.roots:
-        total = root.t
-        print(f"100% loss({loss(root)})", stf(root.k), root.t)
-        kinder(total, root, 0, total)
+        if root_id and not stf(root.k).startswith(root_id):
+            continue
+        printer(LossLine(0, root.t, stf(root.k), root, None))
+        kinder(root, 1, root.t)
+
+
+def print_scope_timings(
+    scope_timer_file_glob, sort_worst_first=True, root_id="update", pretty_print=True
+):
+    if not pretty_print:
+        print_basic_scope_timings(scope_timer_file_glob, sort_worst_first, root_id)
+        return
+
+    lines = []
+
+    def printer(args):
+        lines.append(args)
+
+    print_basic_scope_timings(scope_timer_file_glob, sort_worst_first, root_id, printer)
+    if not lines:
+        return
+
+    line_strs = [str(line) for line in lines]
+    line_max = max([len(line_str) for line_str in line_strs])
+
+    for i, line in enumerate(line_strs):
+        padding = line_max - len(line)
+        info = lines[i]
+        print(f"{line}" + (" " * padding) + f"{info.n.t/1e6:>10,.2f}ms")
 
 
 def write_variance_across(scope_timer_file_glob, outfile):
