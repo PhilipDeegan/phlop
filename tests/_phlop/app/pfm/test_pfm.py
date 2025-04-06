@@ -24,4 +24,4 @@ if __name__ == "__main__":
     assert code != ""
 
     events = " ".join([f"-e {get_evt_perf_code(ev)}" for ev in code.split(" ")])
-    print(decode_bytes(run(f"perf stat {events} sleep 5").stderr))
+    print(decode_bytes(run(f"perf stat {events} sleep 2").stderr))
