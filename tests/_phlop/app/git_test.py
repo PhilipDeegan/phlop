@@ -3,7 +3,7 @@ import unittest
 import phlop.app.git
 
 
-class PykulGitTest(unittest.TestCase):
+class PhlopGitTest(unittest.TestCase):
     def test_current_branch(self):
         phlop.app.git.current_branch()
 
