@@ -4,6 +4,7 @@
 #
 #
 
+import json
 import os
 from enum import Enum
 from multiprocessing import Process, Queue, cpu_count
@@ -14,6 +15,9 @@ from phlop.proc import run
 
 timeout = 60 * 60
 logger = getLogger(__name__)
+
+
+FAIL_FAST = bool(json.loads(os.environ.get("PHLOP_FAIL_FAST", "false")))
 
 
 class TestCaseFailure(Exception): ...
@@ -92,7 +96,7 @@ def print_pending(cc, batches, logging):
 
 
 def process(
-    batches, n_cores=None, print_only=False, fail_fast=False, logging: LoggingMode = 1
+    batches, n_cores=None, print_only=False, fail_fast=None, logging: LoggingMode = 1
 ):
     if not isinstance(batches, list):
         batches = [batches]
@@ -102,6 +106,8 @@ def process(
     if print_only:
         print_tests(batches)
         return
+
+    fail_fast = fail_fast if fail_fast is not None else FAIL_FAST
 
     n_cores = n_cores if n_cores else cpu_count()
 

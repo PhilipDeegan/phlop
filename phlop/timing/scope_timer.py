@@ -173,7 +173,7 @@ def print_basic_scope_timings(
 
 
 def print_scope_timings(
-    scope_timer_file_glob, sort_worst_first=True, root_id="update", pretty_print=True
+    scope_timer_file_glob, sort_worst_first=False, root_id="", pretty_print=True
 ):
     if not pretty_print:
         print_basic_scope_timings(scope_timer_file_glob, sort_worst_first, root_id)

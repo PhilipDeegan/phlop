@@ -9,9 +9,10 @@ from pathlib import Path
 
 from phlop.dict import ValDict
 from phlop.logger import getLogger
-from phlop.reflection import classes_in_directory
 from phlop.testing import parallel_processor as pp
 from phlop.testing import test_cases as tc
+
+from phlop import reflection as refl
 
 logger = getLogger(__name__)
 
@@ -23,6 +24,7 @@ def cli_args_parser():
 
     _help = ValDict(
         dir="Working directory",
+        input="Test File",
         cmake="Enable cmake build config tests extraction",
         cores="Parallism core/thread count",
         print_only="Print only, no execution",
@@ -42,6 +44,7 @@ def cli_args_parser():
     parser.add_argument("--cmake", action="store_true", default=False, help=_help.cmake)
     parser.add_argument("-c", "--cores", type=int, default=1, help=_help.cores)
     parser.add_argument("-d", "--dir", default=".", help=_help.dir)
+    parser.add_argument("-i", "--input", default=None, help=_help.input)
     parser.add_argument(
         "-p", "--print_only", action="store_true", default=False, help=_help.print_only
     )
@@ -80,10 +83,21 @@ def get_test_cases(cli_args):
         return tc.load_cmake_tests(
             cli_args.dir, test_cmd_pre=cli_args.prefix, test_cmd_post=cli_args.postfix
         )
+    if cli_args.input:
+        return [
+            tc.TestBatch(
+                tc.load_test_cases_in(
+                    refl.classes_in_file(cli_args.input, unittest.TestCase),
+                    test_cmd_pre=cli_args.prefix,
+                    test_cmd_post=cli_args.postfix,
+                ),
+                1,
+            )
+        ]
     return [
         tc.TestBatch(
             tc.load_test_cases_in(
-                classes_in_directory(cli_args.dir, unittest.TestCase),
+                refl.classes_in_directory(cli_args.dir, unittest.TestCase),
                 test_cmd_pre=cli_args.prefix,
                 test_cmd_post=cli_args.postfix,
             ),
