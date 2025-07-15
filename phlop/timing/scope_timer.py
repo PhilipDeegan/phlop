@@ -188,7 +188,7 @@ def print_scope_timings(
     if not lines:
         return
 
-    line_strs = [str(line) for line in lines]
+    line_strs = [str(" ".join(str(line).split(" ")[:-1])) for line in lines]
     line_max = max([len(line_str) for line_str in line_strs])
 
     for i, line in enumerate(line_strs):

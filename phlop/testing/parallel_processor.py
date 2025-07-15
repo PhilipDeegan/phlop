@@ -20,7 +20,8 @@ logger = getLogger(__name__)
 FAIL_FAST = bool(json.loads(os.environ.get("PHLOP_FAIL_FAST", "false")))
 
 
-class TestCaseFailure(Exception): ...
+class TestCaseFailure(Exception):
+    ...
 
 
 class LoggingMode(Enum):
@@ -138,7 +139,7 @@ def process(
         return True
 
     def waiter(queue):
-        fail = 0
+        failed = []
         while True:
             proc = None
             try:
@@ -151,19 +152,21 @@ def process(
 
             if isinstance(proc, CallableTest):
                 status = "finished" if proc.run.exitcode == 0 else "FAILED"
-                print(
-                    proc.test_case.cmd, f"{status} in {proc.run.run_time:.2f} seconds"
-                )
+                msg = proc.test_case.cmd, f"{status} in {proc.run.run_time:.2f} seconds"
                 if proc.run.exitcode != 0:
+                    failed.append(msg)
                     proc.print_log_files()
                     if fail_fast:
-                        raise TestCaseFailure("Some tests have failed")
-                fail += proc.run.exitcode
+                        raise TestCaseFailure(msg)
+                print(msg)
+
                 cc.cores_avail += batches[proc.batch_index].cores
                 cc.fin[proc.batch_index] += 1
                 if finished():
-                    if fail > 0:
-                        raise TestCaseFailure("Some tests have failed")
+                    if failed:
+                        for msg in failed:
+                            print(msg)
+                        raise TestCaseFailure("Tests have failed")
                     break
                 launch_tests()
 
