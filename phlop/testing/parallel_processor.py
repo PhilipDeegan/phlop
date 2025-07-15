@@ -140,6 +140,7 @@ def process(
 
     def waiter(queue):
         failed = []
+        succed = 0
         while True:
             proc = None
             try:
@@ -158,15 +159,19 @@ def process(
                     proc.print_log_files()
                     if fail_fast:
                         raise TestCaseFailure(msg)
+                else:
+                    succed += 1
                 print(msg)
 
                 cc.cores_avail += batches[proc.batch_index].cores
                 cc.fin[proc.batch_index] += 1
                 if finished():
+                    print(f"Tests passed successfully {succed}.")
                     if failed:
+                        print(f"Tests failed {len(failed)}.")
                         for msg in failed:
                             print(msg)
-                        raise TestCaseFailure("Tests have failed")
+                        raise TestCaseFailure("")
                     break
                 launch_tests()
 
