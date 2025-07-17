@@ -173,7 +173,7 @@ def print_basic_scope_timings(
 
 
 def print_scope_timings(
-    scope_timer_file_glob, sort_worst_first=True, root_id="update", pretty_print=True
+    scope_timer_file_glob, sort_worst_first=False, root_id="", pretty_print=True
 ):
     if not pretty_print:
         print_basic_scope_timings(scope_timer_file_glob, sort_worst_first, root_id)
@@ -188,7 +188,7 @@ def print_scope_timings(
     if not lines:
         return
 
-    line_strs = [str(line) for line in lines]
+    line_strs = [str(" ".join(str(line).split(" ")[:-1])) for line in lines]
     line_max = max([len(line_str) for line_str in line_strs])
 
     for i, line in enumerate(line_strs):

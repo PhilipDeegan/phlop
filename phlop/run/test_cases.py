@@ -1,17 +1,19 @@
 #
 #
 
-import multiprocessing
 import re
+import os
 import sys
 import unittest
+import multiprocessing
 from pathlib import Path
 
 from phlop.dict import ValDict
 from phlop.logger import getLogger
-from phlop.reflection import classes_in_directory
 from phlop.testing import parallel_processor as pp
 from phlop.testing import test_cases as tc
+
+from phlop import reflection as refl
 
 logger = getLogger(__name__)
 
@@ -22,7 +24,8 @@ def cli_args_parser():
     import argparse
 
     _help = ValDict(
-        dir="Working directory",
+        # dir="Working directory",
+        input="Input file or directory.",
         cmake="Enable cmake build config tests extraction",
         cores="Parallism core/thread count",
         print_only="Print only, no execution",
@@ -41,7 +44,8 @@ def cli_args_parser():
     )
     parser.add_argument("--cmake", action="store_true", default=False, help=_help.cmake)
     parser.add_argument("-c", "--cores", type=int, default=1, help=_help.cores)
-    parser.add_argument("-d", "--dir", default=".", help=_help.dir)
+    # parser.add_argument("-d", "--dir", default=".", help=_help.dir)
+    parser.add_argument("-i", "--input", default=".", help=_help.input)
     parser.add_argument(
         "-p", "--print_only", action="store_true", default=False, help=_help.print_only
     )
@@ -66,10 +70,8 @@ def verify_cli_args(cli_args):
     if cli_args.cores == "a" or cli_args.cores == "all":
         cli_args.cores = multiprocessing.cpu_count()
     cli_args.cores = int(cli_args.cores)
-    if not Path(cli_args.dir).exists():
-        raise RuntimeError(
-            "phlop.run.test_cases error: directory provided does not exist"
-        )
+    if not Path(cli_args.input).exists():
+        raise RuntimeError("phlop.run.test_cases error: input provided does not exist")
     pp.LoggingMode(cli_args.logging)  # check convertible
     sys.argv = [sys.argv[0]]  # drop everything!
     return cli_args
@@ -78,12 +80,23 @@ def verify_cli_args(cli_args):
 def get_test_cases(cli_args):
     if cli_args.cmake:
         return tc.load_cmake_tests(
-            cli_args.dir, test_cmd_pre=cli_args.prefix, test_cmd_post=cli_args.postfix
+            cli_args.input, test_cmd_pre=cli_args.prefix, test_cmd_post=cli_args.postfix
         )
+    if os.path.isfile(cli_args.input):
+        return [
+            tc.TestBatch(
+                tc.load_test_cases_in(
+                    refl.classes_in_file(cli_args.input, unittest.TestCase),
+                    test_cmd_pre=cli_args.prefix,
+                    test_cmd_post=cli_args.postfix,
+                ),
+                1,
+            )
+        ]
     return [
         tc.TestBatch(
             tc.load_test_cases_in(
-                classes_in_directory(cli_args.dir, unittest.TestCase),
+                refl.classes_in_directory(cli_args.input, unittest.TestCase),
                 test_cmd_pre=cli_args.prefix,
                 test_cmd_post=cli_args.postfix,
             ),
@@ -175,7 +188,7 @@ def main():
             return
 
         test_batches = (
-            tc.extract_load(cli_args.dir, cli_args.load)
+            tc.extract_load(cli_args.input, cli_args.load)
             if cli_args.load
             else get_test_cases(cli_args)
         )
@@ -202,7 +215,6 @@ def main():
         sys.exit(1)
     except (Exception, SystemExit) as e:
         logger.exception(e)
-        parser.print_help()
         sys.exit(1)
 
 

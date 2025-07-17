@@ -4,6 +4,7 @@
 #
 #
 
+import json
 import os
 from enum import Enum
 from multiprocessing import Process, Queue, cpu_count
@@ -14,6 +15,9 @@ from phlop.proc import run
 
 timeout = 60 * 60
 logger = getLogger(__name__)
+
+
+FAIL_FAST = bool(json.loads(os.environ.get("PHLOP_FAIL_FAST", "false")))
 
 
 class TestCaseFailure(Exception): ...
@@ -92,7 +96,7 @@ def print_pending(cc, batches, logging):
 
 
 def process(
-    batches, n_cores=None, print_only=False, fail_fast=False, logging: LoggingMode = 1
+    batches, n_cores=None, print_only=False, fail_fast=None, logging: LoggingMode = 1
 ):
     if not isinstance(batches, list):
         batches = [batches]
@@ -102,6 +106,8 @@ def process(
     if print_only:
         print_tests(batches)
         return
+
+    fail_fast = fail_fast if fail_fast is not None else FAIL_FAST
 
     n_cores = n_cores if n_cores else cpu_count()
 
@@ -132,7 +138,8 @@ def process(
         return True
 
     def waiter(queue):
-        fail = 0
+        failed = []
+        succed = 0
         while True:
             proc = None
             try:
@@ -145,19 +152,25 @@ def process(
 
             if isinstance(proc, CallableTest):
                 status = "finished" if proc.run.exitcode == 0 else "FAILED"
-                print(
-                    proc.test_case.cmd, f"{status} in {proc.run.run_time:.2f} seconds"
-                )
+                msg = proc.test_case.cmd, f"{status} in {proc.run.run_time:.2f} seconds"
                 if proc.run.exitcode != 0:
+                    failed.append(msg)
                     proc.print_log_files()
                     if fail_fast:
-                        raise TestCaseFailure("Some tests have failed")
-                fail += proc.run.exitcode
+                        raise TestCaseFailure(msg)
+                else:
+                    succed += 1
+                print(msg)
+
                 cc.cores_avail += batches[proc.batch_index].cores
                 cc.fin[proc.batch_index] += 1
                 if finished():
-                    if fail > 0:
-                        raise TestCaseFailure("Some tests have failed")
+                    print(f"Tests passed successfully {succed}.")
+                    if failed:
+                        print(f"Tests failed {len(failed)}.")
+                        for msg in failed:
+                            print(msg)
+                        raise TestCaseFailure("")
                     break
                 launch_tests()
 
