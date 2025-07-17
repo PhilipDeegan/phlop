@@ -9,7 +9,7 @@ PY_FILES=$(find . -name "*.py")
 
 python3 -m black phlop tests
 pylint --errors-only phlop tests
-isort phlop tests
+# isort phlop tests
 python3 -m ruff check phlop tests
 for FILE in ${PY_FILES[@]}; do
 

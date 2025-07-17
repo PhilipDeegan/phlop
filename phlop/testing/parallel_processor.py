@@ -20,8 +20,7 @@ logger = getLogger(__name__)
 FAIL_FAST = bool(json.loads(os.environ.get("PHLOP_FAIL_FAST", "false")))
 
 
-class TestCaseFailure(Exception):
-    ...
+class TestCaseFailure(Exception): ...
 
 
 class LoggingMode(Enum):

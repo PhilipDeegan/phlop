@@ -37,8 +37,7 @@ Available:
 ```
 
 ```shell
-python3 -m phlop.run.test_cases -h
-usage: test_cases.py [-h] [--cmake] [-c CORES] [-d DIR] [-p] [--prefix PREFIX] [--postfix POSTFIX] [--dump [DUMP]] [--load LOAD] [-r REGEX] [-R] [--logging LOGGING]
+usage: test_cases.py [-h] [--cmake] [-c CORES] [-i INPUT] [-p] [--prefix PREFIX] [--postfix POSTFIX] [--dump [DUMP]] [--load LOAD] [-r REGEX] [-R] [--rerun RERUN] [--logging LOGGING]
 
 Flexible parallel test runner
 
@@ -47,7 +46,8 @@ options:
   --cmake               Enable cmake build config tests extraction (default: False)
   -c CORES, --cores CORES
                         Parallism core/thread count (default: 1)
-  -d DIR, --dir DIR     Working directory (default: .)
+  -i INPUT, --input INPUT
+                        Input file or directory. (default: .)
   -p, --print_only      Print only, no execution (default: False)
   --prefix PREFIX       Prepend string to execution string (default: )
   --postfix POSTFIX     Append string to execution string (default: )
@@ -56,5 +56,6 @@ options:
   -r REGEX, --regex REGEX
                         Filter out non-matching execution strings (default: None)
   -R, --reverse         reverse order - higher core count tests preferred (default: False)
+  --rerun RERUN         number of times to re-execute discovered tests (default: 1)
   --logging LOGGING     0=off, 1=on non zero exit code, 2=always (default: 1)
 ```
