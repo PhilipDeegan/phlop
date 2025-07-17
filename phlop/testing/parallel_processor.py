@@ -20,7 +20,8 @@ logger = getLogger(__name__)
 FAIL_FAST = bool(json.loads(os.environ.get("PHLOP_FAIL_FAST", "false")))
 
 
-class TestCaseFailure(Exception): ...
+class TestCaseFailure(Exception):
+    ...
 
 
 class LoggingMode(Enum):
@@ -57,7 +58,7 @@ class CallableTest:
         print(self.run.stderr)
         if self.test_case.log_file_path:
             print(read_file(f"{self.test_case.log_file_path}.stdout"))
-            print(read_file(f"{self.test_case.log_file_path}.stdout"))
+            print(read_file(f"{self.test_case.log_file_path}.stderr"))
 
 
 class CoreCount:
@@ -152,7 +153,7 @@ def process(
 
             if isinstance(proc, CallableTest):
                 status = "finished" if proc.run.exitcode == 0 else "FAILED"
-                msg = proc.test_case.cmd, f"{status} in {proc.run.run_time:.2f} seconds"
+                msg = f"proc.test_case.cmd {status} in {proc.run.run_time:.2f} seconds"
                 if proc.run.exitcode != 0:
                     failed.append(msg)
                     proc.print_log_files()
