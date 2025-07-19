@@ -153,7 +153,9 @@ def process(
 
             if isinstance(proc, CallableTest):
                 status = "finished" if proc.run.exitcode == 0 else "FAILED"
-                msg = f"proc.test_case.cmd {status} in {proc.run.run_time:.2f} seconds"
+                msg = (
+                    f"{proc.test_case.cmd} {status} in {proc.run.run_time:.2f} seconds"
+                )
                 if proc.run.exitcode != 0:
                     failed.append(msg)
                     proc.print_log_files()
