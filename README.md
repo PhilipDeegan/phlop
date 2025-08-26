@@ -37,6 +37,7 @@ Available:
 ```
 
 ```shell
+python3 -m phlop.run.test_cases -h
 usage: test_cases.py [-h] [--cmake] [-c CORES] [-i INPUT] [-p] [--prefix PREFIX] [--postfix POSTFIX] [--dump [DUMP]] [--load LOAD] [-r REGEX] [-R] [--rerun RERUN] [--logging LOGGING]
 
 Flexible parallel test runner
