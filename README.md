@@ -9,7 +9,7 @@ python3 -m pip install phlop -U
 #### cmake test runner for cmake project with 20 cores
 
 ```shell
-python3 -m phlop.run.test_cases -c 20 -d build --cmake
+python3 -m phlop.run.test_cases -c 20 -i build --cmake
 ```
 
 #### etc
