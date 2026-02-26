@@ -2,10 +2,15 @@
 # parsing PHARE scope funtion timers
 #
 
-from dataclasses import dataclass, field
-from pathlib import Path
-
+import os
+import sys
+import json
 import numpy as np
+from pathlib import Path
+from dataclasses import dataclass, field
+
+
+TERM_COLORS = bool(json.loads(os.environ.get("PHLOP_TERM_COLORS", "true")))
 
 
 @dataclass
@@ -142,6 +147,7 @@ class LossLine:
 def dedupe_leafs(stf, n):
     nodes = []
     leafs = dict()
+    keys = []
 
     for c in n.c:
         if c.c:
@@ -151,9 +157,11 @@ def dedupe_leafs(stf, n):
         key = stf(c.k)
         if key not in leafs:
             leafs[key] = []
+            keys.append(key)
         leafs[key].append(c)
 
-    for key, vals in leafs.items():
+    for key in keys:
+        vals = leafs[key]
         base = leafs[key][0]
         for i in range(1, len(vals)):
             base.s += vals[i].s
@@ -255,9 +263,12 @@ def print_variance_across(scope_timer_file_glob, root_id=None, dedupe=True):
 
     for i, stf in enumerate(scope_timer_files):
         for root in stf.roots:
-            if root_id and root_id != root.k:
+            if root_id and not stf(root.k).startswith(root_id):
                 continue
             map_graph(stf, root, i)
+
+    if not stacks[0]:  # nothing to do
+        return
 
     numerics = []
     for data in stacks[0]:
@@ -268,18 +279,24 @@ def print_variance_across(scope_timer_file_glob, root_id=None, dedupe=True):
             numerics[i][1].append(data[2])
             numerics[i][2].append(data[3])
 
+    def metric(vals, stddev=False):
+        if stddev:
+            return int(np.std(vals))
+        return max(vals) - min(vals)
+
     savg = 0
     ravg = 0
     for num in numerics:
         data, starts, times = num
-        savg += int(np.std(starts))
-        ravg += int(np.std(times))
+        savg += metric(starts)
+        ravg += metric(times)
     savg /= len(numerics)
     ravg /= len(numerics)
 
-    red = "\033[91m"
-    white = "\033[0m"
-    orange = "\033[93m"
+    colorize = TERM_COLORS and sys.stdout.isatty()
+    red = "\033[91m" if colorize else ""
+    white = "\033[0m" if colorize else ""
+    orange = "\033[93m" if colorize else ""
 
     def color(v, avg):
         d = str(v / 1e6) + "ms"
@@ -287,15 +304,15 @@ def print_variance_across(scope_timer_file_glob, root_id=None, dedupe=True):
             return red + d
         if v > avg:
             return orange + d
-        return "\033[0m" + d
+        return white + d
 
     stf = scope_timer_files[0]
     for num in numerics:
         data, starts, times = num
         key, tabs, _, __ = data
         o = " " * tabs
-        start_sdev = color(int(np.std(starts)), savg)
-        times_sdev = color(int(np.std(times)), ravg)
+        start_sdev = color(metric(starts), savg)
+        times_sdev = color(metric(times), ravg)
         print(
             white
             + o
