@@ -2,10 +2,15 @@
 # parsing PHARE scope funtion timers
 #
 
-from dataclasses import dataclass, field
-from pathlib import Path
-
+import os
+import sys
+import json
 import numpy as np
+from pathlib import Path
+from dataclasses import dataclass, field
+
+
+TERM_COLORS = bool(json.loads(os.environ.get("PHLOP_TERM_COLORS", "true")))
 
 
 @dataclass
@@ -139,8 +144,40 @@ class LossLine:
         return "-" if lss < 1e-2 else float(f"{lss / n.t * 100:.2f}")
 
 
+def dedupe_leafs(stf, n):
+    nodes = []
+    leafs = dict()
+    keys = []
+
+    for c in n.c:
+        if c.c:
+            return n.c  # skip
+
+    for c in n.c:
+        key = stf(c.k)
+        if key not in leafs:
+            leafs[key] = []
+            keys.append(key)
+        leafs[key].append(c)
+
+    for key in keys:
+        vals = leafs[key]
+        base = leafs[key][0]
+        for i in range(1, len(vals)):
+            base.s += vals[i].s
+            base.t += vals[i].t
+        base.s /= len(vals)
+        nodes.append(base)
+
+    return nodes
+
+
 def print_basic_scope_timings(
-    scope_timer_file_glob, sort_worst_first=True, root_id=None, printer=print
+    scope_timer_file_glob,
+    sort_worst_first=True,
+    root_id=None,
+    dedupe=False,
+    printer=print,
 ):
     scope_timer_files = [file_parser(f) for f in Path.cwd().glob(scope_timer_file_glob)]
     if not scope_timer_files:
@@ -150,17 +187,12 @@ def print_basic_scope_timings(
     if sort_worst_first:
         stf.roots.sort(reverse=True, key=lambda x: x.t)
 
-    def loss(n):
-        lss = n.t if n.c else 0
-        for c in n.c:
-            lss -= c.t
-
-        return "-" if lss < 1e-2 else float(f"{lss / n.t * 100:.2f}")
-
     def kinder(n, tabs, tot):
         if not n.c:
             return
         o = " " * tabs
+        if dedupe:
+            n.c = dedupe_leafs(stf, n)
         for c in n.c:
             printer(LossLine(o, tot, stf(c.k), c, n))
             kinder(c, tabs + 1, tot)
@@ -173,10 +205,16 @@ def print_basic_scope_timings(
 
 
 def print_scope_timings(
-    scope_timer_file_glob, sort_worst_first=False, root_id="", pretty_print=True
+    scope_timer_file_glob,
+    sort_worst_first=False,
+    root_id="",
+    pretty_print=True,
+    dedupe=True,
 ):
     if not pretty_print:
-        print_basic_scope_timings(scope_timer_file_glob, sort_worst_first, root_id)
+        print_basic_scope_timings(
+            scope_timer_file_glob, sort_worst_first, root_id, dedupe
+        )
         return
 
     lines = []
@@ -184,7 +222,9 @@ def print_scope_timings(
     def printer(args):
         lines.append(args)
 
-    print_basic_scope_timings(scope_timer_file_glob, sort_worst_first, root_id, printer)
+    print_basic_scope_timings(
+        scope_timer_file_glob, sort_worst_first, root_id, dedupe, printer
+    )
     if not lines:
         return
 
@@ -205,25 +245,30 @@ def write_variance_across(scope_timer_file_glob, outfile):
             print_variance_across(scope_timer_file_glob)
 
 
-def print_variance_across(scope_timer_file_glob, root_id=None):
+def print_variance_across(scope_timer_file_glob, root_id=None, dedupe=True):
     scope_timer_files = [file_parser(f) for f in Path.cwd().glob(scope_timer_file_glob)]
     if not scope_timer_files:
         return
 
     stacks = [[] for _ in range(len(scope_timer_files))]
 
-    def map_graph(n, k, t=0):
+    def map_graph(stf, n, k, t=0):
         stacks[k].append((n.k, t, n.s, n.t))
         if not n.c:
             return
+        if dedupe:
+            n.c = dedupe_leafs(stf, n)
         for i in range(len(n.c)):
-            map_graph(n.c[i], k, t + 1)
+            map_graph(stf, n.c[i], k, t + 1)
 
     for i, stf in enumerate(scope_timer_files):
         for root in stf.roots:
-            if root_id and root_id != root.k:
+            if root_id and not stf(root.k).startswith(root_id):
                 continue
-            map_graph(root, i)
+            map_graph(stf, root, i)
+
+    if not stacks[0]:  # nothing to do
+        return
 
     numerics = []
     for data in stacks[0]:
@@ -234,9 +279,44 @@ def print_variance_across(scope_timer_file_glob, root_id=None):
             numerics[i][1].append(data[2])
             numerics[i][2].append(data[3])
 
+    def metric(vals, stddev=False):
+        if stddev:
+            return int(np.std(vals))
+        return max(vals) - min(vals)
+
+    savg = 0
+    ravg = 0
+    for num in numerics:
+        data, starts, times = num
+        savg += metric(starts)
+        ravg += metric(times)
+    savg /= len(numerics)
+    ravg /= len(numerics)
+
+    colorize = TERM_COLORS and sys.stdout.isatty()
+    red = "\033[91m" if colorize else ""
+    white = "\033[0m" if colorize else ""
+    orange = "\033[93m" if colorize else ""
+
+    def color(v, avg):
+        d = str(v / 1e6) + "ms"
+        if v >= avg * 2:
+            return red + d
+        if v > avg:
+            return orange + d
+        return white + d
+
     stf = scope_timer_files[0]
     for num in numerics:
         data, starts, times = num
         key, tabs, _, __ = data
         o = " " * tabs
-        print(o, stf(key), int(np.std(starts)), int(np.std(times)))
+        start_sdev = color(metric(starts), savg)
+        times_sdev = color(metric(times), ravg)
+        print(
+            white
+            + o
+            + f"{stf(key)} start: {start_sdev}"
+            + white
+            + f", runtime: {times_sdev}"
+        )
