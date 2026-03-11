@@ -18,3 +18,8 @@ profile:
   src: src/phlop/timing/threaded_scope_timer.cpp
   mode: shared
   test: tests/timing/test_threaded_scope_timer.cpp
+
+- name: stress_scope_timer
+  parent: base
+  main: tests/timing/stress_scope_timer.cpp
+  src: src/phlop/timing/scope_timer.cpp

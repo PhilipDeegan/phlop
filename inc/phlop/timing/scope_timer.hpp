@@ -24,6 +24,8 @@ namespace detail
 {
 
     void inline write_timer_file();
+    static std::size_t max_construct_time = 0;
+    static std::size_t max_destruct_time  = 0;
 
 } // namespace detail
 
@@ -41,7 +43,7 @@ struct ScopeTimerMan
 
     void init() { active = true; }
 
-    void shutdown(bool write = true)
+    void shutdown(bool const write = true, bool const stats = true)
     {
         if (traces.size())
         {
@@ -52,6 +54,13 @@ struct ScopeTimerMan
         }
         _headers.clear();
         active = false;
+
+        if (stats)
+        {
+            std::cout << "PHLOP SCOPE TIMER STATS" << std::endl;
+            std::cout << " max_construct_time " << detail::max_construct_time << std::endl;
+            std::cout << " max_destruct_time  " << detail::max_destruct_time << std::endl;
+        }
     }
 
     auto& file_name(std::string const& fn)
