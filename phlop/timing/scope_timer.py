@@ -22,9 +22,9 @@ class RunTimerNode:
 
     @staticmethod
     def from_scope_timer(line):
-        key, start_and_run_time = line.split(" ")
+        ws, key, start_and_run_time = line.split(" ")
         start_time, run_time = start_and_run_time.split(":")
-        return RunTimerNode(*[int(e) for e in (key, start_time, run_time)])
+        return int(ws), RunTimerNode(*[int(e) for e in (key, start_time, run_time)])
 
     @property
     def key(self) -> int:
@@ -79,8 +79,8 @@ def file_parser(times_filepath):
             stripped_line = line.strip()
             if not stripped_line:  # last line might be blank
                 continue
-            idx = len(line) - len(stripped_line)  # how many space indents from left
-            node = RunTimerNode.from_scope_timer(stripped_line)
+            # idx = len(line) - len(stripped_line)  # how many space indents from left
+            idx, node = RunTimerNode.from_scope_timer(stripped_line)
             if idx == 0:  # is root node
                 stack[0] = len(roots)
                 roots.append(node)

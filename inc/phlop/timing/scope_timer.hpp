@@ -37,13 +37,13 @@ struct ScopeTimerMan
     ScopeTimerMan()
         : timer_file{file_name_default}
     {
-        reports.reserve(5);
-        traces.reserve(5);
+        reports.reserve(25);
+        traces.reserve(25);
     }
 
     void init() { active = true; }
 
-    void shutdown(bool const write = true, bool const stats = true)
+    void shutdown(bool const write = true)
     {
         if (traces.size())
         {
@@ -52,15 +52,8 @@ struct ScopeTimerMan
             traces.clear();
             reports.clear();
         }
-        _headers.clear();
-        active = false;
 
-        if (stats)
-        {
-            std::cout << "PHLOP SCOPE TIMER STATS" << std::endl;
-            std::cout << " max_construct_time " << detail::max_construct_time << std::endl;
-            std::cout << " max_destruct_time  " << detail::max_destruct_time << std::endl;
-        }
+        active = false;
     }
 
     auto& file_name(std::string const& fn)
@@ -83,9 +76,22 @@ struct ScopeTimerMan
         return *this;
     }
 
+    void print_self_stats() const
+    {
+        std::cout << "PHLOP SCOPE TIMER STATS" << std::endl;
+        std::cout << " max_construct_time " << detail::max_construct_time << std::endl;
+        std::cout << " max_destruct_time  " << detail::max_destruct_time << std::endl;
+    }
 
-
-    static void reset() { INSTANCE().shutdown(); }
+    static void reset(bool const active = true)
+    {
+        if (auto& self = INSTANCE(); self.active)
+        {
+            self.shutdown();
+            self.active = active;
+            self        = ScopeTimerMan{};
+        }
+    }
 
     bool active         = false;
     bool _force_strings = false;
@@ -106,7 +112,7 @@ struct RunTimerReportSnapshot
         , start{st}
         , time{t}
     {
-        childs.reserve(2);
+        childs.reserve(25);
     }
 
     RunTimerReport const* const self;
@@ -119,7 +125,7 @@ struct RunTimerReportSnapshot
 
 struct RunTimerReport
 {
-    std::string_view k, f;
+    std::string k, f;
     std::uint32_t l = 0;
 
     RunTimerReport(std::string_view const& _k, std::string_view const& _f, std::uint32_t const& _l)
@@ -128,7 +134,7 @@ struct RunTimerReport
         , l{_l}
     {
         ScopeTimerMan::INSTANCE().reports.emplace_back(this);
-        snapshots.reserve(5);
+        snapshots.reserve(25);
     }
 
     ~RunTimerReport() {}
@@ -270,7 +276,7 @@ struct BinaryTimerFile
     }
 
     void _write_strings(std::ofstream& file, BinaryTimerFileNode const& node,
-                        std::uint16_t tabs = 0) const
+                        std::uint16_t const tabs = 0) const
     {
         for (std::size_t ti = 0; ti < tabs; ++ti)
             file << " ";
@@ -279,10 +285,10 @@ struct BinaryTimerFile
             _write_strings(file, n, tabs + 1);
     }
 
-    void _write(std::ofstream& file, BinaryTimerFileNode const& node, std::uint16_t tabs = 0) const
+    void _write(std::ofstream& file, BinaryTimerFileNode const& node,
+                std::uint16_t const tabs = 0) const
     {
-        for (std::size_t ti = 0; ti < tabs; ++ti)
-            file << " ";
+        file << tabs << " ";
         file << node.fn_id << " " << node.start << ":" << node.time << std::endl;
         for (auto const& n : node.kinder)
             _write(file, n, tabs + 1);
