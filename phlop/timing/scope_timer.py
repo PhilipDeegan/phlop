@@ -51,7 +51,7 @@ class ScopeTimerFile:
         return self.fn_for(id)
 
 
-def file_parser(times_filepath):
+def lines_parser(lines):
     id_keys = {}
     roots = []
     curr = None
@@ -67,41 +67,45 @@ def file_parser(times_filepath):
             n = n.c[stack[s]]
         return n
 
-    with open(times_filepath, "r") as file:
-        while line := file.readline():
-            line = line.rstrip()
-            if not line:
-                break
-            bits = line.split(" ")
-            id_keys[int(bits[0])] = bits[1]
-        while line := file.readline():
-            line = line.rstrip()  # drop new line characters
-            stripped_line = line.strip()
-            if not stripped_line:  # last line might be blank
-                continue
-            # idx = len(line) - len(stripped_line)  # how many space indents from left
-            idx, node = RunTimerNode.from_scope_timer(stripped_line)
-            if idx == 0:  # is root node
-                stack[0] = len(roots)
-                roots.append(node)
-                stack_size = 0
-                white_space = 0
-            else:  # is not root node
-                if idx > white_space:
-                    parent = curr
-                    curr.c.append(node)
-                    stack_size += 1
-                elif idx == white_space:
-                    parent = _parent()
-                    parent.c.append(node)
-                elif idx < white_space:
-                    stack_size -= white_space - idx
-                    parent = _parent()
-                    parent.c.append(node)
-                stack[stack_size] = len(parent.c) - 1
-                white_space = idx
-            curr = node
+    for idx, line in enumerate(lines):
+        line = line.rstrip()
+        if not line:
+            break
+        bits = line.split(" ")
+        id_keys[int(bits[0])] = bits[1]
+
+    for i in range(idx, len(lines)):
+        line = lines[i].rstrip()  # drop new line characters
+        stripped_line = line.strip()
+        if not stripped_line:  # last line might be blank
+            continue
+        idx, node = RunTimerNode.from_scope_timer(stripped_line)
+        if idx == 0:  # is root node
+            stack[0] = len(roots)
+            roots.append(node)
+            stack_size = 0
+            white_space = 0
+        else:  # is not root node
+            if idx > white_space:
+                parent = curr
+                curr.c.append(node)
+                stack_size += 1
+            elif idx == white_space:
+                parent = _parent()
+                parent.c.append(node)
+            elif idx < white_space:
+                stack_size -= white_space - idx
+                parent = _parent()
+                parent.c.append(node)
+            stack[stack_size] = len(parent.c) - 1
+            white_space = idx
+        curr = node
     return ScopeTimerFile(id_keys, roots)
+
+
+def file_parser(times_filepath):
+    with open(times_filepath, "r") as file:
+        return lines_parser(file.readlines())
 
 
 def write_scope_timings(scope_timer_file, outfile, sort_worst_first=True):

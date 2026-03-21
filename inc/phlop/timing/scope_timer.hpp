@@ -32,7 +32,7 @@ namespace detail
 struct ScopeTimerMan
 {
     static ScopeTimerMan& INSTANCE();
-    static constexpr std::string_view file_name_default = ".phlop_scope_times.bin";
+    static constexpr std::string_view file_name_default = ".phlop_scope_times.txt";
 
     ScopeTimerMan()
         : timer_file{file_name_default}
@@ -51,6 +51,7 @@ struct ScopeTimerMan
                 detail::write_timer_file();
             traces.clear();
             reports.clear();
+            report_stack_ptr = nullptr;
         }
 
         active = false;
@@ -88,8 +89,8 @@ struct ScopeTimerMan
         if (auto& self = INSTANCE(); self.active)
         {
             self.shutdown();
-            self.active = active;
-            self        = ScopeTimerMan{};
+            if (active)
+                self.init();
         }
     }
 
@@ -273,6 +274,8 @@ struct BinaryTimerFile
             for (auto const& root : roots)
                 _write(f, root);
         }
+
+        f.close();
     }
 
     void _write_strings(std::ofstream& file, BinaryTimerFileNode const& node,

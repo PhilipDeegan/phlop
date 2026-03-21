@@ -1,6 +1,8 @@
 
 #include "phlop/timing/scope_timer.hpp"
 
+#include <algorithm>
+
 namespace phlop
 {
 
