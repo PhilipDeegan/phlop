@@ -249,10 +249,39 @@ def write_variance_across(scope_timer_file_glob, outfile):
             print_variance_across(scope_timer_file_glob)
 
 
+def are_consistent_trees(nodes):
+    ref_node = nodes[0]
+    for i in range(1, len(nodes)):
+        cmp_node = nodes[i]
+        if len(ref_node.c) != len(cmp_node.c):
+            return 0
+        for j in range(len(ref_node.c)):
+            if ref_node.c[j].k != cmp_node.c[j].k:
+                return 0
+    return 1  # are consistent
+
+
+def make_consistent(scope_timer_files):
+    def traverse(nodes):
+        if not are_consistent_trees(nodes):
+            for node in nodes:
+                node.c = []  # drop!
+        for i in range(len(nodes[0].c)):
+            traverse([node.c[i] for node in nodes])
+
+    n_roots = len(scope_timer_files[0].roots)
+    for i in range(n_roots):
+        traverse([stf.roots[i] for stf in scope_timer_files])
+
+    return scope_timer_files
+
+
 def print_variance_across(scope_timer_file_glob, root_id=None, dedupe=True):
     scope_timer_files = [file_parser(f) for f in Path.cwd().glob(scope_timer_file_glob)]
     if not scope_timer_files:
         return
+
+    scope_timer_files = make_consistent(scope_timer_files)
 
     stacks = [[] for _ in range(len(scope_timer_files))]
 
