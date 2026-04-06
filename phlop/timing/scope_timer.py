@@ -270,6 +270,12 @@ def make_consistent(scope_timer_files):
             traverse([node.c[i] for node in nodes])
 
     n_roots = len(scope_timer_files[0].roots)
+    for i in range(1, len(scope_timer_files)):
+        if n_roots != len(scope_timer_files[i].roots):
+            raise RuntimeError(
+                "Incompatible scope timer files, different root node count"
+            )
+
     for i in range(n_roots):
         traverse([stf.roots[i] for stf in scope_timer_files])
 
