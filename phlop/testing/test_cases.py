@@ -95,6 +95,7 @@ def logfile(log_file_path, test_class, suite):
         log_file_path
         / pyfile.parent.relative_to(_LOG_DIR)
         / pyfile.stem
+        / test_class.__name__
         / suite._testMethodName
     )
     return logfile
