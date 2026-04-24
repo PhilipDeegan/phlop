@@ -2,6 +2,7 @@
 #include "phlop/timing/scope_timer.hpp"
 
 #include <thread>
+#include <iostream>
 
 using namespace std::chrono_literals;
 
@@ -42,6 +43,7 @@ void fn2()
 
 int main()
 {
+    std::cout << __FILE__ << std::endl;
     // ONLY SUPPORTS SERIAL OPERATIONS!
     phlop::ScopeTimerMan::INSTANCE().file_name("scope_timer.txt").init();
 
