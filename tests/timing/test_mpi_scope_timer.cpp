@@ -1,5 +1,5 @@
 
-#include "phlop/timing/threaded_scope_timer.hpp"
+#include "phlop/timing/mpi_scope_timer.hpp"
 
 #include <thread>
 #include <iostream>
@@ -41,11 +41,13 @@ void fn2()
     fn0();
 }
 
-int main()
+int main(int argc, char** argv)
 {
     std::cout << __FILE__ << std::endl;
 
-    phlop::threaded::ScopeTimerMan::INSTANCE().file_name("threaded_scope_timer.txt").init();
+    MPI_Init(&argc, &argv);
+
+    phlop::mpi::init_scope_timer("mpi_scope_timer.bin");
 
     std::thread{[&]() {
         for (std::size_t i = 0; i < 2; ++i)
@@ -63,6 +65,7 @@ int main()
         }}.join();
     }
 
-
     phlop::threaded::ScopeTimerMan::INSTANCE().shutdown();
+
+    MPI_Finalize();
 }

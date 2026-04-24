@@ -1,33 +1,32 @@
 #ifndef _PHLOP_TIMING_SCOPE_TIMER_HPP_
 #define _PHLOP_TIMING_SCOPE_TIMER_HPP_
 
-#include <chrono>
-#include <memory>
-#include <vector>
-#include <cassert>
-#include <cstdint>
-#include <fstream>
-#include <sstream>
 #include <iostream>
+#include <algorithm>
 #include <string_view>
-#include <unordered_map>
 
+#include "phlop/timing/common_timer.hpp"
 #include "phlop/macros/def/string.hpp"
 
 namespace phlop
 {
 
 struct RunTimerReport;
-struct RunTimerReportSnapshot;
+using RunTimerReportSnapshot = RunTimerReportSnapshotT<RunTimerReport>;
+
+// forward declare so detail::_current_scope_timer<Clock> can use it as a pointer type
+template<typename Clock = SteadyClock>
+struct scope_timer;
 
 namespace detail
 {
+    void inline write_timer_file(); // defined below after ScopeTimerMan
 
-    void inline write_timer_file();
-    static std::size_t max_construct_time = 0;
-    static std::size_t max_destruct_time  = 0;
+    inline std::size_t max_construct_time = 0;
+    inline std::size_t max_destruct_time  = 0;
 
 } // namespace detail
+
 
 struct ScopeTimerMan
 {
@@ -104,26 +103,6 @@ struct ScopeTimerMan
 };
 
 
-struct RunTimerReportSnapshot
-{
-    RunTimerReportSnapshot(RunTimerReport* s, RunTimerReport* p, std::uint64_t const st,
-                           std::uint64_t const t)
-        : self{s}
-        , parent{p}
-        , start{st}
-        , time{t}
-    {
-        childs.reserve(25);
-    }
-
-    RunTimerReport const* const self;
-    RunTimerReport const* const parent;
-
-    std::uint64_t const start;
-    std::uint64_t const time;
-    std::vector<RunTimerReportSnapshot*> childs;
-};
-
 struct RunTimerReport
 {
     std::string k, f;
@@ -143,24 +122,68 @@ struct RunTimerReport
     auto operator()(std::size_t i) { return snapshots[i].get(); }
     auto size() { return snapshots.size(); }
 
-    std::vector<std::shared_ptr<RunTimerReportSnapshot>> snapshots; // emplace back breaks pointers!
+    std::vector<std::shared_ptr<RunTimerReportSnapshot>> snapshots;
 };
 
 
+namespace detail
+{
+    template<typename Clock>
+    inline scope_timer<Clock>* _current_scope_timer = nullptr;
+
+    void inline write_timer_file()
+    {
+        auto& man = ScopeTimerMan::INSTANCE();
+        BinaryTimerFile{man.traces}.write(man.timer_file, man._force_strings, man._headers);
+    }
+
+} // namespace detail
 
 
+template<typename Clock>
 struct scope_timer
 {
-    scope_timer(RunTimerReport& _r);
-
-    ~scope_timer();
-
-    std::uint64_t static now()
+    scope_timer(RunTimerReport& _r)
+        : r{_r}
     {
-        return std::chrono::duration_cast<std::chrono::nanoseconds>(
-                   std::chrono::steady_clock::now().time_since_epoch())
-            .count();
+        if (ScopeTimerMan::INSTANCE().active)
+        {
+            auto const begin                    = now();
+            this->pscope                        = detail::_current_scope_timer<Clock>;
+            detail::_current_scope_timer<Clock> = this;
+
+            if (this->pscope)
+                pscope->childs.reserve(pscope->childs.size() + 1);
+
+            detail::max_construct_time = std::max(detail::max_construct_time, now() - begin);
+        }
     }
+
+    ~scope_timer()
+    {
+        if (ScopeTimerMan::INSTANCE().active)
+        {
+            auto const begin                    = now();
+            detail::_current_scope_timer<Clock> = this->pscope;
+
+            auto& s = *r.snapshots.emplace_back(
+                std::make_shared<RunTimerReportSnapshot>(&r, parent, start, now() - start));
+
+            if (this->pscope)
+                pscope->childs.emplace_back(&s);
+
+            s.childs = std::move(childs);
+
+            if (parent == nullptr)
+                ScopeTimerMan::INSTANCE().traces.emplace_back(&s);
+
+            ScopeTimerMan::INSTANCE().report_stack_ptr = parent;
+
+            detail::max_destruct_time = std::max(detail::max_destruct_time, now() - begin);
+        }
+    }
+
+    static std::uint64_t now() { return Clock::now(); }
 
     static scope_timer& root_parent_from(scope_timer& self)
     {
@@ -169,161 +192,22 @@ struct scope_timer
         return self;
     }
 
-
     RunTimerReport& r;
-    RunTimerReport* parent = ScopeTimerMan::INSTANCE().report_stack_ptr;
-    RunTimerReport* child  = nullptr;
-
+    RunTimerReport* parent    = ScopeTimerMan::INSTANCE().report_stack_ptr;
+    RunTimerReport* child     = nullptr;
     scope_timer* pscope       = nullptr;
     std::uint64_t const start = now();
-
     std::vector<RunTimerReportSnapshot*> childs;
 };
 
 
-struct BinaryTimerFileNode
-{
-    BinaryTimerFileNode(std::uint16_t const& _fn_id, std::uint64_t const _start,
-                        std::uint64_t const _time)
-        : fn_id{_fn_id}
-        , start{_start}
-        , time{_time}
-    {
-    }
-
-    std::uint16_t const fn_id;
-    std::uint64_t const start;
-    std::uint64_t const time;
-
-    std::vector<BinaryTimerFileNode> kinder{};
-};
-
-struct BinaryTimerFile
-{
-    BinaryTimerFile(bool fromStaticTraces = true)
-    {
-        if (fromStaticTraces)
-        {
-            for (auto const& trace : ScopeTimerMan::INSTANCE().traces)
-                recurse_traces_for_keys(trace);
-            for (auto const& trace : ScopeTimerMan::INSTANCE().traces)
-                recurse_traces_for_nodes(trace,
-                                         roots.emplace_back(key_ids[std::string{trace->self->k}],
-                                                            trace->start, trace->time));
-        }
-    }
-
-
-    template<typename Trace>
-    void recurse_traces_for_nodes(Trace const& c, BinaryTimerFileNode& node)
-    {
-        for (std::size_t i = 0; i < c->childs.size(); ++i)
-            recurse_traces_for_nodes(
-                c->childs[i], node.kinder.emplace_back(key_ids[std::string{c->childs[i]->self->k}],
-                                                       c->childs[i]->start, c->childs[i]->time));
-    }
-
-    template<typename Trace>
-    void recurse_traces_for_keys(Trace const& c)
-    {
-        std::string s{c->self->k};
-        if (!key_ids.count(s))
-        {
-            auto [it, b] = key_ids.emplace(s, key_ids.size());
-            assert(b);
-            auto const& [k, i] = *it;
-            assert(!id_to_key.count(i));
-            id_to_key.emplace(i, k);
-        }
-        for (std::size_t i = 0; i < c->childs.size(); ++i)
-            recurse_traces_for_keys(c->childs[i]);
-    }
-
-    template<typename... Args>
-    void _byte_write(std::ofstream& file, Args const... args) const
-    {
-        std::stringstream ss;
-        (ss << ... << args);
-        auto s = ss.str();
-
-        file.write(s.c_str(), s.size());
-        file << std::endl;
-    }
-
-    void write(std::string const& filename) const
-    {
-        std::ofstream f{filename, std::ios::binary};
-
-        if (ScopeTimerMan::INSTANCE()._force_strings)
-        {
-            if (ScopeTimerMan::INSTANCE()._headers.size())
-            {
-                f << ScopeTimerMan::INSTANCE()._headers[0];
-                for (std::size_t i = 1; i < ScopeTimerMan::INSTANCE()._headers.size(); ++i)
-                    f << "," << ScopeTimerMan::INSTANCE()._headers[i];
-                f << std::endl;
-            }
-            for (auto const& root : roots)
-                _write_strings(f, root);
-        }
-        else
-        {
-            for (auto const& [i, k] : id_to_key)
-                _byte_write(f, i, " ", k);
-            f << std::endl; // break between function id map and function times
-            for (auto const& root : roots)
-                _write(f, root);
-        }
-
-        f.close();
-    }
-
-    void _write_strings(std::ofstream& file, BinaryTimerFileNode const& node,
-                        std::uint16_t const tabs = 0) const
-    {
-        for (std::size_t ti = 0; ti < tabs; ++ti)
-            file << " ";
-        file << id_to_key.at(node.fn_id) << node.time << std::endl;
-        for (auto const& n : node.kinder)
-            _write_strings(file, n, tabs + 1);
-    }
-
-    void _write(std::ofstream& file, BinaryTimerFileNode const& node,
-                std::uint16_t const tabs = 0) const
-    {
-        file << tabs << " ";
-        file << node.fn_id << " " << node.start << ":" << node.time << std::endl;
-        for (auto const& n : node.kinder)
-            _write(file, n, tabs + 1);
-    }
-
-
-    std::unordered_map<std::string, std::size_t> key_ids; // only used on write
-    std::unordered_map<std::size_t, std::string> id_to_key;
-    std::vector<BinaryTimerFileNode> roots;
-};
-
-
-namespace detail
-{
-
-    void inline write_timer_file()
-    {
-        BinaryTimerFile{}.write(ScopeTimerMan::INSTANCE().timer_file);
-    }
-
-
-} // namespace detail
-
-
 } // namespace phlop
 
-
-
+#if !defined(PHLOP_SCOPE_TIMER)
 #define PHLOP_SCOPE_TIMER(key)                                                                     \
     static phlop::RunTimerReport PHLOP_STR_CAT(ridx_, __LINE__){key, __FILE__, __LINE__};          \
-    phlop::scope_timer PHLOP_STR_CAT(_scope_timer_, __LINE__){PHLOP_STR_CAT(ridx_, __LINE__)};     \
+    phlop::scope_timer<> PHLOP_STR_CAT(_scope_timer_, __LINE__){PHLOP_STR_CAT(ridx_, __LINE__)};   \
     phlop::ScopeTimerMan::INSTANCE().report_stack_ptr = &PHLOP_STR_CAT(ridx_, __LINE__);
-
+#endif
 
 #endif /*_PHLOP_TIMING_SCOPE_TIMER_HPP_*/
