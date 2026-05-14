@@ -1,5 +1,5 @@
 
-#include "phlop/timing/threaded_scope_timer.hpp"
+#include "phlop/timing/common_threaded_timer.hpp"
 
 namespace phlop::threaded
 {

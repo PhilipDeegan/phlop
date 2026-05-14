@@ -1,14 +1,13 @@
-
 #ifndef _PHLOP_TIMING_COMMON_TIMER_HPP_
 #define _PHLOP_TIMING_COMMON_TIMER_HPP_
 
 #include <chrono>
+#include <string>
+#include <vector>
 #include <cassert>
 #include <cstdint>
 #include <fstream>
 #include <sstream>
-#include <string>
-#include <vector>
 #include <unordered_map>
 
 namespace phlop
@@ -138,6 +137,8 @@ struct BinaryTimerFile
             for (auto const& root : roots)
                 _write(f, root);
         }
+
+        f.close();
     }
 
     void _write_strings(std::ofstream& file, BinaryTimerFileNode const& node,

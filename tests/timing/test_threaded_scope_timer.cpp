@@ -45,7 +45,7 @@ int main()
 {
     std::cout << __FILE__ << std::endl;
 
-    phlop::threaded::ScopeTimerMan::INSTANCE().file_name("threaded_scope_timer.txt").init();
+    phlop::scope_timer().file_name("bin/threaded_scope_timer.txt").init();
 
     std::thread{[&]() {
         for (std::size_t i = 0; i < 2; ++i)
@@ -62,7 +62,4 @@ int main()
                 fny();
         }}.join();
     }
-
-
-    phlop::threaded::ScopeTimerMan::INSTANCE().shutdown();
 }

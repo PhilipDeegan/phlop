@@ -47,7 +47,7 @@ int main(int argc, char** argv)
 
     MPI_Init(&argc, &argv);
 
-    phlop::mpi::init_scope_timer("mpi_scope_timer.bin");
+    phlop::scope_timer().file_name("bin/" + phlop::mpi::scope_timer_file_namer()).init();
 
     std::thread{[&]() {
         for (std::size_t i = 0; i < 2; ++i)
@@ -64,8 +64,6 @@ int main(int argc, char** argv)
                 fny();
         }}.join();
     }
-
-    phlop::threaded::ScopeTimerMan::INSTANCE().shutdown();
 
     MPI_Finalize();
 }

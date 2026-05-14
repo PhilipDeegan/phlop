@@ -1,12 +1,25 @@
 #ifndef _PHLOP_TIMING_SCOPE_TIMER_HPP_
 #define _PHLOP_TIMING_SCOPE_TIMER_HPP_
 
+#if defined(_PHLOP_TIMER_EXPORTED_) && _PHLOP_TIMER_EXPORTED_ != 0
+#error // can't use more than one timer type at time
+#endif
+#define _PHLOP_TIMER_EXPORTED_ 0
+
+#include "phlop/macros/def/string.hpp"
+#include "phlop/timing/common_timer.hpp"
+
+#include <memory>
 #include <iostream>
 #include <algorithm>
 #include <string_view>
 
-#include "phlop/timing/common_timer.hpp"
-#include "phlop/macros/def/string.hpp"
+#if !defined(PHLOP_SCOPE_TIMER)
+#define PHLOP_SCOPE_TIMER(key)                                                                     \
+    static phlop::RunTimerReport PHLOP_STR_CAT(ridx_, __LINE__){key, __FILE__, __LINE__};          \
+    phlop::ScopeTimer<> PHLOP_STR_CAT(_ScopeTimer_, __LINE__){PHLOP_STR_CAT(ridx_, __LINE__)};     \
+    phlop::ScopeTimerMan::INSTANCE().report_stack_ptr = &PHLOP_STR_CAT(ridx_, __LINE__);
+#endif
 
 namespace phlop
 {
@@ -14,9 +27,10 @@ namespace phlop
 struct RunTimerReport;
 using RunTimerReportSnapshot = RunTimerReportSnapshotT<RunTimerReport>;
 
-// forward declare so detail::_current_scope_timer<Clock> can use it as a pointer type
+// forward declare so detail::_current_ScopeTimer<Clock> can use it as a pointer type
 template<typename Clock = SteadyClock>
-struct scope_timer;
+struct ScopeTimer;
+struct ScopeTimerMan;
 
 namespace detail
 {
@@ -24,6 +38,8 @@ namespace detail
 
     inline std::size_t max_construct_time = 0;
     inline std::size_t max_destruct_time  = 0;
+
+    static ScopeTimerMan* instance = nullptr;
 
 } // namespace detail
 
@@ -39,6 +55,7 @@ struct ScopeTimerMan
         reports.reserve(25);
         traces.reserve(25);
     }
+
 
     void init() { active = true; }
 
@@ -129,7 +146,7 @@ struct RunTimerReport
 namespace detail
 {
     template<typename Clock>
-    inline scope_timer<Clock>* _current_scope_timer = nullptr;
+    inline ScopeTimer<Clock>* _current_ScopeTimer = nullptr;
 
     void inline write_timer_file()
     {
@@ -141,16 +158,16 @@ namespace detail
 
 
 template<typename Clock>
-struct scope_timer
+struct ScopeTimer
 {
-    scope_timer(RunTimerReport& _r)
+    ScopeTimer(RunTimerReport& _r)
         : r{_r}
     {
         if (ScopeTimerMan::INSTANCE().active)
         {
-            auto const begin                    = now();
-            this->pscope                        = detail::_current_scope_timer<Clock>;
-            detail::_current_scope_timer<Clock> = this;
+            auto const begin                   = now();
+            this->pscope                       = detail::_current_ScopeTimer<Clock>;
+            detail::_current_ScopeTimer<Clock> = this;
 
             if (this->pscope)
                 pscope->childs.reserve(pscope->childs.size() + 1);
@@ -159,12 +176,12 @@ struct scope_timer
         }
     }
 
-    ~scope_timer()
+    ~ScopeTimer()
     {
         if (ScopeTimerMan::INSTANCE().active)
         {
-            auto const begin                    = now();
-            detail::_current_scope_timer<Clock> = this->pscope;
+            auto const begin                   = now();
+            detail::_current_ScopeTimer<Clock> = this->pscope;
 
             auto& s = *r.snapshots.emplace_back(
                 std::make_shared<RunTimerReportSnapshot>(&r, parent, start, now() - start));
@@ -185,7 +202,7 @@ struct scope_timer
 
     static std::uint64_t now() { return Clock::now(); }
 
-    static scope_timer& root_parent_from(scope_timer& self)
+    static ScopeTimer& root_parent_from(ScopeTimer& self)
     {
         if (self.pscope)
             return root_parent_from(*self.pscope);
@@ -195,19 +212,25 @@ struct scope_timer
     RunTimerReport& r;
     RunTimerReport* parent    = ScopeTimerMan::INSTANCE().report_stack_ptr;
     RunTimerReport* child     = nullptr;
-    scope_timer* pscope       = nullptr;
+    ScopeTimer* pscope        = nullptr;
     std::uint64_t const start = now();
     std::vector<RunTimerReportSnapshot*> childs;
 };
 
 
+inline auto& scope_timer()
+{
+    return ScopeTimerMan::INSTANCE();
+}
+
+inline void shutdown_scope_timer()
+{
+    ScopeTimerMan::INSTANCE().shutdown();
+}
+
+
 } // namespace phlop
 
-#if !defined(PHLOP_SCOPE_TIMER)
-#define PHLOP_SCOPE_TIMER(key)                                                                     \
-    static phlop::RunTimerReport PHLOP_STR_CAT(ridx_, __LINE__){key, __FILE__, __LINE__};          \
-    phlop::scope_timer<> PHLOP_STR_CAT(_scope_timer_, __LINE__){PHLOP_STR_CAT(ridx_, __LINE__)};   \
-    phlop::ScopeTimerMan::INSTANCE().report_stack_ptr = &PHLOP_STR_CAT(ridx_, __LINE__);
-#endif
+
 
 #endif /*_PHLOP_TIMING_SCOPE_TIMER_HPP_*/

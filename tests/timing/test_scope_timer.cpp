@@ -45,7 +45,7 @@ int main()
 {
     std::cout << __FILE__ << std::endl;
     // ONLY SUPPORTS SERIAL OPERATIONS!
-    phlop::ScopeTimerMan::INSTANCE().file_name("scope_timer.txt").init();
+    phlop::scope_timer().file_name("bin/scope_timer.txt").init();
 
     for (std::size_t i = 0; i < 2; ++i)
         fn1();
@@ -54,5 +54,5 @@ int main()
     for (std::size_t i = 0; i < 2; ++i)
         fny();
 
-    phlop::ScopeTimerMan::INSTANCE().shutdown();
+    phlop::scope_timer().shutdown();
 }

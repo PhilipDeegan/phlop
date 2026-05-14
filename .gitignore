@@ -5,6 +5,6 @@ bin
 __pycache__
 dist
 phlop.egg-info/
-
+.clangd
 *scope_timer.txt
 tpp
