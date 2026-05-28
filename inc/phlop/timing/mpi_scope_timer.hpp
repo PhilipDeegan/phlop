@@ -57,6 +57,11 @@ inline void shutdown_scope_timer()
     threaded::ScopeTimerMan::INSTANCE().shutdown();
 }
 
+inline void reset_scope_timer()
+{
+    threaded::ScopeTimerMan::INSTANCE().reset();
+}
+
 } // namespace phlop
 
 
