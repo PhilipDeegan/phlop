@@ -9,6 +9,8 @@
 #include <vector>
 #include <functional>
 #include <string_view>
+#include <unordered_set>
+
 
 namespace phlop::threaded
 {
@@ -52,15 +54,18 @@ struct ScopeTimerMan
             shutdown();
     }
 
-    void init() { active = true; }
+    void init()
+    {
+        active          = true;
+        local().movable = true;
+    }
 
     void shutdown(bool write = true)
     {
         local().move();
         local().movable = false;
-        if (thread_storage.size())
-            if (write)
-                detail::write_timer_file();
+        if (write)
+            detail::write_timer_file();
 
         _headers.clear();
         thread_storage.clear();
@@ -88,23 +93,33 @@ struct ScopeTimerMan
         return *this;
     }
 
-    static void reset() { INSTANCE().shutdown(); }
+    static void reset(bool const active = true)
+    {
+        if (auto& self = INSTANCE(); self.active)
+        {
+            self.shutdown();
+            if (active)
+                self.init();
+        }
+    }
 
 
     struct per_thread
     {
-        per_thread() {}
+        per_thread() { ScopeTimerMan::INSTANCE().add(this); }
         per_thread(per_thread&& pt)
             : reports{std::move(pt.reports)}
             , traces{std::move(pt.traces)}
         {
             pt.movable = false;
+            ScopeTimerMan::INSTANCE().add(this);
         }
         per_thread(per_thread const&) = delete;
         ~per_thread()
         {
             if (movable)
                 move();
+            ScopeTimerMan::INSTANCE().rm(this);
         }
 
         void move()
@@ -141,6 +156,17 @@ struct ScopeTimerMan
         thread_reports.emplace_back(std::move(report));
     }
 
+    void add(per_thread* thread)
+    {
+        std::unique_lock<std::mutex> lk(work_);
+        threads.emplace(thread);
+    }
+    void rm(per_thread* thread)
+    {
+        std::unique_lock<std::mutex> lk(work_);
+        threads.erase(thread);
+    }
+
 
     bool active            = false;
     bool _force_strings    = false;
@@ -151,6 +177,7 @@ struct ScopeTimerMan
     std::vector<std::pair<std::vector<RunTimerReport*>, std::vector<RunTimerReportSnapshot*>>>
         thread_storage;
     std::vector<std::shared_ptr<RunTimerReport>> thread_reports;
+    std::unordered_set<per_thread*> threads; // all live threads
 };
 
 
@@ -195,10 +222,30 @@ namespace detail
     {
         auto& man = ScopeTimerMan::INSTANCE();
         std::vector<RunTimerReportSnapshot*> all_traces;
-        for (auto const& [reports, traces] : man.thread_storage)
-            for (auto* t : traces)
+        std::vector<ScopeTimerMan::per_thread*> alive;
+
+        // Snapshot dead-thread storage and alive-thread pointers atomically so
+        // a thread dying mid-collection can't cause a race on either container.
+        {
+            std::unique_lock<std::mutex> lk(man.work_);
+            for (auto const& [reports, traces] : man.thread_storage)
+                for (auto* t : traces)
+                    all_traces.push_back(t);
+            man.thread_storage.clear();
+            alive.assign(man.threads.begin(), man.threads.end());
+        }
+
+        // Safe provided no new timer data is being written during shutdown.
+        for (auto* pt : alive)
+        {
+            for (auto* t : pt->traces)
                 all_traces.push_back(t);
-        phlop::BinaryTimerFile{all_traces}.write(man.timer_file, man._force_strings, man._headers);
+            pt->traces.clear();
+        }
+
+        if (all_traces.size())
+            phlop::BinaryTimerFile{all_traces}.write(man.timer_file, man._force_strings,
+                                                     man._headers);
     }
 
 } // namespace detail
