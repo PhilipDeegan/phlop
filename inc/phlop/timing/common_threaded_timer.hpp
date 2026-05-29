@@ -106,20 +106,26 @@ struct ScopeTimerMan
 
     struct per_thread
     {
-        per_thread() { ScopeTimerMan::INSTANCE().add(this); }
+        per_thread()
+        {
+            if (auto& self = INSTANCE(); self.active)
+                self.add(this);
+        }
         per_thread(per_thread&& pt)
             : reports{std::move(pt.reports)}
             , traces{std::move(pt.traces)}
         {
             pt.movable = false;
-            ScopeTimerMan::INSTANCE().add(this);
+            if (auto& self = INSTANCE(); self.active)
+                self.add(this);
         }
         per_thread(per_thread const&) = delete;
         ~per_thread()
         {
-            if (movable)
+            auto& self = INSTANCE();
+            if (self.active && movable)
                 move();
-            ScopeTimerMan::INSTANCE().rm(this);
+            self.rm(this);
         }
 
         void move()
