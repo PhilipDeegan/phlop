@@ -58,10 +58,15 @@ def read_file(file):
 
 def read_last_lines_of(file, n=10):
     try:
-        with open(file, "r") as f:
-            return f.readlines()[:10]
-    except IOError as e:
-        raise RuntimeError(f"Failed to read file {file}: {e}")
+        size = os.path.getsize(file)
+        if size == 0:
+            return []
+        with open(file, "rb") as f:
+            f.seek(max(0, size - n * 200))
+            data = f.read()
+        return data.decode("utf-8", errors="replace").splitlines()[-n:]
+    except (IOError, OSError):
+        return []
 
 
 def env_sep():

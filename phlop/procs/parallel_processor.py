@@ -48,6 +48,8 @@ class Job:
             self.id = self.cmd
         if not self.cmd:
             raise ValueError("Job requires cmd")
+        if self.cores < 1:
+            raise ValueError(f"Job.cores must be >= 1, got {self.cores}")
 
     def __call__(self):
         from phlop.proc import run
@@ -195,7 +197,8 @@ def process(
     fail_fast = fail_fast if fail_fast is not None else FAIL_FAST
     n_cores = n_cores or cpu_count()
     max_cost = max(j.cores for j in jobs)
-    assert n_cores >= max_cost, f"need {max_cost} cores, have {n_cores}"
+    if n_cores < max_cost:
+        raise ProcessorFailure(f"need {max_cost} cores, have {n_cores}")
 
     cores_avail = n_cores
     pending = deque(enumerate(jobs))
@@ -233,6 +236,12 @@ def process(
                     print(f"{job.id} FAILED: {err}")
                 logger.warning("job %r worker died silently", job.id)
 
+    def cancel_running():
+        for p, _ in running.values():
+            p.terminate()
+        for p, _ in running.values():
+            p.join()
+
     launch()
 
     while running or pending:
@@ -244,6 +253,7 @@ def process(
             reap_dead()
             launch()
             if fail_fast and failures:
+                cancel_running()
                 raise ProcessorFailure(failures[-1])
             continue
 
@@ -259,6 +269,7 @@ def process(
             else:
                 print(msg)
             if fail_fast:
+                cancel_running()
                 raise ProcessorFailure(msg)
         else:
             results[job_idx] = r

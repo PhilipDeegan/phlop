@@ -38,7 +38,9 @@ def get_from_files(cli_args):
         with open(path, "r") as file:
             while line := file.readline():
                 test_case = tc.determine_cores_for_test_case(
-                    Job(cmd=perf_stat_cmd(cli_args, path, line.rstrip()))
+                    Job(
+                        cmd=perf_stat_cmd(cli_args, path, line.rstrip(), cli_args.extra)
+                    )
                 )
                 if test_case.cores not in test_batches:
                     test_batches[test_case.cores] = []

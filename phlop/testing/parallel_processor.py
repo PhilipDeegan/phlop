@@ -4,7 +4,7 @@
 #
 #
 
-from phlop.os import read_file
+from phlop.os import read_last_lines_of
 from phlop.procs.parallel_processor import LoggingMode  # noqa: F401
 from phlop.procs.parallel_processor import ProcessorFailure
 from phlop.procs.parallel_processor import normalize
@@ -20,9 +20,9 @@ def _on_failure(result):
     print(f"{job.id} FAILED: {result.error}")
     if job.log_file_path:
         for suffix in (".stdout", ".stderr"):
-            content = read_file(f"{job.log_file_path}{suffix}")
-            if content:
-                print(f"  {suffix[1:]}:", content)
+            lines = read_last_lines_of(f"{job.log_file_path}{suffix}")
+            if lines:
+                print(f"  {suffix[1:]}:", "\n".join(lines))
 
 
 def process(batches, n_cores=None, print_only=False, fail_fast=None, logging=1):
