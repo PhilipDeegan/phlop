@@ -8,30 +8,20 @@
 import os
 import sys
 import unittest
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
 from phlop.app.cmake import list_tests as get_cmake_tests
 from phlop.os import env_sep
+from phlop.procs.parallel_processor import Job
 from phlop.reflection import classes_in_file
 from phlop.sys import extend_sys_path
 
 _LOG_DIR = Path(os.environ.get("PHLOP_LOG_DIR", os.getcwd()))
 CMD_PREFIX = ""
 CMD_POSTFIX = ""
-
-
-@dataclass
-class TestCase:
-    cmd: str
-    env: dict = field(default_factory=lambda: {})  # dict[str, str] # eventually
-    working_dir: str = field(default_factory=lambda: None)
-    log_file_path: str = field(default_factory=lambda: None)
-    cores: int = field(default_factory=lambda: 1)
-
-    def __post_init__(self):
-        self.cmd = self.cmd.strip()
+PYTHON_FLAGS = "-um"  # -u always; omit -O so assertions run in tests
 
 
 @dataclass
@@ -43,7 +33,7 @@ class TestBatch:
 class DefaultTestCaseExtractor:
     def __call__(self, ctest_test):
         return [
-            TestCase(
+            Job(
                 cmd=ctest_test.cmd,
                 env=ctest_test.env,
                 working_dir=ctest_test.working_dir,
@@ -83,8 +73,9 @@ EXTRACTORS = [
 ]
 
 
-def python3_default_test_cmd(clazz, test_id):
-    return f"python3 -Oum {clazz.__module__} {clazz.__name__}.{test_id}"
+def python3_default_test_cmd(clazz, test_id, python_flags=None):
+    flags = python_flags if python_flags is not None else PYTHON_FLAGS
+    return f"python3 {flags} {clazz.__module__} {clazz.__name__}.{test_id}"
 
 
 def logfile(log_file_path, test_class, suite):
@@ -102,9 +93,17 @@ def logfile(log_file_path, test_class, suite):
 
 
 def load_test_cases_in(
-    classes, test_cmd_pre="", test_cmd_post="", test_cmd_fn=None, **kwargs
+    classes,
+    test_cmd_pre="",
+    test_cmd_post="",
+    test_cmd_fn=None,
+    python_flags=None,
+    **kwargs,
 ):
-    test_cmd_fn = test_cmd_fn if test_cmd_fn else python3_default_test_cmd
+    if test_cmd_fn is None:
+
+        def test_cmd_fn(c, t):
+            return python3_default_test_cmd(c, t, python_flags)
 
     tests, loader = [], unittest.TestLoader()
     for test_class in classes:
@@ -112,7 +111,7 @@ def load_test_cases_in(
             cmd = test_cmd_fn(type(suite), suite._testMethodName)
 
             tests += [
-                TestCase(
+                Job(
                     cmd=f"{test_cmd_pre} {cmd} {test_cmd_post}".strip(),
                     log_file_path=logfile(_LOG_DIR / ".phlop", test_class, suite),
                     **kwargs,
@@ -164,9 +163,7 @@ def load_cmake_tests(cmake_dir, cores=1, test_cmd_pre="", test_cmd_post=""):
     tests = []
     for cmake_test in cmake_tests:
         cmd = f"{test_cmd_pre} " + " ".join(cmake_test.command) + f" {test_cmd_post}"
-        tests += [
-            TestCase(cmd=cmd, env=cmake_test.env, working_dir=cmake_test.working_dir)
-        ]
+        tests += [Job(cmd=cmd, env=cmake_test.env, working_dir=cmake_test.working_dir)]
 
     test_batches = {}
 

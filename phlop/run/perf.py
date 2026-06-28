@@ -6,6 +6,7 @@ from pathlib import Path
 
 from phlop.app import perf as p
 from phlop.logger import getLogger
+from phlop.procs.parallel_processor import Job
 from phlop.testing import parallel_processor as pp
 from phlop.testing import test_cases as tc
 
@@ -37,7 +38,9 @@ def get_from_files(cli_args):
         with open(path, "r") as file:
             while line := file.readline():
                 test_case = tc.determine_cores_for_test_case(
-                    tc.TestCase(cmd=perf_stat_cmd(cli_args, path, line.rstrip()))
+                    Job(
+                        cmd=perf_stat_cmd(cli_args, path, line.rstrip(), cli_args.extra)
+                    )
                 )
                 if test_case.cores not in test_batches:
                     test_batches[test_case.cores] = []
@@ -50,7 +53,7 @@ def get_remaining(cli_args):
     test_batches = {}
     path = Path(cli_args.remaining[-1]).parent
     test_case = tc.determine_cores_for_test_case(
-        tc.TestCase(
+        Job(
             cmd=perf_stat_cmd(
                 cli_args, path, " ".join(cli_args.remaining), cli_args.extra
             )
