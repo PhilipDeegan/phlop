@@ -9,7 +9,6 @@ import numpy as np
 from pathlib import Path
 from dataclasses import dataclass, field
 
-
 TERM_COLORS = bool(json.loads(os.environ.get("PHLOP_TERM_COLORS", "true")))
 
 

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from phlop.dict import ValDict
 from phlop.logger import getLogger
+from phlop.procs.parallel_processor import LoggingMode
 from phlop.testing import parallel_processor as pp
 from phlop.testing import test_cases as tc
 
@@ -72,7 +73,7 @@ def verify_cli_args(cli_args):
     cli_args.cores = int(cli_args.cores)
     if not Path(cli_args.input).exists():
         raise RuntimeError("phlop.run.test_cases error: input provided does not exist")
-    pp.LoggingMode(cli_args.logging)  # check convertible
+    LoggingMode(cli_args.logging)  # check convertible
     sys.argv = [sys.argv[0]]  # drop everything!
     return cli_args
 
