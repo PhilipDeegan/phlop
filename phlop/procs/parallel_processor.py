@@ -276,7 +276,9 @@ def process(
             if on_success:
                 on_success(r)
             else:
-                print(f"{job.id} finished")
+                run_time = getattr(getattr(r.value, "run", None), "run_time", None)
+                timing = f" in {run_time:.2f}s" if run_time is not None else ""
+                print(f"{job.id} finished{timing}")
 
         launch()
 
