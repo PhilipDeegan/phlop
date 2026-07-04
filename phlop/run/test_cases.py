@@ -6,12 +6,14 @@ import os
 import sys
 import unittest
 import multiprocessing
+from datetime import timedelta
 from pathlib import Path
 
 from phlop.dict import ValDict
 from phlop.logger import getLogger
 from phlop.procs.parallel_processor import LoggingMode
 from phlop.testing import parallel_processor as pp
+from phlop.testing.parallel_processor import ProcessorOptions
 from phlop.testing import test_cases as tc
 
 from phlop import reflection as refl
@@ -210,6 +212,11 @@ def main():
             n_cores=cli_args.cores,
             print_only=cli_args.print_only,
             logging=cli_args.logging,
+            options=ProcessorOptions(
+                print_errors_on_exit=True,
+                poll_no_output=timedelta(minutes=60),
+                poll_long_lived=timedelta(minutes=60),
+            ),
         )
 
     except pp.TestCaseFailure:
