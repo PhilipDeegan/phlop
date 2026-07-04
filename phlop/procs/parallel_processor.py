@@ -7,12 +7,15 @@
 import copy
 import json
 import os
+import queue as queue_module
 import shlex
+import time
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import timedelta
 from enum import Enum
 from multiprocessing import Process, Queue, cpu_count
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Union
 
 from phlop.logger import getLogger
 
@@ -81,13 +84,35 @@ class JobResult:
         return self.error is None
 
 
-def _print_running(running):
+def _to_seconds(val: Optional[Union[timedelta, float]]) -> Optional[float]:
+    if val is None:
+        return None
+    if isinstance(val, timedelta):
+        return val.total_seconds()
+    return float(val)
+
+
+@dataclass
+class ProcessorOptions:
+    print_errors_on_exit: bool = True
+    # Print IDs of running jobs when no queue output for this long (seconds or timedelta).
+    poll_no_output: Optional[Union[timedelta, float]] = None
+    # Print running jobs + last log lines when a job has been alive this long.
+    poll_long_lived: Optional[Union[timedelta, float]] = None
+
+
+def _print_jobs(jobs, verbose):
+    if not jobs:
+        return
+
+    if not verbose:
+        print("running jobs:", ", ".join(job.id for job in jobs))
+        return
+
     from phlop.os import read_last_lines_of
 
     print("pending jobs start")
-    for _, (p, job) in running.items():
-        if not p.is_alive():
-            continue
+    for job in jobs:
         print("cmd:", job.id)
         if job.log_file_path:
             for suffix in (".stdout", ".stderr"):
@@ -189,10 +214,20 @@ def process(
     fail_fast: Optional[bool] = None,
     on_success: Optional[Callable[[JobResult], None]] = None,
     on_failure: Optional[Callable[[JobResult], None]] = None,
+    options: Optional[ProcessorOptions] = None,
 ) -> list:
     jobs = normalize(items)
     if not jobs:
         return []
+
+    opts = options or ProcessorOptions()
+    poll_no_output_secs = _to_seconds(opts.poll_no_output)
+    poll_long_lived_secs = _to_seconds(opts.poll_long_lived)
+
+    active_polls = [
+        s for s in [poll_no_output_secs, poll_long_lived_secs] if s is not None
+    ]
+    queue_timeout = min(active_polls) if active_polls else TIMEOUT
 
     fail_fast = fail_fast if fail_fast is not None else FAIL_FAST
     n_cores = n_cores or cpu_count()
@@ -207,6 +242,11 @@ def process(
     failures = []
     queue = Queue()
 
+    job_start_times: dict = {}
+    long_lived_warned: dict = {}  # idx -> last warn time
+    last_output_time = time.time()
+    last_no_output_print = 0.0
+
     def launch():
         nonlocal cores_avail
         skipped = deque()
@@ -217,6 +257,7 @@ def process(
                 p = Process(target=_runner, args=(job, idx, queue), daemon=True)
                 p.start()
                 running[idx] = (p, job)
+                job_start_times[idx] = time.time()
             else:
                 skipped.append((idx, job))
         pending.extend(skipped)
@@ -246,17 +287,41 @@ def process(
 
     while running or pending:
         try:
-            job_idx, value, error = queue.get(timeout=TIMEOUT)
-        except Exception:
-            logger.info("queue timeout — checking for dead workers")
-            _print_running(running)
+            job_idx, value, error = queue.get(timeout=queue_timeout)
+        except queue_module.Empty:
+            now = time.time()
+
             reap_dead()
+
+            if poll_no_output_secs is not None:
+                if (
+                    now - last_output_time >= poll_no_output_secs
+                    and now - last_no_output_print >= poll_no_output_secs
+                ):
+                    alive = [job for p, job in running.values() if p.is_alive()]
+                    _print_jobs(alive, verbose=False)
+                    last_no_output_print = now
+
+            if poll_long_lived_secs is not None:
+                for idx, (p, job) in list(running.items()):
+                    if not p.is_alive():
+                        continue
+                    age = now - job_start_times.get(idx, now)
+                    last_warned = long_lived_warned.get(idx, 0.0)
+                    if (
+                        age >= poll_long_lived_secs
+                        and now - last_warned >= poll_long_lived_secs
+                    ):
+                        _print_jobs([job], verbose=True)
+                        long_lived_warned[idx] = now
+
             launch()
             if fail_fast and failures:
                 cancel_running()
-                raise ProcessorFailure(failures[-1])
+                raise ProcessorFailure(failures[-1]) from None
             continue
 
+        last_output_time = time.time()
         _, job = running.pop(job_idx)
         cores_avail += job.cores
         r = JobResult(job=job, value=value, error=error)
@@ -283,8 +348,12 @@ def process(
         launch()
 
     if failures:
-        raise ProcessorFailure(
-            f"{len(failures)} job(s) failed:\n" + "\n".join(failures)
-        )
+        summary = f"{len(failures)} job(s) failed"
+        if opts.print_errors_on_exit:
+            print(f"\n{summary}:")
+            for msg in failures:
+                print(f"  {msg}")
+            raise ProcessorFailure(summary)
+        raise ProcessorFailure(f"{summary}:\n" + "\n".join(failures))
 
     return results
