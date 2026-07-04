@@ -7,6 +7,7 @@
 import copy
 import json
 import os
+import queue as queue_module
 import shlex
 import time
 from collections import deque
@@ -287,7 +288,7 @@ def process(
     while running or pending:
         try:
             job_idx, value, error = queue.get(timeout=queue_timeout)
-        except Exception:
+        except queue_module.Empty:
             now = time.time()
 
             reap_dead()
@@ -317,7 +318,7 @@ def process(
             launch()
             if fail_fast and failures:
                 cancel_running()
-                raise ProcessorFailure(failures[-1])
+                raise ProcessorFailure(failures[-1]) from None
             continue
 
         last_output_time = time.time()
@@ -347,12 +348,12 @@ def process(
         launch()
 
     if failures:
+        summary = f"{len(failures)} job(s) failed"
         if opts.print_errors_on_exit:
-            print(f"\n{len(failures)} job(s) failed:")
+            print(f"\n{summary}:")
             for msg in failures:
                 print(f"  {msg}")
-        raise ProcessorFailure(
-            f"{len(failures)} job(s) failed:\n" + "\n".join(failures)
-        )
+            raise ProcessorFailure(summary)
+        raise ProcessorFailure(f"{summary}:\n" + "\n".join(failures))
 
     return results
