@@ -1,9 +1,4 @@
-#
-#
-#
-#
-#
-
+# phlop/app/pfm/check_events.py
 
 import logging
 from pathlib import Path

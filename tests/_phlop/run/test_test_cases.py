@@ -1,5 +1,4 @@
-#
-#
+# tests/_phlop/run/test_test_cases.py
 
 import os
 import sys
@@ -7,11 +6,9 @@ import unittest
 
 
 class PhlopGitTestCasesTest(unittest.TestCase):
-    #
-
     def test_fails(self):
         """Force some test failures conditionally to see exit codes in bash etc"""
-        force_failure = int(os.environ.get("PHLOP_FORCE_TEST_CASE_FAILURE", 0))
+        force_failure = int(os.environ.get("PHLOP_FORCE_TEST_CASE_FAILURE", "0"))
 
         if force_failure == 1:
             raise RuntimeError("Fail")

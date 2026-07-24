@@ -1,8 +1,6 @@
-#
-#
-#
-#
+# phlop/procs/runtimer.py
 
+from __future__ import annotations
 
 import os
 import subprocess
@@ -20,7 +18,7 @@ class RunTimer:
         capture_output=True,
         check=False,
         print_cmd=True,
-        env: dict = {},  # dict[str, str] # eventually
+        env: dict | None = None,  # dict[str, str] # eventually
         working_dir=None,
         log_file_path=None,
         logging=2,
@@ -35,24 +33,22 @@ class RunTimer:
         self.log_file_path = log_file_path
         self.capture_output = capture_output
         benv = os.environ.copy()
-        benv.update(env)
-        ekwargs = dict(
-            shell=shell,
-            env=benv,
-            close_fds=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        benv.update(env or {})
+        ekwargs = {
+            "shell": shell,
+            "env": benv,
+            "close_fds": True,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
         if not capture_output and log_file_path:
-            ekwargs.update(
-                dict(
-                    stdout=open(f"{log_file_path}.stdout", "w"),
-                    stderr=open(f"{log_file_path}.stderr", "w"),
-                ),
-            )
+            # handles must outlive this scope: passed to Popen/run and closed there
+            stdout_file = open(f"{log_file_path}.stdout", "w")  # noqa: SIM115
+            stderr_file = open(f"{log_file_path}.stderr", "w")  # noqa: SIM115
+            ekwargs.update({"stdout": stdout_file, "stderr": stderr_file})
         else:
             ekwargs.update(
-                dict(stdout=subprocess.PIPE, stderr=subprocess.PIPE),
+                {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE},
             )
 
         def go():
@@ -74,9 +70,10 @@ class RunTimer:
 
     def _run(self, **kwargs):
         capture_output, log_file_path, logging = self._locals()
+        check = kwargs.pop("check", False)
         try:
             start = time.time()
-            self.run = subprocess.run(self.cmd, **kwargs)
+            self.run = subprocess.run(self.cmd, check=check, **kwargs)
             self.run_time = time.time() - start
             self.exitcode = self.run.returncode
             if logging == 2 and capture_output:

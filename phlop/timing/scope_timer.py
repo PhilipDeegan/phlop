@@ -1,13 +1,16 @@
-#
-# parsing PHARE scope funtion timers
-#
+# phlop/timing/scope_timer.py
 
+# parsing PHARE scope funtion timers
+
+from __future__ import annotations
+
+import json
 import os
 import sys
-import json
-import numpy as np
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
+
+import numpy as np
 
 TERM_COLORS = bool(json.loads(os.environ.get("PHLOP_TERM_COLORS", "true")))
 
@@ -17,7 +20,7 @@ class RunTimerNode:
     k: int
     s: int
     t: int
-    c: list = field(default_factory=lambda: [])
+    c: list = field(default_factory=list)
 
     @staticmethod
     def from_scope_timer(line):
@@ -110,9 +113,8 @@ def file_parser(times_filepath):
 def write_scope_timings(scope_timer_file, outfile, sort_worst_first=True):
     from contextlib import redirect_stdout
 
-    with open(outfile, "w") as f:
-        with redirect_stdout(f):
-            print_scope_timings(scope_timer_file, sort_worst_first)
+    with open(outfile, "w") as f, redirect_stdout(f):
+        print_scope_timings(scope_timer_file, sort_worst_first)
 
 
 @dataclass
@@ -149,7 +151,7 @@ class LossLine:
 
 def dedupe_leafs(stf, n):
     nodes = []
-    leafs = dict()
+    leafs = {}
     keys = []
 
     for c in n.c:
@@ -243,9 +245,8 @@ def print_scope_timings(
 def write_variance_across(scope_timer_file_glob, outfile):
     from contextlib import redirect_stdout
 
-    with open(outfile, "w") as f:
-        with redirect_stdout(f):
-            print_variance_across(scope_timer_file_glob)
+    with open(outfile, "w") as f, redirect_stdout(f):
+        print_variance_across(scope_timer_file_glob)
 
 
 def are_consistent_trees(nodes):

@@ -1,5 +1,4 @@
-#
-#
+# phlop/run/mpirun_perf.py
 
 import logging
 import os
@@ -29,14 +28,12 @@ def main():
     parser = p.cli_args_parser()
     cli_args = verify_cli_args(parser.parse_args())
     try:
-        if cli_args.tool == "stat":
-            ...
-        elif cli_args.tool == "record":
+        if cli_args.tool == "stat" or cli_args.tool == "record":
             ...
         else:
             raise RuntimeError("PHLOP ERROR: Perf tool not recognized")
-    except (Exception, SystemExit) as e:
-        logger.exception(e)
+    except (Exception, SystemExit):
+        logger.exception("error in main")
         parser.print_help()
         sys.exit(1)
 

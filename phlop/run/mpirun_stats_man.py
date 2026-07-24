@@ -1,5 +1,4 @@
-#
-#
+# phlop/run/mpirun_stats_man.py
 
 import logging
 import os
@@ -29,12 +28,12 @@ def main():
     parser = sman.cli_args_parser(USAGE)
     cli_args = verify_cli_args(parser.parse_args())
     try:
-        info = dict(exe=cli_args.remaining, rank=MPI_RANK)
+        info = {"exe": cli_args.remaining, "rank": MPI_RANK}
         statsman = sman.RuntimeStatsManager(cli_args, info).join()
         if cli_args.summary:
             sman.print_summary(statsman)
-    except (Exception, SystemExit) as e:
-        logger.exception(e)
+    except (Exception, SystemExit):
+        logger.exception("error in main")
         parser.print_help()
         sys.exit(1)
 

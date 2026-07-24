@@ -1,9 +1,4 @@
-#
-#
-#
-#
-#
-
+# phlop/testing/test_cases.py
 
 import os
 import shlex
@@ -11,7 +6,6 @@ import sys
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
 
 from phlop.app.cmake import list_tests as get_cmake_tests
 from phlop.os import env_sep
@@ -47,7 +41,6 @@ class DefaultTestCaseExtractor:
 
 class GoogleTestCaseExtractor:
     def __call__(self, ctest_test):
-        ...
         # not configured, assumed fast per file
         # print("GoogleTestCaseExtractor")
         # exec binary with `--gtest_list_tests` and see if it doesn't fail
@@ -57,7 +50,7 @@ class GoogleTestCaseExtractor:
         # )
         # print(p.stdout)
 
-        return None
+        return
 
 
 class PythonUnitTestCaseExtractor:
@@ -124,7 +117,7 @@ def load_test_cases_in(
 def load_py_test_cases_from_cmake(ctest_test):
     ppath = ctest_test.env.get("PYTHONPATH", "")
     bits = shlex.split(ctest_test.cmd)
-    idx = [i for i, x in enumerate(bits) if "python3" in x][0]
+    idx = next(i for i, x in enumerate(bits) if "python3" in x)
     prefix = " ".join(bits[:idx])
     with extend_sys_path([ctest_test.working_dir] + ppath.split(env_sep())):
         target = next(b for b in bits[idx + 1 :] if not b.startswith("-"))
@@ -144,9 +137,9 @@ def determine_cores_for_test_case(test_case):
     try:
         if "mpirun -n" in test_case.cmd:
             bits = test_case.cmd.split(" ")
-            idx = [i for i, x in enumerate(bits) if "mpirun" in x][0]
+            idx = next(i for i, x in enumerate(bits) if "mpirun" in x)
             test_case.cores = int(bits[idx + 2])
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - best-effort, never fatal
         print("EXXXX", e)
 
     return test_case
@@ -192,7 +185,7 @@ def load_cmake_tests(cmake_dir, cores=1, test_cmd_pre="", test_cmd_post=""):
 
 @dataclass
 class TestBatchesList:
-    batch_list: List[TestBatch]
+    batch_list: list[TestBatch]
 
 
 def deserialize(s):

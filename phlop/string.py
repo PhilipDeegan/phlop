@@ -1,8 +1,4 @@
-#
-#
-#
-#
-#
+# phlop/string.py
 
 
 def decode_bytes(input, as_format="utf-8"):

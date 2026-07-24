@@ -1,9 +1,4 @@
-#
-#
-#
-#
-#
-
+# phlop/app/git.py
 
 import atexit
 import subprocess

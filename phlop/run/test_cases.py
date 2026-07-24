@@ -1,22 +1,20 @@
-#
-#
+# phlop/run/test_cases.py
 
-import re
+import multiprocessing
 import os
+import re
 import sys
 import unittest
-import multiprocessing
 from datetime import timedelta
 from pathlib import Path
 
+from phlop import reflection as refl
 from phlop.dict import ValDict
 from phlop.logger import getLogger
 from phlop.procs.parallel_processor import LoggingMode
 from phlop.testing import parallel_processor as pp
-from phlop.testing.parallel_processor import ProcessorOptions
 from phlop.testing import test_cases as tc
-
-from phlop import reflection as refl
+from phlop.testing.parallel_processor import ProcessorOptions
 
 logger = getLogger(__name__)
 
@@ -221,8 +219,8 @@ def main():
 
     except pp.TestCaseFailure:
         sys.exit(1)
-    except (Exception, SystemExit) as e:
-        logger.exception(e)
+    except (Exception, SystemExit):
+        logger.exception("error in main")
         sys.exit(1)
 
 

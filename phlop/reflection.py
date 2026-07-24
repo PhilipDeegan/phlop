@@ -1,7 +1,4 @@
-#
-#
-#
-#
+# phlop/reflection.py
 
 import importlib
 import inspect
@@ -10,6 +7,8 @@ import os
 from pathlib import Path
 
 from phlop.sys import extend_sys_path
+
+logger = logging.getLogger(__name__)
 
 FORCE_RAISE_ON_IMPORT_ERROR = os.getenv(
     "PHLOP_FORCE_RAISE_ON_IMPORT_ERROR", "False"
@@ -32,14 +31,14 @@ def classes_in_file(file_path, subclasses_only=None, fail_on_import_error=True):
                 importlib.import_module(module), inspect.isclass
             ):
                 should_add = subclasses_only is None or any(
-                    [issubclass(cls, sub) for sub in subclasses_only]
+                    issubclass(cls, sub) for sub in subclasses_only
                 )
                 if should_add:
                     classes += [cls]
         except (ValueError, ModuleNotFoundError) as e:
             if fail_on_import_error or FORCE_RAISE_ON_IMPORT_ERROR:
-                raise e
-            logging.error(f"Skipping on error: {e} in module {module}")
+                raise
+            logger.error(f"Skipping on error: {e} in module {module}")
 
     return classes
 

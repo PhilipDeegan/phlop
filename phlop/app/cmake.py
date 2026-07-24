@@ -1,9 +1,4 @@
-#
-#
-#
-#
-#
-
+# phlop/app/cmake.py
 
 import json
 from dataclasses import dataclass, field
@@ -45,7 +40,7 @@ class CTest_test:
     name: str  # "py3_advance-2d-particles",
     properties: list = field(default_factory=lambda: [{}])  # list[dict] # eventually
 
-    env: dict = field(default_factory=lambda: {})  # dict[str, str] # eventually
+    env: dict = field(default_factory=dict)  # dict[str, str] # eventually
     working_dir: str = field(default_factory=lambda: None)
 
     def __post_init__(self):

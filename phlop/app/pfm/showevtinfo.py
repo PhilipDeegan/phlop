@@ -1,9 +1,4 @@
-#
-#
-#
-#
-#
-
+# phlop/app/pfm/showevtinfo.py
 
 import logging
 from dataclasses import asdict, dataclass, field
@@ -31,13 +26,13 @@ class EVTInfo:
     idx: str
     pmu: str
     name: str
-    umask: dict = field(default_factory=lambda: {})
-    etc: dict = field(default_factory=lambda: {})
+    umask: dict = field(default_factory=dict)
+    etc: dict = field(default_factory=dict)
 
 
 @dataclass
 class EVTInfos:
-    data: list = field(default_factory=lambda: [])
+    data: list = field(default_factory=list)
 
     def __iter__(self):
         return self.data.__iter__()

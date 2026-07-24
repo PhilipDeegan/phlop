@@ -1,6 +1,4 @@
-#
-#
-#
+# phlop/app/perf.py
 
 import os
 

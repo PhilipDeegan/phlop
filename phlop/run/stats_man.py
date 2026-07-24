@@ -1,5 +1,4 @@
-#
-#
+# phlop/run/stats_man.py
 
 import sys
 
@@ -15,12 +14,12 @@ def main():
     parser = sman.cli_args_parser(USAGE)
     cli_args = sman.verify_cli_args(parser.parse_args())
     try:
-        info = dict(exe=cli_args.remaining)
+        info = {"exe": cli_args.remaining}
         statsman = sman.RuntimeStatsManager(cli_args, info).join()
         if cli_args.summary:
             sman.print_summary(statsman)
-    except (Exception, SystemExit) as e:
-        logger.exception(e)
+    except (Exception, SystemExit):
+        logger.exception("error in main")
         parser.print_help()
         sys.exit(1)
 

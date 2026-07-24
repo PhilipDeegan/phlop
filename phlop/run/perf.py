@@ -1,5 +1,4 @@
-#
-#
+# phlop/run/perf.py
 
 import sys
 from pathlib import Path
@@ -82,8 +81,8 @@ def main():
             logging=cli_args.logging,
         )
 
-    except (Exception, SystemExit) as e:
-        logger.exception(e)
+    except (Exception, SystemExit):
+        logger.exception("error in main")
         parser.print_help()
         sys.exit(1)
 

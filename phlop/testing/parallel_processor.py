@@ -1,14 +1,12 @@
-#
-#
-#
-#
-#
+# phlop/testing/parallel_processor.py
 
 from phlop.os import read_last_lines_of
-from phlop.procs.parallel_processor import LoggingMode  # noqa: F401
-from phlop.procs.parallel_processor import ProcessorFailure
-from phlop.procs.parallel_processor import ProcessorOptions  # noqa: F401
-from phlop.procs.parallel_processor import normalize
+from phlop.procs.parallel_processor import (
+    LoggingMode,  # noqa: F401
+    ProcessorFailure,
+    ProcessorOptions,  # noqa: F401
+    normalize,
+)
 from phlop.procs.parallel_processor import process as _process
 
 TestCaseFailure = ProcessorFailure

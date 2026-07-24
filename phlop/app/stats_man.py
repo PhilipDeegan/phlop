@@ -1,9 +1,4 @@
-#
-#
-#
-#
-#
-
+# phlop/app/stats_man.py
 
 import logging
 import os
@@ -11,12 +6,13 @@ import signal
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from multiprocessing import Process, Queue
 
 import numpy as np
 import psutil
 import yaml
+
 from phlop.dict import ValDict
 from phlop.proc import run_raw
 
@@ -27,10 +23,10 @@ _default_interval = 2
 
 @dataclass
 class ProcessCaptureInfo:
-    cpu_load: list = field(default_factory=lambda: [])
-    fds: list = field(default_factory=lambda: [])
-    mem_usage: list = field(default_factory=lambda: [])
-    timestamps: list = field(default_factory=lambda: [])
+    cpu_load: list = field(default_factory=list)
+    fds: list = field(default_factory=list)
+    mem_usage: list = field(default_factory=list)
+    timestamps: list = field(default_factory=list)
 
 
 def cli_args_parser(description=""):
@@ -88,7 +84,7 @@ def bytes_as_mb(n_bytes):
 
 
 def timestamp_now():
-    return datetime.utcnow().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def now(pid):
@@ -96,11 +92,11 @@ def now(pid):
     open_file = len(proc.open_files())
     mem_used_mb = bytes_as_mb(proc.memory_info().rss)
     cpu_usage = proc.cpu_percent(interval=0.1)
-    return dict(open_file=open_file, mem_used_mb=mem_used_mb, cpu_usage=cpu_usage)
+    return {"open_file": open_file, "mem_used_mb": mem_used_mb, "cpu_usage": cpu_usage}
 
 
 def capture_now(pid, data):
-    now = datetime.utcnow().timestamp()
+    now = datetime.now(timezone.utc).timestamp()
     proc = psutil.Process(pid=pid)
     data.fds += [len(proc.open_files())]
     data.mem_usage += [bytes_as_mb(proc.memory_info().rss)]
@@ -116,14 +112,14 @@ def append_yaml(file, pid):
     try:
         with open(file, "a") as f:
             f.write(sdump)
-    except IOError as e:
+    except OSError as e:
         logger.error(f"phlop detected IO error: {e}")
 
 
 def init_yaml(cli_args, pid, info):
     file = cli_args.yaml
     headers = {"headers": [str(i) for i in list(now(pid).keys())]}
-    cli = {"cli_args": dict(interval=cli_args.interval)}
+    cli = {"cli_args": {"interval": cli_args.interval}}
 
     try:
         with open(file, "w") as f:
@@ -133,7 +129,7 @@ def init_yaml(cli_args, pid, info):
             yaml.dump(headers, f, default_flow_style=False)
             f.write(f"start: {timestamp_now()} \n")
             f.write("snapshots:\n")
-    except IOError as e:
+    except OSError as e:
         logger.error(f"phlop detected IO error: {e}")
 
 
@@ -141,18 +137,18 @@ def end_yaml(file):
     try:
         with open(file, "a") as f:
             f.write(f"end: {timestamp_now()} \n")
-    except IOError as e:
+    except OSError as e:
         logger.error(f"phlop detected IO error: {e}")
 
 
 class RuntimeStatsManager:
-    def __init__(self, cli_args, info={}):
+    def __init__(self, cli_args, info=None):
         self.proc = run_raw(cli_args.remaining, quiet=cli_args.quiet)
         self.pid = self.proc.pid
         self.cli_args = cli_args
 
         if self.cli_args.yaml:
-            init_yaml(self.cli_args, self.pid, info)
+            init_yaml(self.cli_args, self.pid, info or {})
 
         self.pqueue = Queue()
         self.data = {}
@@ -198,10 +194,10 @@ class RuntimeStatsManager:
 
 
 class AttachableRuntimeStatsManager:
-    def __init__(self, cli_args, info={}):
+    def __init__(self, cli_args, info=None):
         self.pid = os.getpid()
         self.cli_args = cli_args
-        init_yaml(self.cli_args, self.pid, info)
+        init_yaml(self.cli_args, self.pid, info or {})
         self.data = {}
         self.p = Process(target=AttachableRuntimeStatsManager._run, args=(self,))
 
