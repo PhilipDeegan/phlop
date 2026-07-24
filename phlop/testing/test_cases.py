@@ -6,6 +6,7 @@
 
 
 import os
+import shlex
 import sys
 import unittest
 from dataclasses import dataclass
@@ -122,11 +123,15 @@ def load_test_cases_in(
 
 def load_py_test_cases_from_cmake(ctest_test):
     ppath = ctest_test.env.get("PYTHONPATH", "")
-    bits = ctest_test.cmd.split(" ")
+    bits = shlex.split(ctest_test.cmd)
     idx = [i for i, x in enumerate(bits) if "python3" in x][0]
     prefix = " ".join(bits[:idx])
     with extend_sys_path([ctest_test.working_dir] + ppath.split(env_sep())):
-        pyfile = bits[-1]
+        target = next(b for b in bits[idx + 1 :] if not b.startswith("-"))
+        pyfile = (
+            target if target.endswith(".py") else target.replace(".", os.sep) + ".py"
+        )
+
         return load_test_cases_in(
             classes_in_file(pyfile, unittest.TestCase, fail_on_import_error=True),
             env=ctest_test.env,
