@@ -114,13 +114,49 @@ def load_test_cases_in(
     return tests
 
 
+_PY_VALUE_FLAGS = "cmWX"  # trailing char of a python3 option cluster that takes a value
+
+
+def _python_invocation_index(bits, cmd):
+    for i, tok in enumerate(bits):
+        if "python3" in tok:
+            return i
+    raise ValueError(f"no python3 invocation found in command: {cmd!r}")
+
+
+def _python_test_target(bits, idx, cmd):
+    i = idx + 1
+    while i < len(bits):
+        tok = bits[i]
+        if tok.startswith("-") and len(tok) > 1 and tok[-1] in _PY_VALUE_FLAGS:
+            if i + 1 >= len(bits):
+                raise ValueError(f"'{tok}' given without a value in command: {cmd!r}")
+            value = bits[i + 1]
+            if tok[-1] != "m":
+                i += 2
+                continue
+            if value != "unittest":
+                return value
+            # `-m unittest <test-id>`: unittest is the runner, not the target
+            if i + 2 >= len(bits):
+                raise ValueError(
+                    f"'-m unittest' given without a test id in command: {cmd!r}"
+                )
+            return bits[i + 2]
+        if tok.startswith("-"):
+            i += 1
+            continue
+        return tok
+    raise ValueError(f"no python test target found in command: {cmd!r}")
+
+
 def load_py_test_cases_from_cmake(ctest_test):
     ppath = ctest_test.env.get("PYTHONPATH", "")
     bits = shlex.split(ctest_test.cmd)
-    idx = next(i for i, x in enumerate(bits) if "python3" in x)
+    idx = _python_invocation_index(bits, ctest_test.cmd)
     prefix = " ".join(bits[:idx])
     with extend_sys_path([ctest_test.working_dir] + ppath.split(env_sep())):
-        target = next(b for b in bits[idx + 1 :] if not b.startswith("-"))
+        target = _python_test_target(bits, idx, ctest_test.cmd)
         pyfile = (
             target if target.endswith(".py") else target.replace(".", os.sep) + ".py"
         )
