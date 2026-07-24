@@ -1,8 +1,4 @@
-#
-#
-#
-#
-#
+# phlop/dict.py
 
 
 # pylintrc ignored no-member

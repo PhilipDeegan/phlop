@@ -1,9 +1,4 @@
-#
-#
-#
-#
-#
-
+# phlop/app/pfm/__main__.py
 
 available_modules = """Available:
     phlop.app.pfm.check_events

@@ -1,8 +1,6 @@
-#
-#
-#
-#
-#
+# phlop/procs/parallel_processor.py
+
+from __future__ import annotations
 
 import copy
 import json
@@ -15,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import Enum
 from multiprocessing import Process, Queue, cpu_count
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 
 from phlop.logger import getLogger
 
@@ -38,8 +36,8 @@ class LoggingMode(Enum):
 class Job:
     cmd: str = ""
     env: dict = field(default_factory=dict)
-    working_dir: Optional[str] = None
-    log_file_path: Optional[str] = None
+    working_dir: str | None = None
+    log_file_path: str | None = None
     cores: int = 1
     logging: int = 1
     id: str = ""  # display label; defaults to cmd
@@ -84,7 +82,7 @@ class JobResult:
         return self.error is None
 
 
-def _to_seconds(val: Optional[Union[timedelta, float]]) -> Optional[float]:
+def _to_seconds(val: timedelta | float | None) -> float | None:
     if val is None:
         return None
     if isinstance(val, timedelta):
@@ -96,9 +94,9 @@ def _to_seconds(val: Optional[Union[timedelta, float]]) -> Optional[float]:
 class ProcessorOptions:
     print_errors_on_exit: bool = True
     # Print IDs of running jobs when no queue output for this long (seconds or timedelta).
-    poll_no_output: Optional[Union[timedelta, float]] = None
+    poll_no_output: timedelta | float | None = None
     # Print running jobs + last log lines when a job has been alive this long.
-    poll_long_lived: Optional[Union[timedelta, float]] = None
+    poll_long_lived: timedelta | float | None = None
 
 
 def _print_jobs(jobs, verbose):
@@ -125,7 +123,7 @@ def _print_jobs(jobs, verbose):
 def _runner(job, job_idx, queue):
     try:
         queue.put((job_idx, job(), None))
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - report any job failure to the parent
         queue.put((job_idx, None, e))
 
 
@@ -210,11 +208,11 @@ def normalize(items) -> list:
 
 def process(
     items,
-    n_cores: Optional[int] = None,
-    fail_fast: Optional[bool] = None,
-    on_success: Optional[Callable[[JobResult], None]] = None,
-    on_failure: Optional[Callable[[JobResult], None]] = None,
-    options: Optional[ProcessorOptions] = None,
+    n_cores: int | None = None,
+    fail_fast: bool | None = None,
+    on_success: Callable[[JobResult], None] | None = None,
+    on_failure: Callable[[JobResult], None] | None = None,
+    options: ProcessorOptions | None = None,
 ) -> list:
     jobs = normalize(items)
     if not jobs:
@@ -293,14 +291,14 @@ def process(
 
             reap_dead()
 
-            if poll_no_output_secs is not None:
-                if (
-                    now - last_output_time >= poll_no_output_secs
-                    and now - last_no_output_print >= poll_no_output_secs
-                ):
-                    alive = [job for p, job in running.values() if p.is_alive()]
-                    _print_jobs(alive, verbose=False)
-                    last_no_output_print = now
+            if (
+                poll_no_output_secs is not None
+                and now - last_output_time >= poll_no_output_secs
+                and now - last_no_output_print >= poll_no_output_secs
+            ):
+                alive = [job for p, job in running.values() if p.is_alive()]
+                _print_jobs(alive, verbose=False)
+                last_no_output_print = now
 
             if poll_long_lived_secs is not None:
                 for idx, (p, job) in list(running.items()):

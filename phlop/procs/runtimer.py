@@ -1,15 +1,24 @@
-#
-#
-#
-#
+# phlop/procs/runtimer.py
 
+from __future__ import annotations
 
 import os
 import subprocess
 import time
+from contextlib import ExitStack, contextmanager
 
 from phlop.os import pushd, write_to_file
 from phlop.string import decode_bytes
+
+
+@contextmanager
+def _opened_streams(kwargs):
+    with ExitStack() as stack:
+        resolved = dict(kwargs)
+        for key in ("stdout", "stderr"):
+            if callable(resolved[key]):
+                resolved[key] = stack.enter_context(resolved[key]())
+        yield resolved
 
 
 class RunTimer:
@@ -20,7 +29,7 @@ class RunTimer:
         capture_output=True,
         check=False,
         print_cmd=True,
-        env: dict = {},  # dict[str, str] # eventually
+        env: dict | None = None,  # dict[str, str] # eventually
         working_dir=None,
         log_file_path=None,
         logging=2,
@@ -35,24 +44,26 @@ class RunTimer:
         self.log_file_path = log_file_path
         self.capture_output = capture_output
         benv = os.environ.copy()
-        benv.update(env)
-        ekwargs = dict(
-            shell=shell,
-            env=benv,
-            close_fds=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        benv.update(env or {})
+        ekwargs = {
+            "shell": shell,
+            "env": benv,
+            "close_fds": True,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
         if not capture_output and log_file_path:
+            stdout_path = f"{log_file_path}.stdout"
+            stderr_path = f"{log_file_path}.stderr"
             ekwargs.update(
-                dict(
-                    stdout=open(f"{log_file_path}.stdout", "w"),
-                    stderr=open(f"{log_file_path}.stderr", "w"),
-                ),
+                {
+                    "stdout": lambda: open(stdout_path, "w"),  # noqa: SIM115
+                    "stderr": lambda: open(stderr_path, "w"),  # noqa: SIM115
+                }
             )
-        else:
+        elif capture_output:
             ekwargs.update(
-                dict(stdout=subprocess.PIPE, stderr=subprocess.PIPE),
+                {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE},
             )
 
         def go():
@@ -74,9 +85,11 @@ class RunTimer:
 
     def _run(self, **kwargs):
         capture_output, log_file_path, logging = self._locals()
+        check = kwargs.pop("check", False)
         try:
             start = time.time()
-            self.run = subprocess.run(self.cmd, **kwargs)
+            with _opened_streams(kwargs) as stream_kwargs:
+                self.run = subprocess.run(self.cmd, check=check, **stream_kwargs)
             self.run_time = time.time() - start
             self.exitcode = self.run.returncode
             if logging == 2 and capture_output:
@@ -97,16 +110,14 @@ class RunTimer:
     def _popen(self, **kwargs):
         capture_output, log_file_path, logging = self._locals()
         start = time.time()
-        p = subprocess.Popen(self.cmd, **kwargs)
-        self.stdout, self.stderr = p.communicate()
-        self.run_time = time.time() - start
-        self.exitcode = p.returncode
-        if not capture_output and log_file_path:
-            kwargs["stdout"].close()
-            kwargs["stderr"].close()
-        elif capture_output:
-            p.stdout.close()
-            p.stderr.close()
+        with _opened_streams(kwargs) as stream_kwargs:
+            p = subprocess.Popen(self.cmd, **stream_kwargs)
+            self.stdout, self.stderr = p.communicate()
+            self.run_time = time.time() - start
+            self.exitcode = p.returncode
+            if capture_output:
+                p.stdout.close()
+                p.stderr.close()
         p = None
 
         if self.exitcode > 0 and capture_output:

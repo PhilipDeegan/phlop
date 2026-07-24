@@ -1,10 +1,6 @@
-#
-#
-#
-#
+# phlop/proc.py
 
 import subprocess
-import sys
 
 from phlop.procs.runtimer import RunTimer
 
@@ -49,11 +45,8 @@ def run_mp(cmds, N_CORES=None, **kwargs):
                     raise future.exception()
             except Exception as exc:
                 if kwargs.get("check", False):
-                    dic = {"wait": False}
-                    if sys.version_info > (3, 8):
-                        dic["cancel_futures"] = True
-                    executor.shutdown(**dic)
-                    raise exc
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    raise
                 else:
                     print(f"run_mp generated an exception: {exc}")
         return results

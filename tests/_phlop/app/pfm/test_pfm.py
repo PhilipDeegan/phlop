@@ -1,7 +1,4 @@
-#
-#
-#
-
+# tests/_phlop/app/pfm/test_pfm.py
 
 from phlop.proc import run
 from phlop.string import decode_bytes
@@ -14,7 +11,7 @@ if __name__ == "__main__":
     key0, key1 = "[MULT_FLOPS]", "[ADD_SUB_FLOPS]"
     for info in get_evt_info():
         if key0 in info.umask:
-            for key, umask in info.umask.items():
+            for umask in info.umask.values():
                 code += f"{info.name}:{umask.code} "
             break
         # if key1 in info.umask:

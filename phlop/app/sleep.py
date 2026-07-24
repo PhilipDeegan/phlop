@@ -1,8 +1,4 @@
-#
-#
-#
-#
-#
+# phlop/app/sleep.py
 
 import sys
 import time

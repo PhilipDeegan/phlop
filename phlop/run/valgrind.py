@@ -1,5 +1,4 @@
-#
-#
+# phlop/run/valgrind.py
 
 import sys
 
@@ -40,8 +39,8 @@ def main():
     try:
         vg.run_valgrind(cli_args)
 
-    except (Exception, SystemExit) as e:
-        logger.exception(e)
+    except (Exception, SystemExit):
+        logger.exception("error in main")
         parser.print_help()
         sys.exit(1)
 

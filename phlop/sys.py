@@ -1,9 +1,4 @@
-#
-#
-#
-#
-#
-
+# phlop/sys.py
 
 import os
 import sys
