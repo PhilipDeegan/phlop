@@ -96,13 +96,10 @@ class RunTimerLogFileHandleTest(unittest.TestCase):
             self.assertEqual(self._open_fd_count(), before)
 
     def test_capture_disabled_without_log_file_uses_devnull(self):
-        import subprocess
-
         rt = RunTimer("echo hi", shell=True, capture_output=False, popen=True)
-        self.assertEqual(rt.stdout, None)
-        self.assertEqual(rt.stderr, None)
+        self.assertIsNone(rt.stdout)
+        self.assertIsNone(rt.stderr)
         self.assertEqual(rt.exitcode, 0)
-        del subprocess
 
 
 if __name__ == "__main__":
