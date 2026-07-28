@@ -1,6 +1,7 @@
 # phlop/testing/test_cases.py
 
 import os
+import re
 import shlex
 import sys
 import unittest
@@ -17,6 +18,7 @@ _LOG_DIR = Path(os.environ.get("PHLOP_LOG_DIR", os.getcwd()))
 CMD_PREFIX = ""
 CMD_POSTFIX = ""
 PYTHON_FLAGS = "-um"  # -u always; omit -O so assertions run in tests
+CONFIG_FILENAME = ".phlop.exec.yaml"
 
 
 @dataclass
@@ -125,6 +127,10 @@ def _python_invocation_index(bits, cmd):
 
 
 def _python_test_target(bits, idx, cmd):
+    """Return `(target, next_idx)`: the script/module the command runs, and
+    the index right after it. Anything remaining at `bits[next_idx:]` is an
+    explicit argument (e.g. a specific `Class.test_id`) the ctest entry
+    already scoped itself to."""
     i = idx + 1
     while i < len(bits):
         tok = bits[i]
@@ -136,17 +142,17 @@ def _python_test_target(bits, idx, cmd):
                 i += 2
                 continue
             if value != "unittest":
-                return value
+                return value, i + 2
             # `-m unittest <test-id>`: unittest is the runner, not the target
             if i + 2 >= len(bits):
                 raise ValueError(
                     f"'-m unittest' given without a test id in command: {cmd!r}"
                 )
-            return bits[i + 2]
+            return bits[i + 2], i + 3
         if tok.startswith("-"):
             i += 1
             continue
-        return tok
+        return tok, i + 1
     raise ValueError(f"no python test target found in command: {cmd!r}")
 
 
@@ -156,7 +162,14 @@ def load_py_test_cases_from_cmake(ctest_test):
     idx = _python_invocation_index(bits, ctest_test.cmd)
     prefix = " ".join(bits[:idx])
     with extend_sys_path([ctest_test.working_dir] + ppath.split(env_sep())):
-        target = _python_test_target(bits, idx, ctest_test.cmd)
+        target, next_idx = _python_test_target(bits, idx, ctest_test.cmd)
+        if bits[next_idx:]:
+            # ctest already scoped this entry to a specific invocation (e.g.
+            # a trailing `Class.test_id`) - run it as-is rather than
+            # expanding every unittest.TestCase method in the file, which
+            # would otherwise duplicate work across every such entry for
+            # the same file and discard the args that distinguish them.
+            return None
         pyfile = (
             target if target.endswith(".py") else target.replace(".", os.sep) + ".py"
         )
@@ -169,12 +182,41 @@ def load_py_test_cases_from_cmake(ctest_test):
         )
 
 
+_MPIRUN_CORES_RE = re.compile(r"mpirun\s+(?:-n|-np|--np)\s+(\d+)")
+
+
+def mpirun_cores(cmd, env):
+    m = _MPIRUN_CORES_RE.search(cmd)
+    return int(m.group(1)) if m else None
+
+
+def omp_num_threads_cores(cmd, env):
+    value = (env or {}).get("OMP_NUM_THREADS")
+    return int(value) if value else None
+
+
+CORES_RESOLVERS = [mpirun_cores, omp_num_threads_cores]
+
+
+def resolve_cores(cmd, env=None, explicit=None, threads=None):
+    """Resolve a total core count for `cmd`/`env`: an explicit value always
+    wins outright. Otherwise `threads` (a declared threads-per-rank count for
+    parallelism phlop can't introspect, e.g. std::thread/thread_pool) and
+    every CORES_RESOLVERS match are multiplied together - e.g. `mpirun -n 2`
+    with `threads=4` is 2*4=8 total cores - defaulting to 1 if none apply."""
+    if explicit is not None:
+        return int(explicit)
+    total = int(threads) if threads is not None else None
+    for resolver in CORES_RESOLVERS:
+        cores = resolver(cmd, env or {})
+        if cores is not None:
+            total = (total or 1) * cores
+    return total or 1
+
+
 def determine_cores_for_test_case(test_case):
     try:
-        if "mpirun -n" in test_case.cmd:
-            bits = test_case.cmd.split(" ")
-            idx = next(i for i, x in enumerate(bits) if "mpirun" in x)
-            test_case.cores = int(bits[idx + 2])
+        test_case.cores = resolve_cores(test_case.cmd, test_case.env)
     except Exception as e:  # noqa: BLE001 - best-effort, never fatal
         print("EXXXX", e)
 
@@ -215,6 +257,165 @@ def load_cmake_tests(cmake_dir, cores=1, test_cmd_pre="", test_cmd_post=""):
             if res:
                 _add(res)
                 break
+
+    return [TestBatch(v, k) for k, v in test_batches.items()]
+
+
+def _load_dir_config(directory):
+    config_path = Path(directory) / CONFIG_FILENAME
+    if not config_path.exists():
+        return {}
+    import yaml
+
+    with open(config_path) as f:
+        return yaml.safe_load(f) or {}
+
+
+def _variants_for(dir_config, filename, class_name, method_name, used_keys=None):
+    """Look up declared execution variants for a test, keyed by
+    `filename:Class.method` (or bare `filename:Class` to apply to every
+    method in that class - `Class.method` takes precedence). The filename is
+    always required, since a directory can hold multiple files that each
+    define a class of the same name. None means: run once, as normal.
+
+    `used_keys`, if given, collects whichever key actually matched - so
+    callers can tell, after scanning every file, which declared keys never
+    matched anything."""
+    qualified = f"{filename}:{class_name}.{method_name}"
+    if qualified in dir_config:
+        if used_keys is not None:
+            used_keys.add(qualified)
+        return dir_config[qualified] or None
+    bare = f"{filename}:{class_name}"
+    if bare in dir_config:
+        if used_keys is not None:
+            used_keys.add(bare)
+        return dir_config[bare] or None
+    return None
+
+
+def _variant_job(
+    base_cmd, test_class, suite, variant, index, test_cmd_pre, test_cmd_post
+):
+    prefix = variant.get("prefix", "")
+    env = dict(variant.get("env") or {})
+    working_dir = variant.get("working_dir")
+    cmd = " ".join(
+        p for p in (test_cmd_pre, prefix, base_cmd, test_cmd_post) if p
+    ).strip()
+    tags = variant.get("tags") or []
+
+    log_file_path = logfile(_LOG_DIR / ".phlop", test_class, suite)
+    if log_file_path:
+        log_file_path = f"{log_file_path}_{'-'.join(tags) if tags else index}"
+
+    return Job(
+        cmd=cmd,
+        env=env,
+        working_dir=working_dir,
+        log_file_path=log_file_path,
+        cores=resolve_cores(
+            cmd, env, explicit=variant.get("cores"), threads=variant.get("threads")
+        ),
+        meta=tags or None,
+    )
+
+
+def load_config_tests(
+    input_path, test_cmd_pre="", test_cmd_post="", python_flags=None, tags=None
+):
+    """Scan a file or directory for tests, honouring per-directory
+    `.phlop.exec.yaml` configs that fan a test out into tagged execution
+    variants with their own prefix/env/working_dir/cores/threads. Tests/files
+    not declared in a config (or with no config present at all) run once, as
+    normal.
+
+    Tagged variants are opt-in: they only run when `tags` is given and
+    intersects with the variant's own tags. Untagged variants and undeclared
+    (default) tests are unaffected and always run, regardless of `tags` - this
+    keeps anything that needs e.g. mpirun or other unavailable/heavy resources
+    from running unless explicitly requested.
+
+    Every key declared in a directory's `.phlop.exec.yaml` must match a real
+    `file:Class(.method)` found while scanning that directory - a stale or
+    mistyped entry (wrong filename, missing `:`, renamed class/method) raises
+    a ValueError rather than silently doing nothing.
+    """
+    tags = set(tags) if tags else None
+    path = Path(input_path)
+    py_files = [path] if path.is_file() else sorted(path.glob("**/*.py"))
+
+    dir_configs = {}
+    used_keys = {}
+
+    def dir_config_for(directory):
+        directory = str(directory)
+        if directory not in dir_configs:
+            dir_configs[directory] = _load_dir_config(directory)
+            used_keys[directory] = set()
+        return dir_configs[directory]
+
+    loader = unittest.TestLoader()
+    test_batches = {}
+
+    def _add(job):
+        test_batches.setdefault(job.cores, []).append(job)
+
+    for py_file in py_files:
+        directory = str(py_file.parent)
+        dir_config = dir_config_for(directory)
+        for test_class in classes_in_file(py_file, unittest.TestCase):
+            for suite in loader.loadTestsFromTestCase(test_class):
+                method = suite._testMethodName
+                base_cmd = python3_default_test_cmd(test_class, method, python_flags)
+                variants = _variants_for(
+                    dir_config,
+                    py_file.name,
+                    test_class.__name__,
+                    method,
+                    used_keys[directory],
+                )
+
+                if not variants:
+                    cmd = f"{test_cmd_pre} {base_cmd} {test_cmd_post}".strip()
+                    _add(
+                        Job(
+                            cmd=cmd,
+                            log_file_path=logfile(
+                                _LOG_DIR / ".phlop", test_class, suite
+                            ),
+                            cores=resolve_cores(cmd),
+                        )
+                    )
+                    continue
+
+                for index, variant in enumerate(variants):
+                    variant_tags = set(variant.get("tags") or [])
+                    if variant_tags and not (tags and (variant_tags & tags)):
+                        continue
+                    _add(
+                        _variant_job(
+                            base_cmd,
+                            test_class,
+                            suite,
+                            variant,
+                            index,
+                            test_cmd_pre,
+                            test_cmd_post,
+                        )
+                    )
+
+    stale = {
+        directory: sorted(set(config) - used_keys[directory])
+        for directory, config in dir_configs.items()
+        if set(config) - used_keys[directory]
+    }
+    if stale:
+        details = "; ".join(f"{d}: {keys}" for d, keys in stale.items())
+        raise ValueError(
+            f"{CONFIG_FILENAME} references tests that were never found "
+            f"while scanning - {details}"
+        )
 
     return [TestBatch(v, k) for k, v in test_batches.items()]
 

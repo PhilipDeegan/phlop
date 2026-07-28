@@ -38,6 +38,19 @@ def cli_args_parser():
         reverse="reverse order - higher core count tests preferred",
         logging="0=off, 1=on non zero exit code, 2=always",
         rerun="number of times to re-execute discovered tests",
+        no_phlop_exec_yaml=(
+            "Ignore any .phlop.exec.yaml execution configs found while scanning "
+            "and just run discovered tests with defaults"
+        ),
+        tags=(
+            "Comma-separated tags to opt into running tagged .phlop.exec.yaml "
+            "variants (tagged variants are skipped unless requested here); "
+            "untagged/undeclared tests are unaffected and always run"
+        ),
+        verbose=(
+            "With --print_only, print full per-test info (cores, tags, env, "
+            "working_dir, log_file_path) instead of just the execution string"
+        ),
     )
 
     parser = argparse.ArgumentParser(
@@ -63,6 +76,16 @@ def cli_args_parser():
     )
     parser.add_argument("--rerun", type=int, default=1, help=_help.rerun)
     parser.add_argument("--logging", type=int, default=1, help=_help.logging)
+    parser.add_argument(
+        "--no-phlop-exec-yaml",
+        action="store_true",
+        default=False,
+        help=_help.no_phlop_exec_yaml,
+    )
+    parser.add_argument("--tags", default=None, help=_help.tags)
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", default=False, help=_help.verbose
+    )
 
     return parser
 
@@ -82,6 +105,14 @@ def get_test_cases(cli_args):
     if cli_args.cmake:
         return tc.load_cmake_tests(
             cli_args.input, test_cmd_pre=cli_args.prefix, test_cmd_post=cli_args.postfix
+        )
+    if not cli_args.no_phlop_exec_yaml:
+        tags = cli_args.tags.split(",") if cli_args.tags else None
+        return tc.load_config_tests(
+            cli_args.input,
+            test_cmd_pre=cli_args.prefix,
+            test_cmd_post=cli_args.postfix,
+            tags=tags,
         )
     if os.path.isfile(cli_args.input):
         return [
@@ -209,6 +240,7 @@ def main():
             test_batches,
             n_cores=cli_args.cores,
             print_only=cli_args.print_only,
+            verbose=cli_args.verbose,
             logging=cli_args.logging,
             options=ProcessorOptions(
                 print_errors_on_exit=True,
