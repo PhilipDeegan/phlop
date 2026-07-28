@@ -24,6 +24,27 @@ def _on_failure(result):
                 print(f"  {suffix[1:]}:", "\n".join(lines))
 
 
+def _print_job(job, verbose):
+    if not verbose:
+        info = []
+        if job.cores != 1:
+            info.append(f"cores={job.cores}")
+        if job.meta:
+            info.append(f"tags={','.join(job.meta)}")
+        print(f"{job.cmd}  # {', '.join(info)}" if info else job.cmd)
+        return
+
+    print(job.cmd)
+    if job.cores != 1:
+        print(f"  cores: {job.cores}")
+    if job.meta:
+        print(f"  tags: {','.join(job.meta)}")
+    if job.env:
+        print(f"  env: {job.env}")
+    if job.working_dir:
+        print(f"  working_dir: {job.working_dir}")
+
+
 def process(
     batches,
     n_cores=None,
@@ -31,6 +52,7 @@ def process(
     fail_fast=None,
     logging=1,
     options=None,
+    verbose=False,
 ):
     jobs = normalize(batches)
     if not jobs:
@@ -38,7 +60,7 @@ def process(
 
     if print_only:
         for job in jobs:
-            print(job.cmd)
+            _print_job(job, verbose)
         return
 
     for job in jobs:

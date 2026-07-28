@@ -1,0 +1,38 @@
+# Sample .phlop.exec.yaml — see phlop/testing/test_cases.py:load_config_tests
+#
+# Keyed by "filename:ClassName.method_name" (or bare "filename:ClassName" to
+# apply to every method in that class; a Class.method entry takes precedence
+# over it). The filename is always required, since a directory can hold
+# multiple files that each define a class of the same name.
+# Each entry is a list of execution variants; a test with no entry here runs
+# once, as normal, with cores=1 and no extra env/prefix/working_dir.
+#
+# Per variant:
+#   tags:        opts this variant in via `--tags` on the CLI - a tagged
+#                variant only runs when --tags is passed and intersects with
+#                it, so anything relying on e.g. mpirun stays off by default.
+#                Untagged variants always run regardless of --tags.
+#   prefix:      prepended to the invocation, e.g. an mpirun wrapper.
+#   env:         extra environment variables for this run.
+#   working_dir: working directory for this run.
+#   cores:       explicit core count; always wins outright over everything
+#                below.
+#   threads:     threads-per-rank for parallelism phlop can't introspect
+#                (e.g. std::thread/thread_pool sized by the program's own
+#                arg). Multiplies with any mpirun rank count detected from
+#                `prefix` (e.g. mpirun -n 2 + threads: 4 => 8 total cores);
+#                on its own (no mpirun) it's just the total core count.
+#                Cores otherwise falls back to an OMP_NUM_THREADS in `env`,
+#                then finally defaults to 1 if nothing applies.
+
+test_test_cases.py:ExecConfigDemoTest.test_scaled:
+  - tags: [small]
+    env: {DEMO_GRID_SIZE: "64"}
+  - tags: [thread_pool]
+    env: {DEMO_GRID_SIZE: "128"}
+    threads: 4
+  - tags: [large, high_load]
+    prefix: "mpirun -n 2"
+    env: {DEMO_GRID_SIZE: "256"}
+    working_dir: tests/_phlop/run
+    threads: 4
