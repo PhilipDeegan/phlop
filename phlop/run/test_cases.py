@@ -107,9 +107,7 @@ def get_test_cases(cli_args):
             cli_args.input, test_cmd_pre=cli_args.prefix, test_cmd_post=cli_args.postfix
         )
     if not cli_args.no_phlop_exec_yaml:
-        tags = (
-            [t.strip() for t in cli_args.tags.split(",")] if cli_args.tags else None
-        )
+        tags = [t.strip() for t in cli_args.tags.split(",")] if cli_args.tags else None
         return tc.load_config_tests(
             cli_args.input,
             test_cmd_pre=cli_args.prefix,
