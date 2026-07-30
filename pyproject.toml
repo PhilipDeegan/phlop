@@ -1,14 +1,12 @@
 [project]
 name = "phlop"
-version = "0.0.40"
+version = "0.0.41"
 
-dependencies = [
-
-]
+dependencies = [ "dill", "pyyaml" ]
 
 description = "stuff and things"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -20,7 +18,4 @@ classifiers = [
 "Bug Tracker" = "https://github.com/PhilipDeegan/phlop/issues"
 
 [build-system]
-requires = [
-    "setuptools>=62", "wheel", "packaging", "dill"
-]
-
+requires = [ "setuptools>=62", "wheel", "packaging" ]

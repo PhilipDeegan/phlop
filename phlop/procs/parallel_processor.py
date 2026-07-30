@@ -9,11 +9,12 @@ import queue as queue_module
 import shlex
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import Enum
 from multiprocessing import Process, Queue, cpu_count
-from typing import Any, Callable
+from typing import Any
 
 from phlop.logger import getLogger
 
@@ -116,7 +117,7 @@ def _print_jobs(jobs, verbose):
             for suffix in (".stdout", ".stderr"):
                 lines = read_last_lines_of(f"{job.log_file_path}{suffix}")
                 if lines:
-                    print(f"  {suffix[1:]}:", " ".join(lines))
+                    print(f"  {suffix[1:]}:", "\n".join(lines))
     print("pending jobs end")
 
 
