@@ -184,6 +184,31 @@ class VariantsForTest(unittest.TestCase):
             [{"tags": ["class"]}],
         )
 
+    def test_file_default_key_applies_to_every_class_and_method(self):
+        dir_config = {"test_foo.py": [{"tags": ["file"]}]}
+        self.assertEqual(
+            _variants_for(dir_config, "test_foo.py", "MyTestCase", "test_a"),
+            [{"tags": ["file"]}],
+        )
+        self.assertEqual(
+            _variants_for(dir_config, "test_foo.py", "OtherTestCase", "test_z"),
+            [{"tags": ["file"]}],
+        )
+
+    def test_bare_class_key_takes_precedence_over_file_default(self):
+        dir_config = {
+            "test_foo.py": [{"tags": ["file"]}],
+            "test_foo.py:MyTestCase": [{"tags": ["class"]}],
+        }
+        self.assertEqual(
+            _variants_for(dir_config, "test_foo.py", "MyTestCase", "test_a"),
+            [{"tags": ["class"]}],
+        )
+        self.assertEqual(
+            _variants_for(dir_config, "test_foo.py", "OtherTestCase", "test_a"),
+            [{"tags": ["file"]}],
+        )
+
     def test_empty_list_means_default_run(self):
         dir_config = {"test_foo.py:MyTestCase.test_a": []}
         self.assertIsNone(

@@ -1,9 +1,12 @@
 # Sample .phlop.exec.yaml — see phlop/testing/test_cases.py:load_config_tests
 #
 # Keyed by "filename:ClassName.method_name" (or bare "filename:ClassName" to
-# apply to every method in that class; a Class.method entry takes precedence
-# over it). The filename is always required, since a directory can hold
-# multiple files that each define a class of the same name.
+# apply to every method in that class, or just "filename:" with nothing
+# after the colon to apply to every test in that file - the trailing colon
+# here is only yaml's key/value syntax, not part of the key itself). More
+# specific keys win: Class.method > Class > file-default. The filename is
+# always required, since a directory can hold multiple files that each
+# define a class of the same name.
 # Each entry is a list of execution variants; a test with no entry here runs
 # once, as normal, with cores=1 and no extra env/prefix/working_dir.
 #

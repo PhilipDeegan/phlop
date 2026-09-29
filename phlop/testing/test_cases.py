@@ -274,9 +274,16 @@ def _load_dir_config(directory):
 def _variants_for(dir_config, filename, class_name, method_name, used_keys=None):
     """Look up declared execution variants for a test, keyed by
     `filename:Class.method` (or bare `filename:Class` to apply to every
-    method in that class - `Class.method` takes precedence). The filename is
-    always required, since a directory can hold multiple files that each
-    define a class of the same name. None means: run once, as normal.
+    method in that class, or bare `filename` with no class - written in yaml
+    as `filename:` - to apply to every test in that file). More specific
+    keys take precedence: `Class.method` > `Class` > file-default. The
+    filename is always required, since a directory can hold multiple files
+    that each define a class of the same name. None means: run once, as
+    normal.
+
+    Note: the yaml key `filename:` parses to the plain string `filename`
+    (the trailing colon is yaml's key/value delimiter, not part of the
+    key), so the file-default lookup below is the bare filename.
 
     `used_keys`, if given, collects whichever key actually matched - so
     callers can tell, after scanning every file, which declared keys never
@@ -291,6 +298,10 @@ def _variants_for(dir_config, filename, class_name, method_name, used_keys=None)
         if used_keys is not None:
             used_keys.add(bare)
         return dir_config[bare] or None
+    if filename in dir_config:
+        if used_keys is not None:
+            used_keys.add(filename)
+        return dir_config[filename] or None
     return None
 
 
