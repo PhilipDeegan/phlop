@@ -1,5 +1,6 @@
 # phlop/run/test_cases.py
 
+import importlib.util
 import multiprocessing
 import os
 import re
@@ -208,9 +209,20 @@ def duplicate_reruns(cli_args, test_batches):
     return [tc.TestBatch(v, k) for k, v in duped.items() if v]
 
 
+def warn_if_no_psutil():
+    if importlib.util.find_spec("psutil") is None:
+        logger.warning(
+            "psutil not installed, advanced features disabled: cpu usage in "
+            "stall detection (busy jobs get longer, jobs without log files "
+            "(--logging 0) are unmonitored), killing all descendants of "
+            "stalled jobs (e.g. mpi ranks)"
+        )
+
+
 def main():
     parser = cli_args_parser()
     cli_args = verify_cli_args(parser.parse_args())
+    warn_if_no_psutil()
     try:
         if cli_args.dump and cli_args.load:
             raise ValueError("Cannot use 'dump' and 'load' options simultaneously.")
