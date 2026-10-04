@@ -30,7 +30,7 @@ def _files_signature(paths):
 def _tree_cpu_seconds(proc):
     """cpu seconds of proc and its live descendants, including their reaped children"""
     total = 0.0
-    for each in [proc] + proc.children(recursive=True):
+    for each in [proc, *proc.children(recursive=True)]:
         with suppress(Exception):  # may already be gone
             t = each.cpu_times()
             total += t.user + t.system
@@ -89,8 +89,9 @@ class _StallMonitor:
         return None
 
 
-def _kill_tree(p, grace=STALL_KILL_GRACE):
-    """terminate p and, if psutil is available, its descendants (e.g. mpi ranks)"""
+def _kill_tree(p, grace):
+    """terminate p and, if psutil is available, its descendants (e.g. mpi ranks),
+    then kill whichever of them are still alive after `grace` seconds"""
     try:
         import psutil
 
@@ -98,16 +99,19 @@ def _kill_tree(p, grace=STALL_KILL_GRACE):
     except Exception:  # noqa: BLE001 - psutil is optional, best effort
         children = []
 
-    def signal_all(fn_name):
-        for proc in [p] + children:
+    def signal_all(procs, fn_name):
+        for proc in procs:
             with suppress(Exception):  # may already be gone
                 getattr(proc, fn_name)()
 
-    signal_all("terminate")
-    try:
-        p.wait(timeout=grace)
-    except subprocess.TimeoutExpired:
-        signal_all("kill")
+    deadline = time.monotonic() + grace
+    signal_all([p, *children], "terminate")
+    with suppress(subprocess.TimeoutExpired):
+        p.wait(timeout=grace)  # not via psutil, Popen must reap p for its exit code
+    if children:  # p may exit while children ignoring SIGTERM live on
+        remaining = max(0, deadline - time.monotonic())
+        _, children = psutil.wait_procs(children, timeout=remaining)
+    signal_all([p, *children], "kill")  # no-op for p if it has exited
 
 
 @contextmanager
@@ -257,8 +261,15 @@ class RunTimer:
             except subprocess.TimeoutExpired:
                 self.stalled = monitor.stalled(time.monotonic())
                 if self.stalled:
-                    _kill_tree(p)
-                    return p.communicate()
+                    _kill_tree(p, STALL_KILL_GRACE)
+                    try:
+                        return p.communicate(timeout=STALL_KILL_GRACE)
+                    except subprocess.TimeoutExpired:
+                        # a descendant outside the killed tree holds the pipes open
+                        with suppress(subprocess.TimeoutExpired):
+                            p.wait(timeout=STALL_KILL_GRACE)
+                        empty = "" if self.capture_output else None
+                        return empty, empty
 
     def out(self, ignore_exit_code=False):
         if not ignore_exit_code and self.exitcode > 0:

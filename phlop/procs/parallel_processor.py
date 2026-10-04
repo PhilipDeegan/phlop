@@ -21,7 +21,8 @@ from phlop.logger import getLogger
 # max seconds between checks for workers that died without reporting a result
 REAP_DEAD_TIMEOUT = float(os.environ.get("PHLOP_REAP_DEAD_TIMEOUT", "3600"))
 # seconds without output before a job is killed as stalled, 0=off; with psutil
-# only if it's also idle (< 90% of a cpu), see phlop.procs.runtimer._StallMonitor
+# only if it's also idle (below runtimer.BUSY_CPU_FRACTION of a cpu), see
+# phlop.procs.runtimer._StallMonitor
 STALL_TIMEOUT = float(os.environ.get("PHLOP_STALL_TIMEOUT", "3600"))
 # with psutil, seconds without output before a busy job is killed anyway, 0=off
 STALL_BUSY_TIMEOUT = float(os.environ.get("PHLOP_STALL_BUSY_TIMEOUT", "14400"))

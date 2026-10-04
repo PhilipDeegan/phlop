@@ -461,6 +461,34 @@ class RunTimerStallTest(unittest.TestCase):
         self.assertIn("for 3s, busy", rt.stalled)
         self.assertLess(rt.run_time, 30)
 
+    def test_descendant_ignoring_sigterm_is_killed(self):
+        if not _has_psutil():
+            self.skipTest("psutil unavailable")
+        import psutil
+
+        child = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)"
+        script = (
+            "import subprocess, sys, time\n"
+            f"c = subprocess.Popen([sys.executable, '-c', {child!r}])\n"
+            "print(c.pid, flush=True)\n"
+            "time.sleep(60)"
+        )
+        # captured output: the surviving child would hold the pipes open
+        with mock.patch("phlop.procs.runtimer.STALL_KILL_GRACE", 2):
+            rt = RunTimer(
+                [sys.executable, "-c", script],
+                capture_output=True,
+                stall_timeout=1,
+            )
+        self.assertTrue(rt.stalled)
+        self.assertLess(rt.run_time, 30)
+        child_pid = int(rt.stdout.split()[0])
+        try:
+            child_alive = psutil.Process(child_pid).status() != psutil.STATUS_ZOMBIE
+        except psutil.NoSuchProcess:
+            child_alive = False
+        self.assertFalse(child_alive)
+
 
 def _has_psutil():
     try:
