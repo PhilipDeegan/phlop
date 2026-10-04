@@ -12,7 +12,7 @@ logging.basicConfig(format=FORMAT)
 
 
 def getLogger(name, level=LOG_LEVEL):
-    logger = logging.getLogger(__name__)
+    logger = logging.getLogger(name)
     level = log_levels[level] if isinstance(level, str) else level
     logger.setLevel(level)
     return logger

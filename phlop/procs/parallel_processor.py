@@ -18,7 +18,14 @@ from typing import Any
 
 from phlop.logger import getLogger
 
-TIMEOUT = 60 * 60  # seconds
+# max seconds between checks for workers that died without reporting a result
+REAP_DEAD_TIMEOUT = float(os.environ.get("PHLOP_REAP_DEAD_TIMEOUT", "3600"))
+# seconds without output before a job is killed as stalled, 0=off; with psutil
+# only if it's also idle (below runtimer.BUSY_CPU_FRACTION of a cpu), see
+# phlop.procs.runtimer._StallMonitor
+STALL_TIMEOUT = float(os.environ.get("PHLOP_STALL_TIMEOUT", "3600"))
+# with psutil, seconds without output before a busy job is killed anyway, 0=off
+STALL_BUSY_TIMEOUT = float(os.environ.get("PHLOP_STALL_BUSY_TIMEOUT", "14400"))
 FAIL_FAST = bool(json.loads(os.environ.get("PHLOP_FAIL_FAST", "false")))
 
 logger = getLogger(__name__)
@@ -66,7 +73,11 @@ class Job:
             working_dir=self.working_dir,
             log_file_path=self.log_file_path,
             logging=self.logging,
+            stall_timeout=STALL_TIMEOUT or None,
+            stall_busy_timeout=STALL_BUSY_TIMEOUT or float("inf"),
         )
+        if self.run.stalled:
+            raise ProcessorFailure(f"{self.run.stalled}, killed")
         if self.run.exitcode != 0:
             raise ProcessorFailure(f"exited {self.run.exitcode}")
         return self
@@ -223,10 +234,11 @@ def process(
     poll_no_output_secs = _to_seconds(opts.poll_no_output)
     poll_long_lived_secs = _to_seconds(opts.poll_long_lived)
 
-    active_polls = [
-        s for s in [poll_no_output_secs, poll_long_lived_secs] if s is not None
-    ]
-    queue_timeout = min(active_polls) if active_polls else TIMEOUT
+    queue_timeout = min(
+        s
+        for s in [poll_no_output_secs, poll_long_lived_secs, REAP_DEAD_TIMEOUT]
+        if s is not None
+    )
 
     fail_fast = fail_fast if fail_fast is not None else FAIL_FAST
     n_cores = n_cores or cpu_count()

@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from phlop.procs.parallel_processor import Job
 from phlop.procs.runtimer import RunTimer
@@ -386,6 +387,116 @@ class RunTimerLogFileHandleTest(unittest.TestCase):
         self.assertIsNone(rt.stdout)
         self.assertIsNone(rt.stderr)
         self.assertEqual(rt.exitcode, 0)
+
+
+class RunTimerStallTest(unittest.TestCase):
+    def _run(self, script, stall_timeout, stall_busy_timeout=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            return RunTimer(
+                [sys.executable, "-uc", script],
+                capture_output=False,
+                log_file_path=os.path.join(tmp, "job"),
+                stall_timeout=stall_timeout,
+                stall_busy_timeout=stall_busy_timeout,
+            )
+
+    def test_silent_process_without_psutil_is_killed(self):
+        with mock.patch.dict(sys.modules, {"psutil": None}):
+            rt = self._run("import time; time.sleep(60)", stall_timeout=1)
+        self.assertEqual(rt.stalled, "no output for 1s")
+
+    def test_silent_busy_process_gets_busy_timeout(self):
+        if not _has_psutil():
+            self.skipTest("psutil unavailable")
+        busy = "import time\nend = time.time() + {}\nwhile time.time() < end: pass"
+        rt = self._run(busy.format(3), stall_timeout=1, stall_busy_timeout=10)
+        self.assertFalse(rt.stalled)
+        self.assertEqual(rt.exitcode, 0)
+
+        rt = self._run(busy.format(60), stall_timeout=1, stall_busy_timeout=3)
+        self.assertEqual(rt.stalled, "no output for 3s, busy")
+
+    def test_silent_process_is_killed(self):
+        rt = self._run("import time; time.sleep(60)", stall_timeout=1)
+        self.assertTrue(rt.stalled)
+        self.assertNotEqual(rt.exitcode, 0)
+        self.assertLess(rt.run_time, 30)
+
+    def test_process_with_output_is_not_killed(self):
+        script = "import time\nfor i in range(15):\n print(i)\n time.sleep(0.2)"
+        rt = self._run(script, stall_timeout=1)
+        self.assertFalse(rt.stalled)
+        self.assertEqual(rt.exitcode, 0)
+
+    def _run_no_log(self, script, stall_timeout, stall_busy_timeout=None):
+        return RunTimer(
+            [sys.executable, "-c", script],
+            capture_output=False,
+            stall_timeout=stall_timeout,
+            stall_busy_timeout=stall_busy_timeout,
+        )
+
+    def test_no_log_file_without_psutil_is_not_monitored(self):
+        with mock.patch.dict(sys.modules, {"psutil": None}):
+            rt = self._run_no_log("import time; time.sleep(2)", stall_timeout=1)
+        self.assertFalse(rt.stalled)
+        self.assertEqual(rt.exitcode, 0)
+
+    def test_no_log_file_idle_process_is_killed(self):
+        if not _has_psutil():
+            self.skipTest("psutil unavailable")
+        rt = self._run_no_log("import time; time.sleep(60)", stall_timeout=1)
+        self.assertIn("cpu", rt.stalled)
+        self.assertLess(rt.run_time, 30)
+
+    def test_no_log_file_busy_process_gets_busy_timeout(self):
+        if not _has_psutil():
+            self.skipTest("psutil unavailable")
+        busy = "import time\nend = time.time() + {}\nwhile time.time() < end: pass"
+        rt = self._run_no_log(busy.format(3), stall_timeout=1, stall_busy_timeout=10)
+        self.assertFalse(rt.stalled)
+        self.assertEqual(rt.exitcode, 0)
+
+        rt = self._run_no_log(busy.format(60), stall_timeout=1, stall_busy_timeout=3)
+        self.assertIn("for 3s, busy", rt.stalled)
+        self.assertLess(rt.run_time, 30)
+
+    def test_descendant_ignoring_sigterm_is_killed(self):
+        if not _has_psutil():
+            self.skipTest("psutil unavailable")
+        import psutil
+
+        child = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)"
+        script = (
+            "import subprocess, sys, time\n"
+            f"c = subprocess.Popen([sys.executable, '-c', {child!r}])\n"
+            "print(c.pid, flush=True)\n"
+            "time.sleep(60)"
+        )
+        # captured output: the surviving child would hold the pipes open
+        with mock.patch("phlop.procs.runtimer.STALL_KILL_GRACE", 2):
+            rt = RunTimer(
+                [sys.executable, "-c", script],
+                capture_output=True,
+                stall_timeout=1,
+            )
+        self.assertTrue(rt.stalled)
+        self.assertLess(rt.run_time, 30)
+        child_pid = int(rt.stdout.split()[0])
+        try:
+            child_alive = psutil.Process(child_pid).status() != psutil.STATUS_ZOMBIE
+        except psutil.NoSuchProcess:
+            child_alive = False
+        self.assertFalse(child_alive)
+
+
+def _has_psutil():
+    try:
+        import psutil  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
 
 
 if __name__ == "__main__":
