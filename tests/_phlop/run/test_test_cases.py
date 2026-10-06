@@ -5,6 +5,7 @@ import shlex
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -494,10 +495,16 @@ class RunTimerStallTest(unittest.TestCase):
         self.assertTrue(rt.stalled)
         self.assertLess(rt.run_time, 30)
         child_pid = int(rt.stdout.split()[0])
-        try:
-            child_alive = psutil.Process(child_pid).status() != psutil.STATUS_ZOMBIE
-        except psutil.NoSuchProcess:
-            child_alive = False
+        # SIGKILL is async, the pipes can close before the child is fully dead
+        deadline = time.monotonic() + 1
+        while True:
+            try:
+                child_alive = psutil.Process(child_pid).status() != psutil.STATUS_ZOMBIE
+            except psutil.NoSuchProcess:
+                child_alive = False
+            if not child_alive or time.monotonic() > deadline:
+                break
+            time.sleep(0.05)
         self.assertFalse(child_alive)
 
 
