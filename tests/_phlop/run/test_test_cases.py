@@ -5,6 +5,7 @@ import shlex
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -12,6 +13,7 @@ from unittest import mock
 from phlop.procs.parallel_processor import Job
 from phlop.procs.runtimer import RunTimer
 from phlop.testing.test_cases import (
+    _log_subpath,
     _python_invocation_index,
     _python_test_target,
     _variants_for,
@@ -350,6 +352,16 @@ class LoadConfigTestsValidationTest(unittest.TestCase):
         load_config_tests(str(self._scratch))  # should not raise
 
 
+class LogSubpathTest(unittest.TestCase):
+    def test_path_inside_log_dir_is_relative(self):
+        with mock.patch("phlop.testing.test_cases._LOG_DIR", Path("/a/b")):
+            self.assertEqual(_log_subpath("/a/b/c/d"), Path("c/d"))
+
+    def test_path_outside_log_dir_keeps_full_path(self):
+        with mock.patch("phlop.testing.test_cases._LOG_DIR", Path("/a/b")):
+            self.assertEqual(_log_subpath("/x/y/z"), Path("x/y/z"))
+
+
 class RunTimerLogFileHandleTest(unittest.TestCase):
     def _open_fd_count(self):
         return len(os.listdir(f"/proc/{os.getpid()}/fd"))
@@ -483,10 +495,16 @@ class RunTimerStallTest(unittest.TestCase):
         self.assertTrue(rt.stalled)
         self.assertLess(rt.run_time, 30)
         child_pid = int(rt.stdout.split()[0])
-        try:
-            child_alive = psutil.Process(child_pid).status() != psutil.STATUS_ZOMBIE
-        except psutil.NoSuchProcess:
-            child_alive = False
+        # SIGKILL is async, the pipes can close before the child is fully dead
+        deadline = time.monotonic() + 1
+        while True:
+            try:
+                child_alive = psutil.Process(child_pid).status() != psutil.STATUS_ZOMBIE
+            except psutil.NoSuchProcess:
+                child_alive = False
+            if not child_alive or time.monotonic() > deadline:
+                break
+            time.sleep(0.05)
         self.assertFalse(child_alive)
 
 

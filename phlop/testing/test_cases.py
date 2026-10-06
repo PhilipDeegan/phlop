@@ -21,6 +21,15 @@ PYTHON_FLAGS = "-um"  # -u always; omit -O so assertions run in tests
 CONFIG_FILENAME = ".phlop.exec.yaml"
 
 
+def _log_subpath(path):
+    """`path` relative to _LOG_DIR, or the full path without its root if outside"""
+    path = Path(path).resolve()
+    try:
+        return path.relative_to(_LOG_DIR.resolve())
+    except ValueError:
+        return path.relative_to(path.anchor)
+
+
 @dataclass
 class TestBatch:
     tests: list
@@ -36,7 +45,7 @@ class DefaultTestCaseExtractor:
                 working_dir=ctest_test.working_dir,
                 log_file_path=_LOG_DIR
                 / ".phlop"
-                / f"{Path(ctest_test.working_dir).relative_to(_LOG_DIR)}",
+                / _log_subpath(ctest_test.working_dir),
             )
         ]
 
@@ -80,7 +89,7 @@ def logfile(log_file_path, test_class, suite):
     pyfile = Path(sys.modules[test_class.__module__].__file__)
     logfile = str(
         log_file_path
-        / pyfile.parent.relative_to(_LOG_DIR)
+        / _log_subpath(pyfile.parent)
         / pyfile.stem
         / test_class.__name__
         / suite._testMethodName
