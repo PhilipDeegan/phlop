@@ -23,9 +23,9 @@ CONFIG_FILENAME = ".phlop.exec.yaml"
 
 def _log_subpath(path):
     """`path` relative to _LOG_DIR, or the full path without its root if outside"""
-    path = Path(path)
+    path = Path(path).resolve()
     try:
-        return path.relative_to(_LOG_DIR)
+        return path.relative_to(_LOG_DIR.resolve())
     except ValueError:
         return path.relative_to(path.anchor)
 
