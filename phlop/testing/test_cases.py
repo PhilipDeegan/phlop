@@ -3,7 +3,6 @@
 import os
 import re
 import shlex
-import sys
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,7 +10,7 @@ from pathlib import Path
 from phlop.app.cmake import list_tests as get_cmake_tests
 from phlop.os import env_sep
 from phlop.procs.parallel_processor import Job
-from phlop.reflection import classes_in_file
+from phlop.reflection import class_file, classes_in_file
 from phlop.sys import extend_sys_path
 
 _LOG_DIR = Path(os.environ.get("PHLOP_LOG_DIR", os.getcwd()))
@@ -34,6 +33,18 @@ def _log_subpath(path):
 class TestBatch:
     tests: list
     cores: int
+
+    def __post_init__(self):
+        self.check_cores()
+
+    def check_cores(self):
+        """Every job in a batch runs with the batch's core count"""
+        bad = [t for t in self.tests if getattr(t, "cores", self.cores) != self.cores]
+        if bad:
+            raise ValueError(
+                f"TestBatch(cores={self.cores}) given jobs with other core counts: "
+                + ", ".join(f"{t.cmd!r} (cores={t.cores})" for t in bad)
+            )
 
 
 class DefaultTestCaseExtractor:
@@ -86,7 +97,7 @@ def python3_default_test_cmd(clazz, test_id, python_flags=None):
 def logfile(log_file_path, test_class, suite):
     if not log_file_path:
         return None
-    pyfile = Path(sys.modules[test_class.__module__].__file__)
+    pyfile = Path(class_file(test_class))
     logfile = str(
         log_file_path
         / _log_subpath(pyfile.parent)
@@ -465,9 +476,7 @@ def extract_load(directory, globbing):
         with open(path, "r") as file:
             batch_list = deserialize(file.read()).batch_list
             for batch in batch_list:
-                for test_case in batch.tests:
-                    if batch.cores not in test_batches:
-                        test_batches[test_case.cores] = []
-                    test_batches[test_case.cores].append(test_case)
+                batch.check_cores()  # unpickling skips __post_init__
+                test_batches.setdefault(batch.cores, []).extend(batch.tests)
 
     return [TestBatch(v, k) for k, v in test_batches.items()]
