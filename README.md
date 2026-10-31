@@ -38,7 +38,7 @@ Available:
 
 ```shell
 python3 -m phlop.run.test_cases -h
-usage: test_cases.py [-h] [--cmake] [-c CORES] [-i INPUT] [-p] [--prefix PREFIX] [--postfix POSTFIX] [--dump [DUMP]] [--load LOAD] [-r REGEX] [-R] [--rerun RERUN] [--logging LOGGING]
+usage: test_cases.py [-h] [--cmake] [-c CORES] [-i INPUT] [-p] [--prefix PREFIX] [--postfix POSTFIX] [--dump DUMP] [--load LOAD] [-r REGEX] [-R] [--rerun RERUN] [--logging LOGGING]
 
 Flexible parallel test runner
 
@@ -52,7 +52,7 @@ options:
   -p, --print_only      Print only, no execution (default: False)
   --prefix PREFIX       Prepend string to execution string (default: )
   --postfix POSTFIX     Append string to execution string (default: )
-  --dump [DUMP]         Dump discovered tests as YAML to filepath, no execution (default: None)
+  --dump DUMP           Dump discovered tests to filepath (hex-encoded dill pickle), no execution (default: None)
   --load LOAD           globbing filepath for files exported from dump (default: None)
   -r REGEX, --regex REGEX
                         Filter out non-matching execution strings (default: None)

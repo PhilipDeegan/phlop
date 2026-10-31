@@ -33,7 +33,7 @@ def cli_args_parser():
         print_only="Print only, no execution",
         prefix="Prepend string to execution string",
         postfix="Append string to execution string",
-        dump="Dump discovered tests as YAML to filepath, no execution",
+        dump="Dump discovered tests to filepath (hex-encoded dill pickle), no execution",
         load="globbing filepath for files exported from dump",
         regex="Filter out non-matching execution strings",
         reverse="reverse order - higher core count tests preferred",
@@ -67,9 +67,7 @@ def cli_args_parser():
     parser.add_argument("--prefix", default="", help=_help.prefix)
     parser.add_argument("--postfix", default="", help=_help.postfix)
 
-    parser.add_argument(
-        "--dump", default=None, action="store", nargs="?", help=_help.dump
-    )
+    parser.add_argument("--dump", default=None, help=_help.dump)
     parser.add_argument("--load", default=None, help=_help.load)
     parser.add_argument("-r", "--regex", default=None, help=_help.regex)
     parser.add_argument(

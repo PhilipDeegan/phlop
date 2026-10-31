@@ -8,15 +8,22 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from typing import ClassVar
 from unittest import mock
 
 from phlop.procs.parallel_processor import Job
 from phlop.procs.runtimer import RunTimer
+from phlop.reflection import classes_in_file
+from phlop.run.test_cases import cli_args_parser
+from phlop.sys import extend_sys_path
 from phlop.testing.test_cases import (
+    TestBatch,
+    TestBatchesList,
     _log_subpath,
     _python_invocation_index,
     _python_test_target,
     _variants_for,
+    extract_load,
     load_config_tests,
     load_py_test_cases_from_cmake,
     resolve_cores,
@@ -126,6 +133,124 @@ class LoadPyTestCasesFromCmakeTest(unittest.TestCase):
         )
         jobs = load_py_test_cases_from_cmake(job)
         self.assertTrue(any("PhlopGitTestCasesTest.test_fails" in j.cmd for j in jobs))
+
+
+class DuplicateTestNameTest(unittest.TestCase):
+    """https://github.com/PhilipDeegan/phlop/issues/59
+
+    ctest entries like `python3 -um test_duplicate` in different working dirs share
+    a bare module name - each must load its own file (and its own sibling
+    imports), not whichever was imported first. Fixtures are in
+    tests/_phlop/duplicate_test_name/{one,two}, which the default `-i tests` scan
+    also collects and runs."""
+
+    ROOT = Path("tests/_phlop/duplicate_test_name")
+    CLASSES: ClassVar = {
+        "one": "DuplicateTestNameOneTest",
+        "two": "DuplicateTestNameTwoTest",
+    }
+
+    def _load(self, name):
+        job = Job(cmd="python3 -um test_duplicate", working_dir=str(self.ROOT / name))
+        return load_py_test_cases_from_cmake(job)
+
+    def test_each_dir_gets_its_own_classes_and_logfile(self):
+        jobs = {name: self._load(name) for name in self.CLASSES}
+
+        for name, clazz in self.CLASSES.items():
+            self.assertEqual(len(jobs[name]), 1)
+            job = jobs[name][0]
+            self.assertIn(f"test_duplicate {clazz}.test_run", job.cmd)
+            self.assertIn(
+                str(_log_subpath(self.ROOT / name) / "test_duplicate" / clazz),
+                job.log_file_path,
+            )
+
+    def test_sibling_imports_are_not_shared(self):
+        for name in self.CLASSES:
+            with extend_sys_path([str(self.ROOT / name)]):
+                (clazz,) = classes_in_file("test_duplicate.py", unittest.TestCase)
+            self.assertEqual(clazz.test_run.__globals__["WHO"], name)
+
+    def test_directory_scan(self):
+        jobs = [j for b in load_config_tests(str(self.ROOT)) for j in b.tests]
+        for name, clazz in self.CLASSES.items():
+            (job,) = [j for j in jobs if clazz in j.cmd]
+            self.assertIn(f"{name}.test_duplicate {clazz}.test_run", job.cmd)
+            self.assertIn(
+                str(_log_subpath(self.ROOT / name) / "test_duplicate" / clazz),
+                job.log_file_path,
+            )
+
+    def test_modules_are_not_kept(self):
+        self._load("one")
+        self.assertNotIn("test_duplicate", sys.modules)
+        self.assertNotIn("helper", sys.modules)
+
+
+class ImportedTestCaseTest(unittest.TestCase):
+    """A TestCase imported into a scanned file is collected only from the file
+    that defines it, not again from every file that imports it."""
+
+    def test_imported_classes_are_collected_once(self):
+        root = "tests/_phlop/imported_test_case"
+        cmds = [j.cmd for b in load_config_tests(root) for j in b.tests]
+        self.assertEqual(
+            sorted(c.split(" ", 2)[2] for c in cmds),
+            [
+                "tests._phlop.imported_test_case.base ImportedBaseTest.test_shared",
+                "tests._phlop.imported_test_case.test_a ImportedATest.test_own",
+                "tests._phlop.imported_test_case.test_a ImportedATest.test_shared",
+                "tests._phlop.imported_test_case.test_b ImportedBTest.test_own",
+                "tests._phlop.imported_test_case.test_b ImportedBTest.test_shared",
+            ],
+        )
+
+
+class CliArgsTest(unittest.TestCase):
+    def test_dump_requires_a_filepath(self):
+        parser = cli_args_parser()
+        self.assertEqual(parser.parse_args(["--dump", "out"]).dump, "out")
+        with mock.patch("sys.stderr"), self.assertRaises(SystemExit) as ctx:
+            parser.parse_args(["--dump"])
+        self.assertEqual(ctx.exception.code, 2)
+
+
+class TestBatchCoresTest(unittest.TestCase):
+    """A batch's jobs all run with the batch's core count - anything else is a bug"""
+
+    def test_mismatched_job_raises(self):
+        with self.assertRaisesRegex(ValueError, "'b' \\(cores=4\\)"):
+            TestBatch([Job(cmd="a", cores=2), Job(cmd="b", cores=4)], 2)
+
+    def _load(self, batches):
+        import codecs
+
+        import dill
+
+        with tempfile.TemporaryDirectory() as d:
+            # same encoding as phlop.run.test_cases.dump_batches
+            Path(d, "tests.dump").write_text(
+                codecs.encode(
+                    dill.dumps(TestBatchesList(batch_list=batches)), "hex"
+                ).decode()
+            )
+            loaded = extract_load(d, "tests.dump")
+        return {b.cores: sorted(j.cmd for j in b.tests) for b in loaded}
+
+    def test_load_round_trip(self):
+        batches = [
+            TestBatch([Job(cmd="a"), Job(cmd="b")], 1),
+            TestBatch([Job(cmd="c", cores=4)], 4),
+            TestBatch([Job(cmd="d", cores=4)], 4),
+        ]
+        self.assertEqual(self._load(batches), {1: ["a", "b"], 4: ["c", "d"]})
+
+    def test_load_rejects_mismatched_batch(self):
+        batch = TestBatch([Job(cmd="a", cores=4)], 4)
+        batch.cores = 2  # e.g. a dump written by something other than phlop
+        with self.assertRaisesRegex(ValueError, "'a' \\(cores=4\\)"):
+            self._load([batch])
 
 
 class ResolveCoresTest(unittest.TestCase):
