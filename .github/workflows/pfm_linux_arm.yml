@@ -1,0 +1,100 @@
+name: pfm on linux arm
+
+# Hardware counters via libpfm + perf on an arm64 runner. Mostly diagnostics:
+# every step prints what the host exposes so failures can be worked out from
+# the log, the last step fails the job if nothing could be counted.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pfm:
+    name: pfm arm64
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.13'
+
+    - name: Install perf
+      run: |
+        uname -a
+        sudo apt-get update -q
+        sudo apt-get install -yq linux-tools-common "linux-tools-$(uname -r)" \
+          || sudo apt-get install -yq linux-tools-common linux-tools-generic
+        # /usr/bin/perf is a wrapper wanting the exact kernel's tools, fall
+        # back to whichever perf was installed
+        PERF_BIN=$(ls /usr/lib/linux-tools/*/perf /usr/lib/linux-tools-*/perf 2>/dev/null | head -1)
+        echo "perf binary: ${PERF_BIN:-none}"
+        if [ -n "$PERF_BIN" ]; then sudo ln -sf "$PERF_BIN" /usr/local/bin/perf; fi
+        perf --version || echo "::warning::perf unusable"
+
+    - name: Build libpfm
+      run: ./sh/setup_pfm.sh
+
+    - name: Python deps
+      run: python3 -m pip install -r requirements.txt
+
+    - name: Diagnose, default kernel settings
+      run: python3 -m phlop.app.pfm.diagnose | tee diagnose_default.txt
+
+    - name: Kernel PMU messages
+      if: ${{ !cancelled() }}
+      run: |
+        sudo dmesg | grep -iE "pmu|perf|hw perfevents|armv8|arm_spe" \
+          || echo "no PMU related kernel messages"
+
+    - name: Open up perf_event
+      if: ${{ !cancelled() }}
+      run: |
+        sudo sysctl -w kernel.perf_event_paranoid=-1
+        sudo sysctl -w kernel.nmi_watchdog=0 || true
+
+    - name: Diagnose
+      if: ${{ !cancelled() }}
+      run: python3 -m phlop.app.pfm.diagnose | tee diagnose.txt
+
+    - name: Build benchmarks
+      if: ${{ !cancelled() }}
+      run: |
+        mkdir -p bin
+        gcc --version | head -1
+        gcc -O3 -mcpu=native tests/_phlop/app/pfm/bench_fp.c -o bin/bench_fp_vec
+        gcc -O2 -fno-tree-vectorize -ffp-contract=off tests/_phlop/app/pfm/bench_fp.c -o bin/bench_fp_scalar
+        gcc -O3 -mcpu=native tests/_phlop/app/pfm/bench_stream.c -o bin/bench_stream
+
+    - name: Event sets on benchmarks
+      if: ${{ !cancelled() }}
+      run: |
+        python3 -m phlop.app.pfm.stat --list
+        for b in "bench_fp_vec" "bench_fp_scalar" "bench_stream 256 4"; do
+          echo "######## $b"
+          python3 -m phlop.app.pfm.stat -s all -o "pfm_${b%% *}.json" -- ./bin/$b \
+            || echo "::warning::phlop.app.pfm.stat failed on $b"
+        done
+
+    - name: Check something was counted
+      if: ${{ !cancelled() }}
+      run: |
+        python3 -m phlop.app.pfm.diagnose --strict > /dev/null \
+          || { echo "::error::no hardware events counted on $(uname -m), see the Diagnose step"; exit 1; }
+
+    - uses: actions/upload-artifact@v4
+      if: ${{ !cancelled() }}
+      with:
+        name: pfm-linux-arm
+        path: |
+          diagnose_default.txt
+          diagnose.txt
+          pfm_*.json

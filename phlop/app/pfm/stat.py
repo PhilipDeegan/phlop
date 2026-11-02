@@ -16,10 +16,11 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import asdict, dataclass, field
-from functools import cache, lru_cache
+from functools import cache
 
 from phlop.app import perf
 from phlop.app.pfm import check_events as ce
+from phlop.app.pfm import host
 from phlop.app.pfm.sets import DEFAULT_SETS, sets_for
 
 NOT_COUNTED = ("<not counted>", "<not supported>")
@@ -44,18 +45,6 @@ class SetResult:
     hints: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
     exitcode: int | None = None
-
-
-@lru_cache(maxsize=1)
-def cpu_flags():
-    try:
-        with open("/proc/cpuinfo") as f:
-            for line in f:
-                if line.startswith("flags"):
-                    return frozenset(line.split(":", 1)[1].split())
-    except OSError:
-        pass
-    return frozenset()
 
 
 @cache
@@ -142,7 +131,9 @@ def collect(eset, rows, reported_as):
 
 
 def evaluate(eset, result, ctx):
+    """metrics see counts by alias, and ctx values as "@key", eg c["@slots"]"""
     counts = {k: v.value for k, v in result.events.items()}
+    counts.update({f"@{k}": v for k, v in ctx.items()})
     for m in eset.metrics:
         try:
             val = m.fn(counts)
@@ -191,7 +182,7 @@ def run_set(eset, program, kernel=False, repeat=1, quiet=False, print_only=False
                 f"{alias} multiplexed, counted {ev.pcnt_running:.0f}% of the time: "
                 "value is a scaled estimate"
             )
-    evaluate(eset, result, {"cpu_flags": cpu_flags()})
+    evaluate(eset, result, host.context())
     return result
 
 
@@ -200,7 +191,7 @@ def stat(
 ):
     """run program once per event set, returns (pmu, [SetResult], [warnings])"""
     pmu, sets = sets_for(ce.detected_pmus())
-    set_names = set_names or DEFAULT_SETS
+    set_names = set_names or [s for s in DEFAULT_SETS if s in sets]
     if set_names == ["all"]:
         set_names = list(sets)
     unknown = [s for s in set_names if s not in sets]
@@ -284,7 +275,11 @@ def cli_args_parser(description="perf stat with libpfm event sets"):
     )
     parser.add_argument("remaining", nargs=argparse.REMAINDER, help="program and args")
     parser.add_argument(
-        "-s", "--sets", default=",".join(DEFAULT_SETS), help="comma separated, or all"
+        "-s",
+        "--sets",
+        default=None,
+        help=f"comma separated, or all. default: {','.join(DEFAULT_SETS)}, "
+        "those the detected PMU has",
     )
     parser.add_argument("-l", "--list", action="store_true", help="list event sets")
     parser.add_argument("-r", "--repeat", type=int, default=1, help="perf stat -r")
@@ -315,7 +310,7 @@ def main(argv=None):
 
     pmu, results, warnings, can_count = stat(
         program,
-        cli_args.sets.split(","),
+        cli_args.sets.split(",") if cli_args.sets else None,
         cli_args.kernel,
         cli_args.repeat,
         cli_args.quiet,

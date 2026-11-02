@@ -5,11 +5,11 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
+from phlop.app.pfm import host
 from phlop.proc import run
 from phlop.string import decode_bytes
 
 FILE_DIR = Path(__file__).resolve().parent
-PERF_PMU_FORMAT_DIR = Path("/sys/bus/event_source/devices/cpu/format")
 
 logger = logging.getLogger(__name__)
 check_events_start = "Total events:"
@@ -74,13 +74,14 @@ def detected_pmus():
 
 @lru_cache(maxsize=1)
 def perf_config_mask():
-    """union of the config bits the kernel `cpu` PMU declares in its format dir,
-    eg AMD: event 0-7,32-35 umask 8-15 edge 18 inv 23 cmask 24-31
-    libpfm also sets usr/os/int/en bits which perf rejects as unsupported"""
+    """union of the config bits the kernel core PMU declares in its format dir,
+    eg AMD: event 0-7,32-35 umask 8-15 edge 18 inv 23 cmask 24-31, arm64:
+    event 0-15. libpfm also sets usr/os/int/en bits which perf rejects"""
     mask = 0
-    if not PERF_PMU_FORMAT_DIR.exists():
+    pmu = host.core_pmu()
+    if pmu is None:
         return ~0
-    for f in PERF_PMU_FORMAT_DIR.iterdir():
+    for f in (pmu / "format").iterdir():
         field, _, ranges = f.read_text().strip().partition(":")
         if field != "config":
             continue
@@ -118,7 +119,8 @@ def encode(events):
 
 def perf_event_string(name, config, modifiers=""):
     """perf -e string for a raw config, named so `perf stat` reports it as name"""
-    return f"cpu/config={config & perf_config_mask():#x},name={name}/{modifiers}"
+    pmu = host.core_pmu_name()
+    return f"{pmu}/config={config & perf_config_mask():#x},name={name}/{modifiers}"
 
 
 if __name__ == "__main__":

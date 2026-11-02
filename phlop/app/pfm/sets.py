@@ -18,6 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 PAIR_EVENTS = ("RETIRED_SSE_AVX_FLOPS",)  # cost two counters each
+FIXED_EVENTS = ("CPU_CYCLES",)  # arm64 dedicated cycle counter, costs none
 
 
 def ratio(a, b):
@@ -41,10 +42,12 @@ class EventSet:
     metrics: list = field(default_factory=list)
 
     def counters_needed(self):
-        return sum(
-            2 if any(spec.startswith(p) for p in PAIR_EVENTS) else 1
-            for spec in self.events.values()
-        )
+        def cost(spec):
+            if spec in FIXED_EVENTS:
+                return 0
+            return 2 if any(spec.startswith(p) for p in PAIR_EVENTS) else 1
+
+        return sum(cost(spec) for spec in self.events.values())
 
 
 def _hint(pred, msg):
@@ -593,7 +596,243 @@ generic = [
 ]
 
 
-SETS = {"amd64_fam1ah_zen5": zen5}
+# --------------------------------------------------------------------------- #
+# arm64, architected PMUv3 events. Formulas follow linux
+# tools/perf/pmu-events/arch/arm64/arm/neoverse-n2-v2/metrics.json, "@slots" is
+# the core PMU's caps/slots, see host.context()
+
+
+def _arm_slots(c):
+    return c["cycles"] * c["@slots"] if c.get("@slots") else None
+
+
+def _arm_stall(c, key):
+    """N2 r0p0/r0p3 STALL_SLOT* count one extra slot per cycle"""
+    return c[key] - c["cycles"] if c.get("@stall_slot_counts_cycles") else c[key]
+
+
+def _arm_not_stalled(c):
+    return 1 - ratio(_arm_stall(c, "stall"), _arm_slots(c))
+
+
+arm_light = EventSet(
+    "light",
+    "cheap per scope counters: cycles, instructions, RAM fetches",
+    {
+        "cycles": "CPU_CYCLES",
+        "instructions": "INST_RETIRED",
+        # last level cache read misses: RAM. Only counts when the core is
+        # configured with an external LLC (CPUECTLR.EXTLLC), check diagnose
+        "fetches": "LL_CACHE_MISS_RD",
+    },
+    [
+        Metric("ipc", lambda c: ratio(c["instructions"], c["cycles"])),
+        Metric(
+            "instructions_per_fetch",
+            lambda c: ratio(c["instructions"], c["fetches"]),
+            desc="instructions per line read from RAM",
+            hint=_hint(
+                lambda v: v < 100,
+                "under 100 instructions per RAM fetch: memory bound, improve reuse",
+            ),
+        ),
+        Metric(
+            "fetch_bytes_per_cycle",
+            lambda c: ratio(c["fetches"] * 64, c["cycles"]),
+            desc="assumes 64B lines",
+        ),
+    ],
+)
+
+arm_ipc = EventSet(
+    "ipc",
+    "instructions per cycle and branch prediction",
+    {
+        "cycles": "CPU_CYCLES",
+        "instructions": "INST_RETIRED",
+        "spec_instructions": "INST_SPEC",
+        "branches": "BR_RETIRED",
+        "br_misp": "BR_MIS_PRED_RETIRED",
+    },
+    [
+        Metric(
+            "ipc",
+            lambda c: ratio(c["instructions"], c["cycles"]),
+            hint=_hint(lambda v: v < 1, "low IPC: see -s topdown"),
+        ),
+        Metric(
+            "branch_mispredict_rate",
+            lambda c: ratio(c["br_misp"], c["branches"]),
+            "%",
+            hint=_hint(lambda v: v > 0.02, "branch mispredicts > 2%"),
+        ),
+        Metric("branch_mpki", _per_kilo("br_misp")),
+        Metric(
+            "speculation_wasted",
+            lambda c: 1 - ratio(c["instructions"], c["spec_instructions"]),
+            "%",
+            desc="speculatively executed instructions that did not retire",
+        ),
+    ],
+)
+
+arm_topdown = EventSet(
+    "topdown",
+    "level 1 pipeline utilization, fraction of issue slots",
+    {
+        "cycles": "CPU_CYCLES",
+        "stall": "STALL_SLOT",
+        "stall_fe": "STALL_SLOT_FRONTEND",
+        "stall_be": "STALL_SLOT_BACKEND",
+        "op_spec": "OP_SPEC",
+        "op_retired": "OP_RETIRED",
+        "br_misp_spec": "BR_MIS_PRED",
+    },
+    [
+        Metric(
+            "retiring",
+            lambda c: ratio(c["op_retired"], c["op_spec"]) * _arm_not_stalled(c),
+            "%",
+            hint=_hint(
+                lambda v: v > 0.5,
+                "mostly retiring: do less work, vectorize (-s vector,flops)",
+            ),
+        ),
+        Metric(
+            "frontend_bound",
+            lambda c: ratio(_arm_stall(c, "stall_fe"), _arm_slots(c))
+            - ratio(c["br_misp_spec"], c["cycles"]),
+            "%",
+            hint=_hint(lambda v: v > 0.2, "frontend bound: i-cache/iTLB, code size"),
+        ),
+        Metric(
+            "backend_bound",
+            lambda c: ratio(c["stall_be"], _arm_slots(c))
+            - ratio(c["br_misp_spec"] * 3, c["cycles"]),
+            "%",
+            hint=_hint(lambda v: v > 0.3, "backend bound: see -s cache"),
+        ),
+        Metric(
+            "bad_speculation",
+            lambda c: (1 - ratio(c["op_retired"], c["op_spec"])) * _arm_not_stalled(c)
+            + ratio(c["br_misp_spec"] * 4, c["cycles"]),
+            "%",
+            hint=_hint(lambda v: v > 0.1, "bad speculation: see -s ipc"),
+        ),
+        Metric("slots", lambda c: c.get("@slots"), desc="from caps/slots"),
+    ],
+)
+
+
+def _arm_vector(with_sve):
+    simd = ("neon", "sve") if with_sve else ("neon",)
+    events = {
+        "spec_instructions": "INST_SPEC",
+        "neon": "ASE_SPEC",
+        "scalar_fp": "VFP_SPEC",
+    }
+    if with_sve:
+        events["sve"] = "SVE_INST_SPEC"
+    metrics = [
+        Metric(
+            "vectorized",
+            lambda c: ratio(_sum(*simd)(c), _sum(*simd, "scalar_fp")(c)),
+            "%",
+            desc="SIMD / (SIMD + scalar FP) instructions, SIMD includes integer",
+            hint=_hint(
+                lambda v: v < 0.5,
+                "mostly scalar floating point: check " + VECTORIZE_ADVICE,
+            ),
+        ),
+        Metric("neon", lambda c: ratio(c["neon"], c["spec_instructions"]), "%"),
+        Metric(
+            "scalar_fp", lambda c: ratio(c["scalar_fp"], c["spec_instructions"]), "%"
+        ),
+    ]
+    if with_sve:
+        metrics.append(
+            Metric(
+                "sve",
+                lambda c: ratio(c["sve"], c["spec_instructions"]),
+                "%",
+                hint=lambda v, c, ctx: (
+                    "SVE available but unused: try -mcpu=native / -march=armv8-a+sve"
+                    if "sve" in ctx.get("cpu_flags", ())
+                    and not c.get("sve")
+                    and c.get("neon")
+                    else None
+                ),
+            )
+        )
+    return EventSet(
+        "vector", "SIMD (NEON/SVE) vs scalar FP instructions", events, metrics
+    )
+
+
+def _arm_sve_flops(c):
+    """FP_SCALE_OPS_SPEC counts per 128 bits of SVE vector length"""
+    bits = c.get("@sve_bits") or 128
+    return c["scale_ops"] * bits / 128 + c["fixed_ops"]
+
+
+arm_flops = EventSet(
+    "flops",
+    "floating point operations, SVE scaled by vector length",
+    {
+        "cycles": "CPU_CYCLES",
+        "scale_ops": "FP_SCALE_OPS_SPEC",
+        "fixed_ops": "FP_FIXED_OPS_SPEC",
+    },
+    [
+        Metric("flops_per_cycle", lambda c: ratio(_arm_sve_flops(c), c["cycles"])),
+        Metric(
+            "scalable_fraction",
+            lambda c: ratio(c["scale_ops"], _sum("scale_ops", "fixed_ops")(c)),
+            "%",
+            desc="SVE (vector length scaled) share of FP ops, speculative",
+        ),
+        Metric("sve_bits", lambda c: c.get("@sve_bits"), desc="default vector length"),
+    ],
+)
+
+arm_cache = EventSet(
+    "cache",
+    "cache refills and last level misses",
+    {
+        "instructions": "INST_RETIRED",
+        "mem_access": "MEM_ACCESS",
+        "l1d_refill": "L1D_CACHE_REFILL",
+        "l2d_refill": "L2D_CACHE_REFILL",
+        "ll_read": "LL_CACHE_RD",
+        "ll_miss_read": "LL_CACHE_MISS_RD",
+    },
+    [
+        Metric("l1d_miss_rate", lambda c: ratio(c["l1d_refill"], c["mem_access"]), "%"),
+        Metric("l1d_mpki", _per_kilo("l1d_refill")),
+        Metric("l2d_mpki", _per_kilo("l2d_refill")),
+        Metric(
+            "ll_read_miss_rate", lambda c: ratio(c["ll_miss_read"], c["ll_read"]), "%"
+        ),
+        Metric(
+            "ram_mpki",
+            _per_kilo("ll_miss_read"),
+            hint=_hint(
+                lambda v: v > 1,
+                "frequent RAM reads: working set exceeds caches, improve reuse",
+            ),
+        ),
+    ],
+)
+
+arm_v9ish = [arm_light, arm_ipc, arm_topdown, _arm_vector(True), arm_flops, arm_cache]
+arm_basic = [arm_light, arm_ipc, _arm_vector(False), arm_cache]
+
+
+SETS = {
+    "amd64_fam1ah_zen5": zen5,
+    **{pmu: arm_v9ish for pmu in ("arm_v1", "arm_n2", "arm_v2", "arm_n3", "arm_v3")},
+    **{pmu: arm_basic for pmu in ("arm_n1", "arm_ac76")},
+}
 DEFAULT_SETS = ["ipc", "topdown", "vector", "flops", "cache"]
 
 

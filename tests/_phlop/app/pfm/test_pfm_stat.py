@@ -10,6 +10,7 @@ from phlop.app.pfm.check_events import _parse_detected_pmus, _parse_encodings
 from phlop.app.pfm.sets import SETS, generic
 
 ZEN5 = {s.name: s for s in SETS["amd64_fam1ah_zen5"]}
+N2 = {s.name: s for s in SETS["arm_n2"]}
 
 
 def rows(**counts):
@@ -19,11 +20,11 @@ def rows(**counts):
     ]
 
 
-def evaluate(eset, rws, cpu_flags=()):
+def evaluate(eset, rws, cpu_flags=(), **ctx):
     res = stat.SetResult(eset.name, eset.desc, [])
     reported = [(a, a, "") for a in eset.events]
     res.events = stat.collect(eset, rws, reported)
-    stat.evaluate(eset, res, {"cpu_flags": frozenset(cpu_flags)})
+    stat.evaluate(eset, res, {"cpu_flags": frozenset(cpu_flags), **ctx})
     return res
 
 
@@ -110,6 +111,104 @@ class PfmStatTest(unittest.TestCase):
         ok, warnings = perf.access_warnings()
         self.assertIsInstance(ok, bool)
         self.assertIsInstance(warnings, list)
+
+
+class ArmTest(unittest.TestCase):
+    def test_core_pmu_detection(self):
+        import tempfile
+        from pathlib import Path
+
+        from phlop.app.pfm import host
+
+        with tempfile.TemporaryDirectory() as d:
+            for name, marker in (
+                ("armv8_pmuv3_0", "cpus"),
+                ("arm_cmn_0", "cpumask"),  # uncore
+                ("software", None),
+            ):
+                (Path(d, name, "format")).mkdir(parents=True)
+                if marker:
+                    Path(d, name, marker).write_text("0-3")
+            self.assertEqual([p.name for p in host.core_pmus(d)], ["armv8_pmuv3_0"])
+
+    def test_topdown(self):
+        # 1000 cycles * 5 slots, 1000 stalled slots: 800 frontend, 200 backend
+        counts = rows(
+            cycles=1000,
+            stall=1000,
+            stall_fe=800,
+            stall_be=200,
+            op_spec=4000,
+            op_retired=3600,
+            br_misp_spec=0,
+        )
+        m = evaluate(N2["topdown"], counts, slots=5).metrics
+        self.assertAlmostEqual(m["retiring"], 0.9 * 0.8)
+        self.assertAlmostEqual(m["bad_speculation"], 0.1 * 0.8)
+        self.assertAlmostEqual(m["frontend_bound"], 0.16)
+        self.assertAlmostEqual(m["backend_bound"], 0.04)
+        self.assertAlmostEqual(
+            sum(
+                m[k]
+                for k in (
+                    "retiring",
+                    "bad_speculation",
+                    "frontend_bound",
+                    "backend_bound",
+                )
+            ),
+            1.0,
+        )
+
+    def test_topdown_n2_erratum_subtracts_cycles(self):
+        counts = rows(
+            cycles=1000,
+            stall=2000,  # 1000 real + one per cycle
+            stall_fe=1800,
+            stall_be=200,
+            op_spec=4000,
+            op_retired=3600,
+            br_misp_spec=0,
+        )
+        m = evaluate(
+            N2["topdown"], counts, slots=5, stall_slot_counts_cycles=True
+        ).metrics
+        self.assertAlmostEqual(m["frontend_bound"], 0.16)
+        self.assertAlmostEqual(m["retiring"], 0.9 * 0.8)
+
+    def test_topdown_without_slots_is_none(self):
+        counts = rows(
+            cycles=1,
+            stall=1,
+            stall_fe=1,
+            stall_be=1,
+            op_spec=1,
+            op_retired=1,
+            br_misp_spec=0,
+        )
+        self.assertIsNone(evaluate(N2["topdown"], counts).metrics["retiring"])
+
+    def test_sve_flops_scale_with_vector_length(self):
+        counts = rows(cycles=100, scale_ops=10, fixed_ops=20)
+        self.assertAlmostEqual(
+            evaluate(N2["flops"], counts, sve_bits=256).metrics["flops_per_cycle"],
+            (10 * 2 + 20) / 100,
+        )
+        self.assertAlmostEqual(  # no SVE info: 128 bit units
+            evaluate(N2["flops"], counts).metrics["flops_per_cycle"], 0.3
+        )
+
+    def test_cycle_counter_is_free(self):
+        self.assertEqual(N2["topdown"].counters_needed(), 6)  # 7 events
+        self.assertTrue(all(s.counters_needed() <= 6 for s in N2.values()))
+
+    def test_basic_arm_pmus_have_no_topdown(self):
+        from phlop.app.pfm.sets import sets_for
+
+        pmu, sets = sets_for(["arm_n1"])
+        self.assertEqual(pmu, "arm_n1")
+        self.assertNotIn("topdown", sets)
+        self.assertIn("light", sets)
 
 
 if __name__ == "__main__":
