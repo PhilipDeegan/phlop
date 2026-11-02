@@ -177,6 +177,11 @@ def run_set(eset, program, kernel=False, repeat=1, quiet=False, print_only=False
     for alias, ev in result.events.items():
         if ev.value is None:
             result.warnings.append(f"{alias} ({ev.spec}) not counted")
+        elif ev.value == 0:
+            result.warnings.append(
+                f"{alias} ({ev.spec}) reads 0: not exercised by the program, or "
+                "not supported here (VMs often filter events)"
+            )
         elif ev.pcnt_running is not None and ev.pcnt_running < 100:
             result.warnings.append(
                 f"{alias} multiplexed, counted {ev.pcnt_running:.0f}% of the time: "

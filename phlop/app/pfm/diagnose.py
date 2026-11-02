@@ -160,7 +160,8 @@ def diagnose_libpfm():
 
 
 def _try_set(eset):
-    """encode + count one set on WORKLOAD, print per event. True if any counted"""
+    """encode + count one set on WORKLOAD, print per event.
+    Returns {alias: value or None}, {} if encoding or perf failed outright"""
     from phlop.app.pfm.stat import collect, perf_events, perf_stat_cmd
 
     print(f"\n  -- {eset.name} ({eset.counters_needed()} counters): {eset.desc}")
@@ -172,7 +173,7 @@ def _try_set(eset):
             print(f"    encode {alias:<18} {spec} -> {config:#x}")
         except ValueError as e:
             print(f"    encode {alias:<18} {spec} FAILED: {e}")
-            return False
+            return {}
 
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
         outfile = f.name
@@ -190,19 +191,19 @@ def _try_set(eset):
         print(f"    perf failed (exit {proc.returncode}): {' '.join(cmd)}")
         for line in proc.stderr.strip().splitlines()[:20]:
             print(f"      {line}")
-    counted = False
+    values = {}
     for alias, ev in collect(eset, rows, reported).items():
+        values[alias] = ev.value
         if ev.value is None:
             state = "NOT COUNTED"
         else:
-            counted = counted or ev.value > 0
             state = f"{ev.value:,.0f}"
             if ev.pcnt_running is not None and ev.pcnt_running < 100:
                 state += f" (multiplexed {ev.pcnt_running:.0f}%)"
             if ev.value == 0:
                 state += "  <- zero"
         print(f"    count  {alias:<18} {state}")
-    return counted
+    return values
 
 
 def main(argv=None):
@@ -221,9 +222,18 @@ def main(argv=None):
 
     section("summary")
     print(f"  can count: {can_count}, core PMU: {has_pmu}, perf works: {has_perf}")
-    for name, ok in counted.items():
-        print(f"  {name:<10} {'ok' if ok else 'NOTHING COUNTED'}")
-    any_counted = any(counted.values())
+    print(f"  dispatch slots: {host.dispatch_slots_and_source()}")
+    print("  (zero can also mean the workload never does it, eg FP or RAM)")
+    for name, values in counted.items():
+        zero = [a for a, v in values.items() if not v]
+        if not values or len(zero) == len(values):
+            state = "NOTHING COUNTED"
+        elif zero:
+            state = f"PARTIAL, zero/uncounted: {', '.join(zero)}"
+        else:
+            state = "ok"
+        print(f"  {name:<10} {state}")
+    any_counted = any(v for values in counted.values() for v in values.values())
     if strict and not any_counted:
         print("  ERROR: no event set counted anything")
         return 1

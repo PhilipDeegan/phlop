@@ -202,6 +202,25 @@ class ArmTest(unittest.TestCase):
         self.assertEqual(N2["topdown"].counters_needed(), 6)  # 7 events
         self.assertTrue(all(s.counters_needed() <= 6 for s in N2.values()))
 
+    def test_slots_fallback_when_caps_reads_zero(self):
+        from unittest import mock
+
+        from phlop.app.pfm import host
+
+        n2_r0p0 = (0x41, 0, 0xD49, 0)
+        with (
+            mock.patch.object(host, "pmu_caps", return_value={"slots": "0x0"}),
+            mock.patch.object(host, "arm_midr", return_value=n2_r0p0),
+        ):
+            self.assertEqual(host.dispatch_slots(), 5)
+        with mock.patch.object(host, "pmu_caps", return_value={"slots": "0x8"}):
+            self.assertEqual(host.dispatch_slots_and_source(), (8, "caps/slots"))
+        with (
+            mock.patch.object(host, "pmu_caps", return_value={}),
+            mock.patch.object(host, "arm_midr", return_value=None),
+        ):
+            self.assertIsNone(host.dispatch_slots())
+
     def test_basic_arm_pmus_have_no_topdown(self):
         from phlop.app.pfm.sets import sets_for
 

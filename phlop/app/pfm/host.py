@@ -50,12 +50,29 @@ def pmu_caps(pmu=None):
     return caps
 
 
-def dispatch_slots():
-    """issue/dispatch slots per cycle for topdown, from arm64 caps/slots"""
+# arm (implementer 0x41) part -> dispatch slots, for when caps/slots reads 0
+# (eg hypervisors), values from the Neoverse software optimization guides
+ARM_SLOTS = {0xD40: 8, 0xD49: 5, 0xD4F: 8}  # V1, N2, V2
+
+
+def dispatch_slots_and_source():
+    """(slots per cycle for topdown, where from), (None, reason) if unknown"""
     try:
-        return int(pmu_caps().get("slots", ""), 0) or None
+        slots = int(pmu_caps().get("slots", ""), 0)
     except ValueError:
-        return None
+        slots = 0
+    if slots:
+        return slots, "caps/slots"
+    midr = arm_midr()
+    if midr is None:
+        return None, "arm64 only, x86 sets use fixed widths"
+    if midr[0] == 0x41 and midr[2] in ARM_SLOTS:
+        return ARM_SLOTS[midr[2]], f"caps/slots is 0, known width of part {midr[2]:#x}"
+    return None, "caps/slots missing or 0 and part unknown"
+
+
+def dispatch_slots():
+    return dispatch_slots_and_source()[0]
 
 
 @cache

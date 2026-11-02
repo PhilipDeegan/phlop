@@ -1,8 +1,10 @@
-name: pfm on linux arm
+name: pfm on linux
 
-# Hardware counters via libpfm + perf on an arm64 runner. Mostly diagnostics:
-# every step prints what the host exposes so failures can be worked out from
-# the log, the last step fails the job if nothing could be counted.
+# Hardware counters via libpfm + perf on GitHub hosted runners. These are VMs,
+# so the hypervisor decides which events count (arm64: cycles, instructions,
+# branches, ops, L1D refills, the rest read 0). Mostly diagnostics: every step
+# prints what the host exposes, the last fails if nothing could be counted.
+# x64 runner CPUs vary (AMD EPYC / Intel Xeon), experimental until known.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -14,9 +16,17 @@ on:
 
 jobs:
   pfm:
-    name: pfm arm64
-    runs-on: ubuntu-24.04-arm
+    name: pfm ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    continue-on-error: ${{ matrix.experimental }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { arch: arm64, os: ubuntu-24.04-arm, native: -mcpu=native, experimental: false }
+        - { arch: x64, os: ubuntu-latest, native: -march=native, experimental: true }
     env:
       PYTHONPATH: ${{ github.workspace }}
 
@@ -46,6 +56,9 @@ jobs:
     - name: Python deps
       run: python3 -m pip install -r requirements.txt
 
+    - name: CPU
+      run: lscpu || cat /proc/cpuinfo | head -30
+
     - name: Diagnose, default kernel settings
       run: python3 -m phlop.app.pfm.diagnose | tee diagnose_default.txt
 
@@ -70,9 +83,9 @@ jobs:
       run: |
         mkdir -p bin
         gcc --version | head -1
-        gcc -O3 -mcpu=native tests/_phlop/app/pfm/bench_fp.c -o bin/bench_fp_vec
+        gcc -O3 ${{ matrix.native }} tests/_phlop/app/pfm/bench_fp.c -o bin/bench_fp_vec
         gcc -O2 -fno-tree-vectorize -ffp-contract=off tests/_phlop/app/pfm/bench_fp.c -o bin/bench_fp_scalar
-        gcc -O3 -mcpu=native tests/_phlop/app/pfm/bench_stream.c -o bin/bench_stream
+        gcc -O3 ${{ matrix.native }} tests/_phlop/app/pfm/bench_stream.c -o bin/bench_stream
 
     - name: Event sets on benchmarks
       if: ${{ !cancelled() }}
@@ -93,7 +106,7 @@ jobs:
     - uses: actions/upload-artifact@v4
       if: ${{ !cancelled() }}
       with:
-        name: pfm-linux-arm
+        name: pfm-linux-${{ matrix.arch }}
         path: |
           diagnose_default.txt
           diagnose.txt
