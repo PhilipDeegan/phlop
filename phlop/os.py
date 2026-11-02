@@ -65,5 +65,14 @@ def read_last_lines_of(file, n=10):
         return []
 
 
+def usable_cores():
+    """cores this process may run on (respects affinity, e.g. taskset/slurm)"""
+    if hasattr(os, "process_cpu_count"):  # python >= 3.13
+        return os.process_cpu_count() or 1
+    if hasattr(os, "sched_getaffinity"):
+        return len(os.sched_getaffinity(0)) or 1
+    return os.cpu_count() or 1
+
+
 def env_sep():
     return ";" if any(platform.win32_ver()) else ":"

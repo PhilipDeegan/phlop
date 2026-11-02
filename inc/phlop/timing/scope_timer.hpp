@@ -169,9 +169,6 @@ struct ScopeTimer
             this->pscope                       = detail::_current_ScopeTimer<Clock>;
             detail::_current_ScopeTimer<Clock> = this;
 
-            if (this->pscope)
-                pscope->childs.reserve(pscope->childs.size() + 1);
-
             detail::max_construct_time = std::max(detail::max_construct_time, now() - begin);
         }
     }

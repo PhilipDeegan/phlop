@@ -267,9 +267,6 @@ struct ScopeTimer
         {
             this->pscope                       = detail::_current_ScopeTimer<Clock>;
             detail::_current_ScopeTimer<Clock> = this;
-
-            if (this->pscope)
-                pscope->childs.reserve(pscope->childs.size() + 1);
         }
     }
 

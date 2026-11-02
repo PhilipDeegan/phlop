@@ -33,7 +33,7 @@ struct RunTimerReportSnapshotT
         , start{st}
         , time{t}
     {
-        childs.reserve(2);
+        // no reserve: childs is replaced by the scope's own vector on creation
     }
 
     Report const* const self;

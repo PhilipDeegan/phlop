@@ -18,6 +18,13 @@ CMD_PREFIX = ""
 CMD_POSTFIX = ""
 PYTHON_FLAGS = "-um"  # -u always; omit -O so assertions run in tests
 CONFIG_FILENAME = ".phlop.exec.yaml"
+# how many test methods one process runs:
+#   method: one process per test method - most isolated, pays interpreter
+#           startup and module imports for every method
+#   class:  one process per TestCase class
+#   file:   one process per test file
+GRANULARITIES = ("method", "class", "file")
+GRANULARITY = "method"
 
 
 def _log_subpath(path):
@@ -89,9 +96,67 @@ EXTRACTORS = [
 ]
 
 
-def python3_default_test_cmd(clazz, test_id, python_flags=None):
+def python3_test_cmd(module, test_names, python_flags=None):
+    """`test_names` are unittest names (`Class` or `Class.method`), passed to
+    the module's own `unittest.main()`"""
     flags = python_flags if python_flags is not None else PYTHON_FLAGS
-    return f"python3 {flags} {clazz.__module__} {clazz.__name__}.{test_id}"
+    return f"python3 {flags} {module} {' '.join(test_names)}"
+
+
+def python3_default_test_cmd(clazz, test_id, python_flags=None):
+    return python3_test_cmd(
+        clazz.__module__, [f"{clazz.__name__}.{test_id}"], python_flags
+    )
+
+
+def _check_granularity(granularity):
+    granularity = granularity or GRANULARITY
+    if granularity not in GRANULARITIES:
+        raise ValueError(f"granularity {granularity!r} not one of {GRANULARITIES}")
+    return granularity
+
+
+def _test_methods(loader, test_class):
+    return [suite._testMethodName for suite in loader.loadTestsFromTestCase(test_class)]
+
+
+def _group_tests(entries, granularity):
+    """Group `(test_class, method, key)` entries into one group per process to
+    start, in first-seen order. Only entries with equal `key` (e.g. the same
+    .phlop.exec.yaml variants) are grouped. Returns `[(key, {class: [methods]})]`"""
+    groups = {}
+    for test_class, method, key in entries:
+        if granularity == "method":
+            group = (test_class, method, key)
+        elif granularity == "class":
+            group = (test_class, key)
+        else:
+            group = (class_file(test_class), key)
+        groups.setdefault(group, (key, {}))[1].setdefault(test_class, []).append(method)
+    return list(groups.values())
+
+
+def _test_names(by_class, all_methods):
+    """unittest names for a group: the bare class if all its methods are in it"""
+    names = []
+    for test_class, methods in by_class.items():
+        if len(methods) > 1 and methods == all_methods[test_class]:
+            names.append(test_class.__name__)
+        else:
+            names += [f"{test_class.__name__}.{m}" for m in methods]
+    return names
+
+
+def _group_logfile(log_file_path, by_class, granularity):
+    """as logfile(), shortened to the class or file for coarser granularity"""
+    test_class = next(iter(by_class))
+    pyfile = Path(class_file(test_class))
+    path = log_file_path / _log_subpath(pyfile.parent) / pyfile.stem
+    if granularity != "file":
+        path = path / test_class.__name__
+    if granularity == "method":
+        path = path / by_class[test_class][0]
+    return str(path)
 
 
 def logfile(log_file_path, test_class, suite):
@@ -114,25 +179,33 @@ def load_test_cases_in(
     test_cmd_post="",
     test_cmd_fn=None,
     python_flags=None,
+    granularity=None,
     **kwargs,
 ):
-    if test_cmd_fn is None:
+    granularity = _check_granularity(granularity)
+    if test_cmd_fn is not None and granularity != "method":
+        raise ValueError("test_cmd_fn requires granularity 'method'")
 
-        def test_cmd_fn(c, t):
-            return python3_default_test_cmd(c, t, python_flags)
+    loader = unittest.TestLoader()
+    classes = list(dict.fromkeys(classes))
+    all_methods = {c: _test_methods(loader, c) for c in classes}
+    entries = ((c, m, None) for c in classes for m in all_methods[c])
 
-    tests, loader = [], unittest.TestLoader()
-    for test_class in classes:
-        for suite in loader.loadTestsFromTestCase(test_class):
-            cmd = test_cmd_fn(type(suite), suite._testMethodName)
-
-            tests += [
-                Job(
-                    cmd=f"{test_cmd_pre} {cmd} {test_cmd_post}".strip(),
-                    log_file_path=logfile(_LOG_DIR / ".phlop", test_class, suite),
-                    **kwargs,
-                )
-            ]
+    tests = []
+    for _, by_class in _group_tests(entries, granularity):
+        test_class = next(iter(by_class))
+        if test_cmd_fn is not None:
+            cmd = test_cmd_fn(test_class, by_class[test_class][0])
+        else:
+            names = _test_names(by_class, all_methods)
+            cmd = python3_test_cmd(test_class.__module__, names, python_flags)
+        tests += [
+            Job(
+                cmd=f"{test_cmd_pre} {cmd} {test_cmd_post}".strip(),
+                log_file_path=_group_logfile(_LOG_DIR / ".phlop", by_class, granularity),
+                **kwargs,
+            )
+        ]
     return tests
 
 
@@ -325,9 +398,7 @@ def _variants_for(dir_config, filename, class_name, method_name, used_keys=None)
     return None
 
 
-def _variant_job(
-    base_cmd, test_class, suite, variant, index, test_cmd_pre, test_cmd_post
-):
+def _variant_job(base_cmd, log_file_path, variant, index, test_cmd_pre, test_cmd_post):
     prefix = variant.get("prefix", "")
     env = dict(variant.get("env") or {})
     working_dir = variant.get("working_dir")
@@ -336,7 +407,6 @@ def _variant_job(
     ).strip()
     tags = variant.get("tags") or []
 
-    log_file_path = logfile(_LOG_DIR / ".phlop", test_class, suite)
     if log_file_path:
         log_file_path = f"{log_file_path}_{'-'.join(tags) if tags else index}"
 
@@ -353,7 +423,12 @@ def _variant_job(
 
 
 def load_config_tests(
-    input_path, test_cmd_pre="", test_cmd_post="", python_flags=None, tags=None
+    input_path,
+    test_cmd_pre="",
+    test_cmd_post="",
+    python_flags=None,
+    tags=None,
+    granularity=None,
 ):
     """Scan a file or directory for tests, honouring per-directory
     `.phlop.exec.yaml` configs that fan a test out into tagged execution
@@ -371,7 +446,11 @@ def load_config_tests(
     `file:Class(.method)` found while scanning that directory - a stale or
     mistyped entry (wrong filename, missing `:`, renamed class/method) raises
     a ValueError rather than silently doing nothing.
+
+    With a coarser `granularity` than "method", tests sharing a class/file
+    and the same declared variants run in one process per variant.
     """
+    granularity = _check_granularity(granularity)
     tags = set(tags) if tags else None
     path = Path(input_path)
     py_files = [path] if path.is_file() else sorted(path.glob("**/*.py"))
@@ -395,10 +474,13 @@ def load_config_tests(
     for py_file in py_files:
         directory = str(py_file.parent)
         dir_config = dir_config_for(directory)
-        for test_class in classes_in_file(py_file, unittest.TestCase):
-            for suite in loader.loadTestsFromTestCase(test_class):
-                method = suite._testMethodName
-                base_cmd = python3_default_test_cmd(test_class, method, python_flags)
+        classes = classes_in_file(py_file, unittest.TestCase)
+        all_methods = {c: _test_methods(loader, c) for c in classes}
+
+        variant_lists = {}  # id -> variants list from dir_config
+        entries = []
+        for test_class in classes:
+            for method in all_methods[test_class]:
                 variants = _variants_for(
                     dir_config,
                     py_file.name,
@@ -406,35 +488,44 @@ def load_config_tests(
                     method,
                     used_keys[directory],
                 )
+                key = None
+                if variants:
+                    key = id(variants)
+                    variant_lists[key] = variants
+                entries.append((test_class, method, key))
 
-                if not variants:
-                    cmd = f"{test_cmd_pre} {base_cmd} {test_cmd_post}".strip()
-                    _add(
-                        Job(
-                            cmd=cmd,
-                            log_file_path=logfile(
-                                _LOG_DIR / ".phlop", test_class, suite
-                            ),
-                            cores=resolve_cores(cmd),
-                        )
+        for key, by_class in _group_tests(entries, granularity):
+            test_class = next(iter(by_class))
+            names = _test_names(by_class, all_methods)
+            base_cmd = python3_test_cmd(test_class.__module__, names, python_flags)
+            log_file_path = _group_logfile(_LOG_DIR / ".phlop", by_class, granularity)
+            variants = variant_lists.get(key)
+
+            if not variants:
+                cmd = f"{test_cmd_pre} {base_cmd} {test_cmd_post}".strip()
+                _add(
+                    Job(
+                        cmd=cmd,
+                        log_file_path=log_file_path,
+                        cores=resolve_cores(cmd),
                     )
+                )
+                continue
+
+            for index, variant in enumerate(variants):
+                variant_tags = set(variant.get("tags") or [])
+                if variant_tags and not (tags and (variant_tags & tags)):
                     continue
-
-                for index, variant in enumerate(variants):
-                    variant_tags = set(variant.get("tags") or [])
-                    if variant_tags and not (tags and (variant_tags & tags)):
-                        continue
-                    _add(
-                        _variant_job(
-                            base_cmd,
-                            test_class,
-                            suite,
-                            variant,
-                            index,
-                            test_cmd_pre,
-                            test_cmd_post,
-                        )
+                _add(
+                    _variant_job(
+                        base_cmd,
+                        log_file_path,
+                        variant,
+                        index,
+                        test_cmd_pre,
+                        test_cmd_post,
                     )
+                )
 
     stale = {
         directory: sorted(set(config) - used_keys[directory])
