@@ -110,11 +110,11 @@ def file_parser(times_filepath):
         return lines_parser(file.readlines())
 
 
-def write_scope_timings(scope_timer_file, outfile, sort_worst_first=True):
+def write_scope_timings(scope_timer_filepath, outfile, sort_worst_first=True):
     from contextlib import redirect_stdout
 
     with open(outfile, "w") as f, redirect_stdout(f):
-        print_scope_timings(scope_timer_file, sort_worst_first)
+        print_scope_timings(scope_timer_filepath, sort_worst_first)
 
 
 @dataclass
@@ -178,17 +178,14 @@ def dedupe_leafs(stf, n):
 
 
 def print_basic_scope_timings(
-    scope_timer_file_glob,
+    scope_timer_filepath,
     sort_worst_first=True,
     root_id=None,
     dedupe=False,
     printer=print,
 ):
-    scope_timer_files = [file_parser(f) for f in Path.cwd().glob(scope_timer_file_glob)]
-    if not scope_timer_files:
-        return
-
-    stf = scope_timer_files[0]
+    """prints one timer file, see print_variance_across for many"""
+    stf = file_parser(scope_timer_filepath)
     if sort_worst_first:
         stf.roots.sort(reverse=True, key=lambda x: x.t)
 
@@ -210,7 +207,7 @@ def print_basic_scope_timings(
 
 
 def print_scope_timings(
-    scope_timer_file_glob,
+    scope_timer_filepath,
     sort_worst_first=False,
     root_id="",
     pretty_print=True,
@@ -218,7 +215,7 @@ def print_scope_timings(
 ):
     if not pretty_print:
         print_basic_scope_timings(
-            scope_timer_file_glob, sort_worst_first, root_id, dedupe
+            scope_timer_filepath, sort_worst_first, root_id, dedupe
         )
         return
 
@@ -228,7 +225,7 @@ def print_scope_timings(
         lines.append(args)
 
     print_basic_scope_timings(
-        scope_timer_file_glob, sort_worst_first, root_id, dedupe, printer
+        scope_timer_filepath, sort_worst_first, root_id, dedupe, printer
     )
     if not lines:
         return
