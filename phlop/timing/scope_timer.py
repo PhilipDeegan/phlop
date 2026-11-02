@@ -56,19 +56,8 @@ class ScopeTimerFile:
 def lines_parser(lines):
     id_keys = {}
     roots = []
-    curr = None
-    white_space = 0
-    stack = {i: 0 for i in range(128)}
-    stack_size = 0
 
-    def _parent():
-        assert stack_size >= 0
-        n = roots[stack[0]]
-        for s in range(1, stack_size):
-            assert stack[s] >= 0
-            n = n.c[stack[s]]
-        return n
-
+    idx = 0
     for idx, line in enumerate(lines):
         line = line.rstrip()
         if not line:
@@ -76,32 +65,20 @@ def lines_parser(lines):
         bits = line.split(" ")
         id_keys[int(bits[0])] = bits[1]
 
-    for i in range(idx, len(lines)):
-        line = lines[i].rstrip()  # drop new line characters
+    path = []  # path[d] is the latest node at depth d, no depth limit
+    for line in lines[idx:]:
         stripped_line = line.strip()
         if not stripped_line:  # last line might be blank
             continue
-        idx, node = RunTimerNode.from_scope_timer(stripped_line)
-        if idx == 0:  # is root node
-            stack[0] = len(roots)
+        depth, node = RunTimerNode.from_scope_timer(stripped_line)
+        if depth == 0:
             roots.append(node)
-            stack_size = 0
-            white_space = 0
-        else:  # is not root node
-            if idx > white_space:
-                parent = curr
-                curr.c.append(node)
-                stack_size += 1
-            elif idx == white_space:
-                parent = _parent()
-                parent.c.append(node)
-            elif idx < white_space:
-                stack_size -= white_space - idx
-                parent = _parent()
-                parent.c.append(node)
-            stack[stack_size] = len(parent.c) - 1
-            white_space = idx
-        curr = node
+        elif depth <= len(path):
+            path[depth - 1].c.append(node)
+        else:
+            raise ValueError(f"scope timer line nested without a parent: {line!r}")
+        del path[depth:]
+        path.append(node)
     return ScopeTimerFile(id_keys, roots)
 
 

@@ -46,7 +46,7 @@ struct RunTimerReportSnapshotT
 
 struct BinaryTimerFileNode
 {
-    BinaryTimerFileNode(std::uint16_t const& _fn_id, std::uint64_t const _start,
+    BinaryTimerFileNode(std::uint32_t const _fn_id, std::uint64_t const _start,
                         std::uint64_t const _time)
         : fn_id{_fn_id}
         , start{_start}
@@ -54,7 +54,7 @@ struct BinaryTimerFileNode
     {
     }
 
-    std::uint16_t const fn_id;
+    std::uint32_t const fn_id;
     std::uint64_t const start;
     std::uint64_t const time;
 
