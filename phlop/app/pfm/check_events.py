@@ -92,6 +92,43 @@ def perf_config_mask():
     return mask
 
 
+def _format_fields():
+    """{"event": [(lo, hi), ...]} for the core PMU's config format, ranges
+    hold a value's bits low first, eg AMD event: [(0, 7), (32, 35)]"""
+    fields = {}
+    pmu = host.core_pmu()
+    if pmu is None:
+        return fields
+    for f in (pmu / "format").iterdir():
+        target, _, ranges = f.read_text().strip().partition(":")
+        if target != "config":
+            continue
+        fields[f.name] = []
+        for rng in ranges.split(","):
+            lo, _, hi = rng.partition("-")
+            fields[f.name].append((int(lo), int(hi or lo)))
+    return fields
+
+
+def pmu_terms_config(pmu_string):
+    """raw config for a perf PMU event string, eg "cpu/event=0x165,umask=0xc8/"
+    on AMD -> 0x10000c865, laying each term's bits into its format ranges"""
+    terms = pmu_string.split("/")[1]
+    fields, config = _format_fields(), 0
+    for term in filter(None, terms.split(",")):
+        name, _, value = term.partition("=")
+        if name not in fields:
+            raise ValueError(f"{pmu_string}: {name} not a config format field")
+        value = int(value or "1", 0)
+        for lo, hi in fields[name]:
+            width = hi - lo + 1
+            config |= (value & ((1 << width) - 1)) << lo
+            value >>= width
+        if value:
+            raise ValueError(f"{pmu_string}: {term} does not fit its format bits")
+    return config
+
+
 _cache = {}
 
 

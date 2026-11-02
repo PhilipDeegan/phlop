@@ -29,3 +29,9 @@ profile:
   parent: base
   main: tests/timing/stress_scope_timer.cpp
   src: src/phlop/timing/scope_timer.cpp
+
+- name: scope
+  parent: base
+  src: src/phlop/timing/scope_timer.cpp
+  mode: shared
+  test: tests/timing/test_scope.cpp

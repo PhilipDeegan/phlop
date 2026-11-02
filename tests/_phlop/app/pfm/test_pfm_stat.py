@@ -107,6 +107,43 @@ class PfmStatTest(unittest.TestCase):
         self.assertEqual(_parse_detected_pmus(lines), ["perf", "amd64_fam1ah_zen5"])
         self.assertEqual(_parse_encodings(lines), {"RETIRED_OPS": 0x5300C1})
 
+    def test_pmu_terms_config_uses_format_bits(self):
+        from unittest import mock
+
+        from phlop.app.pfm import check_events as ce
+
+        amd = {"event": [(0, 7), (32, 35)], "umask": [(8, 15)], "cmask": [(24, 31)]}
+        with mock.patch.object(ce, "_format_fields", return_value=amd):
+            self.assertEqual(
+                ce.pmu_terms_config("cpu/event=0x165,umask=0xc8/"), 0x10000C865
+            )
+            with self.assertRaises(ValueError):
+                ce.pmu_terms_config("cpu/event=0x1165/")  # 13 bits into 12
+            with self.assertRaises(ValueError):
+                ce.pmu_terms_config("cpu/period=1/")
+
+    def test_scope_env_format(self):
+        from unittest import mock
+
+        light = ZEN5["light"]
+        with (
+            mock.patch.object(
+                stat.ce,
+                "encode",
+                return_value={
+                    "CYCLES_NOT_IN_HALT": 0x530076,
+                    "RETIRED_INSTRUCTIONS": 0x5300C0,
+                },
+            ),
+            mock.patch.object(stat.ce, "perf_config_mask", return_value=0xFFF84FFFF),
+            mock.patch.object(stat.ce, "pmu_terms_config", return_value=0x10000C865),
+        ):
+            env = stat.scope_env("light", {"light": light}, "amd64_fam1ah_zen5")
+        self.assertEqual(
+            env,
+            "amd64_fam1ah_zen5/light;cycles=0x76,instructions=0xc0,fetches=0x10000c865",
+        )
+
     def test_access_warnings(self):
         ok, warnings = perf.access_warnings()
         self.assertIsInstance(ok, bool)

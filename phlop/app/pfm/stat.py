@@ -21,7 +21,7 @@ from functools import cache
 from phlop.app import perf
 from phlop.app.pfm import check_events as ce
 from phlop.app.pfm import host
-from phlop.app.pfm.sets import DEFAULT_SETS, sets_for
+from phlop.app.pfm.sets import DEFAULT_SETS, EventSet, sets_for
 
 NOT_COUNTED = ("<not counted>", "<not supported>")
 
@@ -272,6 +272,54 @@ def list_sets(out=sys.stdout):
         print(f"  metrics: {', '.join(m.name for m in s.metrics)}", file=out)
 
 
+ENV_LEVELS = {"perf_light": "PHLOP_PERF_LIGHT", "perf_all": "PHLOP_PERF_ALL"}
+
+
+def scope_env(set_name, sets=None, pmu=None):
+    """PHLOP_SCOPE env value for an event set, see perf_counters.hpp:
+    "<pmu>/<set>;<alias>=<raw config>,..." """
+    if sets is None:
+        pmu, sets = sets_for(ce.detected_pmus())
+    eset = sets[set_name]
+    pfm = [s for s in eset.events.values() if not s.startswith(("raw:", "perf:"))]
+    enc = ce.encode(pfm) if pfm else {}
+    items = []
+    for alias, spec in eset.events.items():
+        if spec.startswith("perf:"):
+            raise ValueError(f"{set_name}: perf generic event {spec} has no raw config")
+        if spec.startswith("raw:"):
+            config = ce.pmu_terms_config(spec[4:])
+        else:
+            config = enc[spec] & ce.perf_config_mask()
+        items.append(f"{alias}={config:#x}")
+    return f"{pmu}/{set_name};{','.join(items)}"
+
+
+def scope_env_exports(level_sets):
+    """shell export lines for ["perf_light=light", "perf_all=topdown"]"""
+    pmu, sets = sets_for(ce.detected_pmus())
+    lines, union = [], {}  # config -> counters it costs
+    for item in level_sets:
+        level, _, set_name = item.partition("=")
+        if level not in ENV_LEVELS or set_name not in sets:
+            raise ValueError(
+                f"--env {item}: want {'|'.join(ENV_LEVELS)}=<set>, sets: {list(sets)}"
+            )
+        value = scope_env(set_name, sets, pmu)
+        configs = [c.split("=")[1] for c in value.split(";")[1].split(",")]
+        for config, spec in zip(configs, sets[set_name].events.values()):
+            union[config] = EventSet("", "", {"": spec}).counters_needed()
+        lines.append(f"export {ENV_LEVELS[level]}='{value}'")
+    budget, needed = available_counters(pmu), sum(union.values())
+    if budget is not None and needed > budget:
+        print(
+            f"WARNING: {len(union)} distinct events need {needed} counters, "
+            f"{budget} available: the pinned group will not schedule, use smaller sets",
+            file=sys.stderr,
+        )
+    return lines
+
+
 def cli_args_parser(description="perf stat with libpfm event sets"):
     import argparse
 
@@ -287,6 +335,14 @@ def cli_args_parser(description="perf stat with libpfm event sets"):
         "those the detected PMU has",
     )
     parser.add_argument("-l", "--list", action="store_true", help="list event sets")
+    parser.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        metavar="LEVEL=SET",
+        help="print PHLOP_SCOPE counter env exports, eg --env perf_light=light "
+        '--env perf_all=topdown, use as: eval "$(... --env ...)"',
+    )
     parser.add_argument("-r", "--repeat", type=int, default=1, help="perf stat -r")
     parser.add_argument("-o", "--outfile", default=None, help="write results json")
     parser.add_argument(
@@ -305,6 +361,9 @@ def main(argv=None):
     cli_args = cli_args_parser().parse_args(argv)
     if cli_args.list:
         list_sets()
+        return 0
+    if cli_args.env:
+        print("\n".join(scope_env_exports(cli_args.env)))
         return 0
     program = cli_args.remaining
     if program and program[0] == "--":

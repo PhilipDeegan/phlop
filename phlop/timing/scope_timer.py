@@ -21,12 +21,18 @@ class RunTimerNode:
     s: int
     t: int
     c: list = field(default_factory=list)
+    level: int = 0  # PHLOP_SCOPE perf level: 1 perf_light, 2 perf_all, 0 none
+    counts: list | None = None  # values in ScopeTimerFile.perf[level] order
 
     @staticmethod
     def from_scope_timer(line):
-        ws, key, start_and_run_time = line.split(" ")
+        ws, key, start_and_run_time, *perf = line.split(" ")
         start_time, run_time = start_and_run_time.split(":")
-        return int(ws), RunTimerNode(*[int(e) for e in (key, start_time, run_time)])
+        node = RunTimerNode(*[int(e) for e in (key, start_time, run_time)])
+        if perf:  # "<level>:<c0>,<c1>,..."
+            level, _, counts = perf[0].partition(":")
+            node.level, node.counts = int(level), [int(c) for c in counts.split(",")]
+        return int(ws), node
 
     @property
     def key(self) -> int:
@@ -42,15 +48,71 @@ class RunTimerNode:
 
 
 @dataclass
+class PerfLevel:
+    label: str  # "<pmu>/<event set>", eg "amd64_fam1ah_zen5/light"
+    names: list  # event aliases, as in phlop.app.pfm.sets
+
+    @property
+    def pmu(self):
+        return self.label.split("/")[0]
+
+    @property
+    def set_name(self):
+        return self.label.split("/")[-1]
+
+
+@dataclass
 class ScopeTimerFile:
     id_keys: dict
     roots: list
+    perf: dict = field(default_factory=dict)  # level -> PerfLevel
 
     def fn_for(self, id):
         return self.id_keys[id]
 
     def __call__(self, id):
         return self.fn_for(id)
+
+    def perf_counts(self, node):
+        """{event alias: count} for a scope, inclusive of its children"""
+        if not node.counts or node.level not in self.perf:
+            return {}
+        return dict(zip(self.perf[node.level].names, node.counts))
+
+    def perf_self_counts(self, node):
+        """perf_counts minus children counted at the same level, the scope's
+        own work. Children at other levels or uncounted are not subtracted"""
+        counts = self.perf_counts(node)
+        for child in node.c:
+            if child.level == node.level:
+                for name, value in self.perf_counts(child).items():
+                    counts[name] -= value
+        return counts
+
+    def perf_metrics(self, node, own=False, ctx=None):
+        """{metric: value} from the scope's event set formulas (phlop.app.pfm
+        .sets). ctx defaults to this host's, eg arm topdown slots"""
+        counts = self.perf_self_counts(node) if own else self.perf_counts(node)
+        if not counts:
+            return {}
+        from phlop.app.pfm.sets import SETS, generic
+
+        level = self.perf[node.level]
+        sets = {s.name: s for s in SETS.get(level.pmu, generic)}
+        if level.set_name not in sets:
+            return {}
+        if ctx is None:
+            from phlop.app.pfm import host
+
+            ctx = host.context()
+        counts.update({f"@{k}": v for k, v in ctx.items()})
+        metrics = {}
+        for m in sets[level.set_name].metrics:
+            try:
+                metrics[m.name] = m.fn(counts)
+            except (TypeError, ZeroDivisionError, KeyError):
+                metrics[m.name] = None
+        return metrics
 
 
 def lines_parser(lines):
@@ -59,6 +121,7 @@ def lines_parser(lines):
     under the preceding shallower line"""
     id_keys = {}
     roots = []
+    perf = {}
 
     idx = 0
     for idx, line in enumerate(lines):
@@ -66,6 +129,9 @@ def lines_parser(lines):
         if not line:
             break
         bits = line.split(" ")
+        if bits[0] == "#perf":  # "#perf <level> <label> <name,...>"
+            perf[int(bits[1])] = PerfLevel(bits[2], bits[3].split(","))
+            continue
         id_keys[int(bits[0])] = bits[1]
 
     path = []  # path[d] is the latest node at depth d, no depth limit
@@ -82,7 +148,7 @@ def lines_parser(lines):
             raise ValueError(f"scope timer line nested without a parent: {line!r}")
         del path[depth:]
         path.append(node)
-    return ScopeTimerFile(id_keys, roots)
+    return ScopeTimerFile(id_keys, roots, perf)
 
 
 def file_parser(times_filepath):
@@ -217,6 +283,27 @@ def print_scope_timings(
         padding = line_max - len(line)
         info = lines[i]
         print(f"{line}" + (" " * padding) + f"{info.n.t/1e6:>10,.2f}ms")
+
+
+def print_scope_perf(scope_timer_filepath, own=False, printer=print):
+    """scope tree with time and, for counted scopes, their event set metrics.
+    own: metrics of the scope's own work, children at its level subtracted"""
+    stf = file_parser(scope_timer_filepath)
+    fmt = lambda v: "n/a" if v is None else f"{v:.3g}"
+
+    def show(n, depth):
+        line = f"{'  ' * depth}{stf(n.k)} {n.t / 1e6:,.3f}ms"
+        if n.counts:
+            metrics = stf.perf_metrics(n, own=own)
+            line += f" [{stf.perf[n.level].set_name}] " + " ".join(
+                f"{k}={fmt(v)}" for k, v in metrics.items()
+            )
+        printer(line)
+        for c in n.c:
+            show(c, depth + 1)
+
+    for root in stf.roots:
+        show(root, 0)
 
 
 def write_variance_across(scope_timer_file_glob, outfile):
