@@ -44,7 +44,8 @@ python3 -m phlop.app.pfm.stat -s topdown,vector,flops -- ./app args
 ```
 
 ```cpp
-// per scope hardware counters, scope_timer.hpp (single threaded timer)
+// per scope hardware counters: scope_timer.hpp, threaded_scope_timer.hpp, mpi_scope_timer.hpp
+// threaded: each thread counts only itself, opening its counters on first use
 PHLOP_SCOPE("solve", time, perf_all);   // time + PHLOP_PERF_ALL events
 PHLOP_SCOPE("step", time, perf_light);  // time + PHLOP_PERF_LIGHT events
 PHLOP_SCOPE("io");                      // PHLOP_SCOPE_DEFAULT, time

@@ -35,3 +35,9 @@ profile:
   src: src/phlop/timing/scope_timer.cpp
   mode: shared
   test: tests/timing/test_scope.cpp
+
+- name: threaded_scope
+  parent: base
+  src: src/phlop/timing/common_threaded_timer.cpp
+  mode: shared
+  test: tests/timing/test_threaded_scope.cpp

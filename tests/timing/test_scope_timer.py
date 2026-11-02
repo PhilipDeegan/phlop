@@ -51,6 +51,30 @@ def test_scope(scope_timer_filepath=None):
     print(f"test_scope: counts ok, levels {[lvl.label for lvl in stf.perf.values()]}")
 
 
+def test_threaded_scope(scope_timer_filepath=None):
+    """bin/threaded_scope.txt from tests/timing/test_threaded_scope.cpp: thread
+    t runs t + 1 units of work, each thread counts only itself"""
+    if scope_timer_filepath is None:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("-f", "--file", default="bin/threaded_scope.txt")
+        scope_timer_filepath = parser.parse_args().file
+
+    stf = scope_timer.file_parser(scope_timer_filepath)
+    works = [r for r in stf.roots if stf(r.k) == "work"]
+    mains = [r for r in stf.roots if stf(r.k) == "main"]
+    np.testing.assert_equal((len(works), len(mains)), (4, 1))
+    if not stf.perf:
+        print("test_threaded_scope: no perf counts in file, time only")
+        return
+    instructions = sorted(stf.perf_counts(w)["instructions"] for w in works)
+    unit = instructions[0]
+    for k, n in enumerate(instructions, start=1):  # linear in work, per thread
+        assert abs(n / unit - k) < 0.05, instructions
+    main_counts = stf.perf_counts(mains[0])
+    assert main_counts["instructions"] < unit, (main_counts, unit)  # not children's
+    print(f"test_threaded_scope: counts ok, per thread instructions {instructions}")
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         fn = sys.argv[1]

@@ -27,7 +27,7 @@ jobs:
     - run: |
         curl -Lo mkn https://github.com/mkn/mkn/releases/download/latest/mkn_nix
         chmod +x mkn
-        ./mkn clean build test run -p scope_timer,threaded_scope_timer,scope -Oa "-fPIC -std=c++20" -W 9
+        ./mkn clean build test run -p scope_timer,threaded_scope_timer,scope,threaded_scope -Oa "-fPIC -std=c++20" -W 9
 
     - uses: actions/setup-python@v6
       with:

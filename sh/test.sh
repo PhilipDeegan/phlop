@@ -18,6 +18,8 @@ mkn test -p scope_timer
 py -O tests/timing/test_scope_timer.py test_scope_timer -f "bin/scope_timer.txt"
 mkn test -p scope
 py -O tests/timing/test_scope_timer.py test_scope -f "bin/scope.txt"
+mkn test -p threaded_scope
+py -O tests/timing/test_scope_timer.py test_threaded_scope -f "bin/threaded_scope.txt"
 
 py -Om phlop.run.valgrind echo yes
 py -Om phlop.run.valgrind --tool=massif echo yes

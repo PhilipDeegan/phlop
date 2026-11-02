@@ -9,12 +9,15 @@
 //   PHLOP_PERF_LIGHT="amd64_fam1ah_zen5/light;cycles=0x76,instructions=0xc0,..."
 // format: "<label>;<name>=<raw config>,..." for perf_event_attr type RAW.
 //
-// One pinned group per process holds the union of both levels: a scope reads
-// all of it with one read() and keeps its level's values. Pinned means exact
-// counts or a loud failure, never silent multiplexing. Counts the thread that
-// calls init(), user space only (works with perf_event_paranoid=2).
+// Config: process wide, the union of both levels' events, set by init().
+// Group: per thread, perf_event_open counts only the calling thread, so each
+// thread opens its own pinned group on its first counted scope. A scope reads
+// the whole group with one read() and keeps its level's values. Pinned means
+// exact counts or a loud failure, never silent multiplexing. User space only,
+// works with perf_event_paranoid=2.
 
 #include <array>
+#include <atomic>
 #include <string>
 #include <vector>
 #include <cerrno>
@@ -47,76 +50,32 @@ struct Level
     std::vector<std::size_t> idx;   // per event, into the group
 };
 
-struct Group
+
+struct Config
 {
-    static Group& INSTANCE()
+    static Config& INSTANCE()
     {
-        static Group g;
-        return g;
+        static Config c;
+        return c;
     }
 
-    ~Group() { close(); }
-
-    // parse the env, open and enable the group. Without any env this is a
-    // no-op, perf scopes then only time. Failures are printed once
-    bool init()
-    {
-        close();
-        for (std::size_t l = 1; l < level_env.size(); ++l)
-            if (auto const* e = std::getenv(level_env[l]); e && *e)
-                if (!parse(l, e))
-                    return fail("cannot parse " + std::string{level_env[l]} + "=" + e);
-
-        if (configs.empty())
-            return false;
-        return open();
-    }
+    // parse the env and open the calling thread's group to check it works.
+    // Without any env this is a no-op, perf scopes then only time
+    bool init();
 
     void close()
     {
-        for (auto const fd : fds)
-            if (fd >= 0)
-                ::close(fd);
-        fds.clear();
         configs.clear();
         for (auto& l : levels)
             l = Level{};
         ok = false;
+        ++generation; // every thread's group reopens, or closes, on next use
     }
 
     bool has(std::size_t const level) const
     {
         return ok && level < levels.size() && !levels[level].idx.empty();
     }
-
-    // all group values into out, false if the group stopped counting
-    bool read(Counts& out)
-    {
-#if defined(__linux__)
-        // PERF_FORMAT_GROUP | TOTAL_TIME_ENABLED | TOTAL_TIME_RUNNING
-        std::array<std::uint64_t, 3 + max_events> buf{};
-        auto const want = static_cast<ssize_t>((3 + configs.size()) * sizeof(std::uint64_t));
-        if (::read(fds[0], buf.data(), want) != want or buf[1] != buf[2])
-        {
-            // a pinned group that lost its counters reads 0 bytes, never scaled
-            ++read_failures;
-            return false;
-        }
-        for (std::size_t i = 0; i < configs.size(); ++i)
-            out[i] = buf[3 + i];
-        return true;
-#else
-        (void)out;
-        return false;
-#endif
-    }
-
-    bool ok = false;
-    std::string error;
-    std::uint64_t read_failures = 0;
-    std::array<Level, level_env.size()> levels{};
-    std::vector<std::uint64_t> configs; // union of all levels, group order
-    std::vector<int> fds;
 
     // "#perf <level> <label> <name,...>" lines for the timer file header
     std::vector<std::string> file_headers() const
@@ -133,16 +92,22 @@ struct Group
         return lines;
     }
 
-private:
-    bool fail(std::string const& why)
+    // printed once per process, the first thread to fail says why
+    void report(std::string const& why)
     {
-        error = why;
-        std::fprintf(stderr, "phlop perf counters disabled: %s\n", why.c_str());
-        close();
-        error = why; // close() clears state, keep the reason
-        return false;
+        if (!reported.exchange(true))
+            std::fprintf(stderr, "phlop perf counters: %s\n", why.c_str());
     }
 
+    bool ok = false;
+    std::string error;
+    std::array<Level, level_env.size()> levels{};
+    std::vector<std::uint64_t> configs; // union of all levels, group order
+    std::atomic<std::uint64_t> generation{1};
+    std::atomic<std::uint64_t> read_failures{0}, open_failures{0};
+    std::atomic<bool> reported{false};
+
+private:
     bool parse(std::size_t const l, std::string_view s)
     {
         auto const semi = s.find(';');
@@ -159,7 +124,7 @@ private:
             if (eq == std::string_view::npos)
                 return false;
             std::string const value{item.substr(eq + 1)};
-            char* end            = nullptr;
+            char* end                  = nullptr;
             std::uint64_t const config = std::strtoull(value.c_str(), &end, 0);
             if (end == value.c_str() or *end)
                 return false;
@@ -175,10 +140,80 @@ private:
         }
         return !level.idx.empty();
     }
+};
 
-    bool open()
+
+struct Group
+{
+    ~Group() { close(); }
+
+    void close()
+    {
+        for (auto const fd : fds)
+            if (fd >= 0)
+                ::close(fd);
+        fds.clear();
+        ok = false;
+    }
+
+    // open for the current Config if not done yet, cheap once open
+    bool ensure()
+    {
+        auto& config = Config::INSTANCE();
+        auto const g = config.generation.load(std::memory_order_relaxed);
+        if (g != generation)
+        {
+            close();
+            generation = g;
+            if (config.ok or opening)
+                ok = open(config);
+        }
+        return ok;
+    }
+
+    // all group values into out, false if the group stopped counting
+    bool read(Counts& out)
     {
 #if defined(__linux__)
+        // PERF_FORMAT_GROUP | TOTAL_TIME_ENABLED | TOTAL_TIME_RUNNING
+        std::array<std::uint64_t, 3 + max_events> buf{};
+        auto const want = static_cast<ssize_t>((3 + fds.size()) * sizeof(std::uint64_t));
+        if (!ok or ::read(fds[0], buf.data(), want) != want or buf[1] != buf[2])
+        {
+            // a pinned group that lost its counters reads 0 bytes, never scaled
+            ++Config::INSTANCE().read_failures;
+            return false;
+        }
+        for (std::size_t i = 0; i < fds.size(); ++i)
+            out[i] = buf[3 + i];
+        return true;
+#else
+        (void)out;
+        return false;
+#endif
+    }
+
+    std::vector<int> fds;
+    std::uint64_t generation = 0;
+    bool ok                  = false;
+    bool opening             = false; // Config::init checking the first group
+    std::string error;
+
+private:
+    bool fail(std::string const& why)
+    {
+        error = why;
+        close();
+        ++Config::INSTANCE().open_failures;
+        return false;
+    }
+
+    bool open(Config const& config)
+    {
+#if defined(__linux__)
+        auto const& configs = config.configs;
+        if (configs.empty())
+            return false;
         if (configs.size() > max_events)
             return fail(std::to_string(configs.size()) + " events, max "
                         + std::to_string(max_events));
@@ -192,14 +227,16 @@ private:
             attr.exclude_hv     = 1;
             attr.read_format    = PERF_FORMAT_GROUP | PERF_FORMAT_TOTAL_TIME_ENABLED
                                | PERF_FORMAT_TOTAL_TIME_RUNNING;
-            attr.disabled = i == 0; // leader starts the group
-            attr.pinned   = i == 0;
+            attr.disabled    = i == 0; // leader starts the group
+            attr.pinned      = i == 0;
             int const leader = i == 0 ? -1 : fds[0];
-            auto const fd    = static_cast<int>(::syscall(SYS_perf_event_open, &attr, 0, -1, leader, 0));
+            auto const fd
+                = static_cast<int>(::syscall(SYS_perf_event_open, &attr, 0, -1, leader, 0));
             if (fd < 0)
             {
                 char hex[32];
-                std::snprintf(hex, sizeof(hex), "%#llx", static_cast<unsigned long long>(configs[i]));
+                std::snprintf(hex, sizeof(hex), "%#llx",
+                              static_cast<unsigned long long>(configs[i]));
                 return fail(std::string{"perf_event_open config "} + hex + ": "
                             + std::strerror(errno)
                             + (errno == EACCES or errno == EPERM
@@ -219,13 +256,69 @@ private:
             return fail(std::to_string(configs.size())
                         + " events do not fit the PMU at once (pinned group not scheduled),"
                           " use fewer events or disable the nmi watchdog");
-        read_failures = 0;
         return true;
 #else
+        (void)config;
         return fail("perf counters need linux");
 #endif
     }
 };
+
+
+// the calling thread's group
+inline Group& local()
+{
+    static thread_local Group group;
+    return group;
+}
+
+
+inline bool Config::init()
+{
+    close();
+    read_failures = 0;
+    open_failures = 0;
+    reported      = false;
+
+    for (std::size_t l = 1; l < level_env.size(); ++l)
+        if (auto const* e = std::getenv(level_env[l]); e && *e)
+            if (!parse(l, e))
+            {
+                error = "cannot parse " + std::string{level_env[l]} + "=" + e;
+                report(error + ", counters disabled");
+                close();
+                return false;
+            }
+    if (configs.empty())
+        return false;
+
+    auto& group   = local(); // check now, on the calling thread, to fail early
+    group.opening = true;
+    ok            = group.ensure();
+    group.opening = false;
+    if (!ok)
+    {
+        error = group.error;
+        report(error + ", counters disabled");
+        auto const keep = error;
+        close();
+        error = keep;
+    }
+    return ok;
+}
+
+
+// end of a run: "N scope reads failed" etc, empty if all went well
+inline std::string summary()
+{
+    auto& config = Config::INSTANCE();
+    std::string s;
+    if (auto const n = config.read_failures.load())
+        s += std::to_string(n) + " scope reads failed, those scopes have no counts. ";
+    if (auto const n = config.open_failures.load(); n and config.ok)
+        s += std::to_string(n) + " threads could not open counters. ";
+    return s;
+}
 
 } // namespace phlop::perf
 
