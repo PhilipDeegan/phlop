@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import inspect
 import json
 import os
 import queue as queue_module
@@ -48,6 +49,7 @@ class Job:
     logging: int = 1
     id: str = ""  # display label; defaults to cmd
     meta: Any = field(default=None)
+    test_names: list = field(default_factory=list)  # Class.method, for --regex
 
     def __post_init__(self):
         self.cmd = self.cmd.strip()
@@ -134,6 +136,16 @@ def _print_jobs(jobs, verbose):
 class _Cancelled(Exception): ...
 
 
+def _accepts_on_popen(job):
+    try:
+        params = inspect.signature(job).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        p.name == "on_popen" or p.kind is inspect.Parameter.VAR_KEYWORD for p in params
+    )
+
+
 def _runner(job, job_idx, queue, popens, cancelled):
     """Runs on a thread: the job's subprocess is the only process started, a
     thread waiting on it costs next to nothing. Always reports a result."""
@@ -141,12 +153,18 @@ def _runner(job, job_idx, queue, popens, cancelled):
     def on_popen(p):
         popens[job_idx] = p
         if cancelled.is_set():  # cancelled between launch and Popen
-            p.terminate()
+            # cancel_running's snapshot missed this child, so it would never
+            # get the SIGKILL that follows SIGTERM, kill it now: it only just
+            # started, there is nothing for it to clean up
+            p.kill()
 
     try:
         if cancelled.is_set():
             raise _Cancelled("cancelled")
-        result = (job_idx, job(on_popen=on_popen), None)
+        if _accepts_on_popen(job):
+            result = (job_idx, job(on_popen=on_popen), None)
+        else:  # subclass overriding __call__(self), not cancellable mid-run
+            result = (job_idx, job(), None)
     except BaseException as e:  # noqa: BLE001 - report any job failure to the parent
         result = (job_idx, None, e)
     popens.pop(job_idx, None)

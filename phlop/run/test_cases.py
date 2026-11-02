@@ -192,7 +192,8 @@ def filter_out_regex_fails(cli_args, test_batches):
     filtered = {tb.cores: [] for tb in test_batches}
     for tb in test_batches:
         for test in tb.tests:
-            if op(test.cmd):
+            names = getattr(test, "test_names", None) or ()
+            if op(test.cmd) or any(op(name) for name in names):
                 filtered[tb.cores].append(test)
     return [tc.TestBatch(v, k) for k, v in filtered.items() if v]
 

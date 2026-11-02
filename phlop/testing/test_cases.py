@@ -110,7 +110,8 @@ def python3_default_test_cmd(clazz, test_id, python_flags=None):
 
 
 def _check_granularity(granularity):
-    granularity = granularity or GRANULARITY
+    if granularity is None:
+        granularity = GRANULARITY
     if granularity not in GRANULARITIES:
         raise ValueError(f"granularity {granularity!r} not one of {GRANULARITIES}")
     return granularity
@@ -145,6 +146,20 @@ def _test_names(by_class, all_methods):
         else:
             names += [f"{test_class.__name__}.{m}" for m in methods]
     return names
+
+
+def _qualified_names(by_class):
+    """every `Class.method` in a group, so --regex can match a method in a
+    grouped job whose cmd names only the class (or file)"""
+    return [f"{c.__name__}.{m}" for c, methods in by_class.items() for m in methods]
+
+
+def _unique_path(path, used):
+    """groups in one class/file with different variant lists would share a log
+    path, suffix all but the first"""
+    n = used.get(path, 0)
+    used[path] = n + 1
+    return f"{path}_g{n}" if n else path
 
 
 def _group_logfile(log_file_path, by_class, granularity):
@@ -205,6 +220,7 @@ def load_test_cases_in(
                 log_file_path=_group_logfile(
                     _LOG_DIR / ".phlop", by_class, granularity
                 ),
+                test_names=_qualified_names(by_class),
                 **kwargs,
             )
         ]
@@ -400,7 +416,9 @@ def _variants_for(dir_config, filename, class_name, method_name, used_keys=None)
     return None
 
 
-def _variant_job(base_cmd, log_file_path, variant, index, test_cmd_pre, test_cmd_post):
+def _variant_job(
+    base_cmd, log_file_path, variant, index, test_cmd_pre, test_cmd_post, test_names
+):
     prefix = variant.get("prefix", "")
     env = dict(variant.get("env") or {})
     working_dir = variant.get("working_dir")
@@ -421,6 +439,7 @@ def _variant_job(base_cmd, log_file_path, variant, index, test_cmd_pre, test_cmd
             cmd, env, explicit=variant.get("cores"), threads=variant.get("threads")
         ),
         meta=tags or None,
+        test_names=test_names,
     )
 
 
@@ -496,11 +515,15 @@ def load_config_tests(
                     variant_lists[key] = variants
                 entries.append((test_class, method, key))
 
+        used_paths = {}
         for key, by_class in _group_tests(entries, granularity):
             test_class = next(iter(by_class))
             names = _test_names(by_class, all_methods)
+            test_names = _qualified_names(by_class)
             base_cmd = python3_test_cmd(test_class.__module__, names, python_flags)
-            log_file_path = _group_logfile(_LOG_DIR / ".phlop", by_class, granularity)
+            log_file_path = _unique_path(
+                _group_logfile(_LOG_DIR / ".phlop", by_class, granularity), used_paths
+            )
             variants = variant_lists.get(key)
 
             if not variants:
@@ -510,6 +533,7 @@ def load_config_tests(
                         cmd=cmd,
                         log_file_path=log_file_path,
                         cores=resolve_cores(cmd),
+                        test_names=test_names,
                     )
                 )
                 continue
@@ -526,6 +550,7 @@ def load_config_tests(
                         index,
                         test_cmd_pre,
                         test_cmd_post,
+                        test_names,
                     )
                 )
 

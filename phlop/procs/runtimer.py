@@ -232,7 +232,12 @@ class RunTimer:
         with _opened_streams(kwargs) as stream_kwargs:
             p = subprocess.Popen(self.cmd, **stream_kwargs)
             if self.on_popen:
-                self.on_popen(p)
+                try:
+                    self.on_popen(p)
+                except BaseException:
+                    p.kill()
+                    p.communicate()  # reap, drain pipes
+                    raise
             self.stdout, self.stderr = self._communicate(p)
             self.run_time = time.time() - start
             self.exitcode = p.returncode
