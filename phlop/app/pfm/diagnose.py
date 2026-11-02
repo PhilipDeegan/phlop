@@ -180,9 +180,13 @@ def _try_set(eset):
     try:
         reported = perf_events(eset, "u")
         cmd = perf_stat_cmd(reported, outfile) + ["--", *WORKLOAD]
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=120, check=False
-        )
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=120, check=False
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
+            print(f"    perf failed: {e}")
+            return {}
         rows = perf.parse_stat_json(outfile) if os.path.getsize(outfile) else []
     finally:
         os.unlink(outfile)

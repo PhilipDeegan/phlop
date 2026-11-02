@@ -32,6 +32,9 @@ class Metric:
     unit: str = ""  # "%": fn returns a fraction, shown * 100
     desc: str = ""
     hint: Callable | None = None  # (value, counts, ctx) -> str | None
+    # (counts) -> label shown instead of n/a when fn gives None for a known
+    # reason, eg "none (no RAM fetches)" for a ratio over zero fetches
+    none_means: Callable | None = None
 
 
 @dataclass
@@ -48,6 +51,10 @@ class EventSet:
             return 2 if any(spec.startswith(p) for p in PAIR_EVENTS) else 1
 
         return sum(cost(spec) for spec in self.events.values())
+
+
+def _no_fetches(c):
+    return "none (no RAM fetches)" if c.get("fetches") == 0 else None
 
 
 def _hint(pred, msg):
@@ -133,6 +140,7 @@ zen5 = [
                 "instructions_per_fetch",
                 lambda c: ratio(c["instructions"], c["fetches"]),
                 desc="instructions per 64B line fetched from RAM",
+                none_means=_no_fetches,
                 hint=_hint(
                     lambda v: v < 100,
                     "under 100 instructions per RAM fetch: memory bound, improve "
@@ -631,6 +639,7 @@ arm_light = EventSet(
             "instructions_per_fetch",
             lambda c: ratio(c["instructions"], c["fetches"]),
             desc="instructions per line read from RAM",
+            none_means=_no_fetches,
             hint=_hint(
                 lambda v: v < 100,
                 "under 100 instructions per RAM fetch: memory bound, improve reuse",
@@ -770,7 +779,8 @@ def _arm_vector(with_sve):
 
 
 def _arm_sve_flops(c):
-    """FP_SCALE_OPS_SPEC counts per 128 bits of SVE vector length"""
+    """FP_SCALE_OPS_SPEC counts per 128 bits of SVE vector length. Assumes the
+    measured program runs at @sve_bits, see the sve_bits metric"""
     bits = c.get("@sve_bits") or 128
     return c["scale_ops"] * bits / 128 + c["fixed_ops"]
 
@@ -791,7 +801,14 @@ arm_flops = EventSet(
             "%",
             desc="SVE (vector length scaled) share of FP ops, speculative",
         ),
-        Metric("sve_bits", lambda c: c.get("@sve_bits"), desc="default vector length"),
+        # the system default length (/proc/sys/abi/sve_default_vector_length):
+        # wrong for programs that change theirs with prctl(PR_SVE_SET_VL), set
+        # sve_bits in PHLOP_PERF_CTX / the timer file's #ctx line for those
+        Metric(
+            "sve_bits",
+            lambda c: c.get("@sve_bits"),
+            desc="SVE length assumed, the system default unless overridden",
+        ),
     ],
 )
 

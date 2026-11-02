@@ -55,7 +55,8 @@ PHLOP_SCOPE("io");                      // PHLOP_SCOPE_DEFAULT, time
 # choose the event sets per level, then run as usual
 eval "$(python3 -m phlop.app.pfm.stat --env perf_light=light --env perf_all=topdown)"
 ./app  # writes counts into the scope timer file, read with:
-python3 -c "from phlop.timing.scope_timer import print_scope_perf; print_scope_perf('.phlop_scope_times.txt')"
+python3 -m phlop.timing.scope_timer perf .phlop_scope_times.txt -v  # scope_timer.hpp
+python3 -m phlop.timing.scope_timer perf .phlop_scope_times.bin -v  # threaded, same format
 ```
 
 ```shell

@@ -98,6 +98,22 @@ jobs:
             || echo "::warning::phlop.app.pfm.stat failed on $b"
         done
 
+    - name: Scope counters
+      # arm64 VMs count cycles/instructions/branches, x64 ones expose no PMU
+      if: ${{ !cancelled() && matrix.arch == 'arm64' }}
+      run: |
+        mkdir -p bin
+        g++ -std=c++20 -O2 -Iinc tests/timing/test_scope.cpp src/phlop/timing/scope_timer.cpp -o bin/scope_test
+        g++ -std=c++20 -O2 -Iinc tests/timing/test_threaded_scope.cpp src/phlop/timing/common_threaded_timer.cpp -o bin/threaded_scope_test
+        eval "$(python3 -m phlop.app.pfm.stat --env perf_light=light --env perf_all=ipc)"
+        env | grep PHLOP_PERF
+        ./bin/scope_test
+        python3 tests/timing/test_scope_timer.py test_scope -f bin/scope.txt
+        python3 -m phlop.timing.scope_timer perf bin/scope.txt -v
+        ./bin/threaded_scope_test
+        python3 tests/timing/test_scope_timer.py test_threaded_scope -f bin/threaded_scope.txt
+        python3 -m phlop.timing.scope_timer perf bin/threaded_scope.txt -v
+
     - name: Check something was counted
       if: ${{ !cancelled() }}
       run: |

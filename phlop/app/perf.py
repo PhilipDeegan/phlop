@@ -88,11 +88,10 @@ def access_warnings(kernel=False):
     )
     fix = "sudo sysctl -w kernel.perf_event_paranoid={0}  (persist: " + persist + ")"
 
-    if level is None:
-        return False, [f"cannot read {PARANOID_FILE}: perf_event_open unavailable?"]
-
     if privileged():
-        level = -1  # paranoia does not apply
+        level = -1  # paranoia does not apply, readable sysctl or not
+    elif level is None:
+        return False, [f"cannot read {PARANOID_FILE}: perf_event_open unavailable?"]
     elif level >= 3:
         warnings.append(
             f"perf_event_paranoid={level}: unprivileged counting is disabled, "

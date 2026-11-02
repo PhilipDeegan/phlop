@@ -2,6 +2,7 @@
 #
 import argparse
 import logging
+import os
 import sys
 
 import numpy as np
@@ -9,6 +10,19 @@ import numpy as np
 from phlop.timing import scope_timer
 
 logger = logging.getLogger(__name__)
+
+
+def _counters_requested():
+    return any(os.environ.get(v) for v in ("PHLOP_PERF_LIGHT", "PHLOP_PERF_ALL"))
+
+
+def _no_counts(stf, name):
+    """True for a time only file, which fails if counters were requested"""
+    if stf.perf:
+        return False
+    assert not _counters_requested(), f"{name}: PHLOP_PERF_* set but no counts written"
+    print(f"{name}: no perf counts in file, time only")
+    return True
 
 
 def test_scope_timer(scope_timer_filepath=None):
@@ -38,16 +52,19 @@ def test_scope(scope_timer_filepath=None):
     loops = [c for c in main.c if stf(c.k) == "fma_loop"]
     np.testing.assert_equal(len(loops), 3)
     np.testing.assert_equal([len(loop.c) for loop in loops], [2000] * 3)
-    if not stf.perf:
-        print("test_scope: no perf counts in file, time only")
+    if _no_counts(stf, "test_scope"):
         return
-    for loop in loops:
-        counts = stf.perf_counts(loop)
-        assert counts and all(v >= 0 for v in counts.values()), counts
-        for p in loop.c:
+    for loop in loops:  # perf_all, level 2
+        counts = stf.perf_counts(loop) if 2 in stf.perf else {}
+        if 2 in stf.perf:
+            assert counts and all(v >= 0 for v in counts.values()), counts
+        if 1 not in stf.perf:
+            continue
+        for p in loop.c:  # perf_light, level 1
             pass_counts = stf.perf_counts(p)
             assert pass_counts["instructions"] > 4096 / 16, pass_counts  # widest SIMD
-            assert pass_counts["cycles"] <= counts["cycles"]
+            if counts:
+                assert pass_counts["cycles"] <= counts["cycles"]
     print(f"test_scope: counts ok, levels {[lvl.label for lvl in stf.perf.values()]}")
 
 
@@ -63,15 +80,18 @@ def test_threaded_scope(scope_timer_filepath=None):
     works = [r for r in stf.roots if stf(r.k) == "work"]
     mains = [r for r in stf.roots if stf(r.k) == "main"]
     np.testing.assert_equal((len(works), len(mains)), (4, 1))
-    if not stf.perf:
-        print("test_threaded_scope: no perf counts in file, time only")
+    if _no_counts(stf, "test_threaded_scope"):
         return
-    instructions = sorted(stf.perf_counts(w)["instructions"] for w in works)
-    unit = instructions[0]
-    for k, n in enumerate(instructions, start=1):  # linear in work, per thread
-        assert abs(n / unit - k) < 0.05, instructions
-    main_counts = stf.perf_counts(mains[0])
-    assert main_counts["instructions"] < unit, (main_counts, unit)  # not children's
+    instructions = []
+    if 1 in stf.perf:  # work scopes are perf_light
+        instructions = sorted(stf.perf_counts(w)["instructions"] for w in works)
+        for k, n in enumerate(instructions, start=1):  # linear in work, per thread
+            assert abs(n / instructions[0] - k) < 0.05, instructions
+    if 2 in stf.perf:  # main is perf_all, counts the main thread only
+        main_counts = stf.perf_counts(mains[0])
+        assert main_counts["instructions"] >= 0, main_counts
+        if instructions:
+            assert main_counts["instructions"] < instructions[0], main_counts
     print(f"test_threaded_scope: counts ok, per thread instructions {instructions}")
 
 

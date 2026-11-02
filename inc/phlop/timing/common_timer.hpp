@@ -136,6 +136,8 @@ struct BinaryTimerFile
                     f << "," << headers[i];
                 f << '\n';
             }
+            for (auto const& line : perf_headers) // names the counts below
+                f << line << '\n';
             for (auto const& root : roots)
                 _write_strings(f, root);
         }

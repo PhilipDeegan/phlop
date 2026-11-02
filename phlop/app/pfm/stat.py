@@ -12,6 +12,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -42,6 +43,7 @@ class SetResult:
     events: dict = field(default_factory=dict)  # alias -> EventResult
     metrics: dict = field(default_factory=dict)  # name -> value
     units: dict = field(default_factory=dict)
+    labels: dict = field(default_factory=dict)  # name -> shown instead of n/a
     hints: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
     exitcode: int | None = None
@@ -141,6 +143,12 @@ def evaluate(eset, result, ctx):
             val = None
         result.metrics[m.name] = val
         result.units[m.name] = m.unit
+        if val is None and m.none_means is not None:
+            try:
+                if label := m.none_means(counts):
+                    result.labels[m.name] = label
+            except (TypeError, KeyError):
+                pass
         if m.hint is not None:
             try:
                 hint = m.hint(val, counts, ctx)
@@ -204,6 +212,9 @@ def stat(
         raise ValueError(f"unknown sets {unknown} for {pmu}, have: {list(sets)}")
 
     can_count, warnings = perf.access_warnings(kernel)
+    if shutil.which("perf") is None:
+        warnings.append("perf not on PATH (linux-tools-$(uname -r) / linux-perf)")
+        can_count = False
     if not can_count:
         print_only = True
 
@@ -250,7 +261,8 @@ def report(pmu, results, warnings, out=sys.stdout):
         if r.events:
             p("   --")
         for name, val in r.metrics.items():
-            p(f"   {name:<22} {_fmt(val, r.units.get(name))}")
+            shown = r.labels.get(name) or _fmt(val, r.units.get(name))
+            p(f"   {name:<22} {shown}")
         for w in r.warnings:
             p(f"   warning: {w}")
     hints = [(r.name, h) for r in results for h in r.hints]
@@ -310,6 +322,11 @@ def scope_env_exports(level_sets):
         for config, spec in zip(configs, sets[set_name].events.values()):
             union[config] = EventSet("", "", {"": spec}).counters_needed()
         lines.append(f"export {ENV_LEVELS[level]}='{value}'")
+    from phlop.app.pfm import host
+
+    ctx = {k: v for k, v in host.context().items() if k != "cpu_flags"}
+    ctx = ",".join(f"{k}={int(v)}" for k, v in ctx.items() if v is not None)
+    lines.append(f"export PHLOP_PERF_CTX='{ctx}'")  # written as the file's #ctx
     budget, needed = available_counters(pmu), sum(union.values())
     if budget is not None and needed > budget:
         print(

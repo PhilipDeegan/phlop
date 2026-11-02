@@ -71,6 +71,11 @@ class PfmStatTest(unittest.TestCase):
         self.assertAlmostEqual(res.metrics["ipc"], 3.0)
         self.assertAlmostEqual(res.metrics["instructions_per_fetch"], 2.0)
 
+    def test_zero_fetches_label(self):
+        res = evaluate(ZEN5["light"], rows(cycles=100, instructions=300, fetches=0))
+        self.assertIsNone(res.metrics["instructions_per_fetch"])
+        self.assertEqual(res.labels["instructions_per_fetch"], "none (no RAM fetches)")
+
     def test_missing_and_multiplexed(self):
         rws = rows(cycles=10, instructions=20, ops=20, branches=5)
         rws[0]["pcnt-running"] = 50.0
@@ -148,6 +153,27 @@ class PfmStatTest(unittest.TestCase):
         ok, warnings = perf.access_warnings()
         self.assertIsInstance(ok, bool)
         self.assertIsInstance(warnings, list)
+
+    def test_access_warnings_denied(self):
+        from unittest import mock
+
+        with (
+            mock.patch.object(perf, "paranoid_level", return_value=3),
+            mock.patch.object(perf, "privileged", return_value=False),
+        ):
+            ok, warnings = perf.access_warnings()
+        self.assertFalse(ok)
+        self.assertIn("perf_event_paranoid=3", warnings[0])
+
+    def test_access_privileged_without_sysctl(self):
+        from unittest import mock
+
+        with (
+            mock.patch.object(perf, "paranoid_level", return_value=None),
+            mock.patch.object(perf, "privileged", return_value=True),
+        ):
+            ok, _ = perf.access_warnings()
+        self.assertTrue(ok)
 
 
 class ArmTest(unittest.TestCase):

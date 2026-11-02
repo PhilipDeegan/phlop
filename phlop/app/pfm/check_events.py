@@ -2,6 +2,7 @@
 
 import logging
 import os
+import shlex
 from functools import lru_cache
 from pathlib import Path
 
@@ -27,7 +28,8 @@ def parse_check_events_output(lines):
 
 def run_check_events(code):
     exe = pfm_examples_dir() / "check_events"
-    return decode_bytes(run(f"{exe} {code}", print_cmd=False).stdout).splitlines()
+    cmd = f"{shlex.quote(str(exe))} {code}"  # checkouts with spaces
+    return decode_bytes(run(cmd, print_cmd=False).stdout).splitlines()
 
 
 def get_evt_perf_code(code):

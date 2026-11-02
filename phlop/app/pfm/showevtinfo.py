@@ -1,6 +1,7 @@
 # phlop/app/pfm/showevtinfo.py
 
 import logging
+import shlex
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -85,7 +86,8 @@ def run_evtinfo():
     from phlop.app.pfm.check_events import pfm_examples_dir
 
     exe = pfm_examples_dir() / "showevtinfo"
-    return decode_bytes(run(f"{exe}", print_cmd=False).stdout).splitlines()
+    cmd = shlex.quote(str(exe))  # checkouts with spaces
+    return decode_bytes(run(cmd, print_cmd=False).stdout).splitlines()
 
 
 def get_evt_info():

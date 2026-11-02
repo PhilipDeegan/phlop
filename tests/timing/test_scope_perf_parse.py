@@ -20,6 +20,19 @@ LINES = """#perf 1 amd64_fam1ah_zen5/light cycles,instructions,fetches
 """.splitlines(keepends=True)
 
 
+SAME_LEVEL = """#perf 1 amd64_fam1ah_zen5/light cycles,instructions,fetches
+#perf 2 amd64_fam1ah_zen5/ipc cycles,instructions,ops,branches,br_misp
+#ctx slots=5
+1 child
+0 parent
+
+0 0 0:9000 1:1000,3000,9
+1 1 10:100 1:300,900,4
+1 1 20:100 1:200,600,1
+1 1 30:100 2:100,100,100,10,1
+""".splitlines(keepends=True)
+
+
 class ScopePerfParseTest(unittest.TestCase):
     def setUp(self):
         self.stf = lines_parser(LINES)
@@ -42,9 +55,25 @@ class ScopePerfParseTest(unittest.TestCase):
             {"cycles": 1000, "instructions": 3000, "fetches": 6},
         )
 
-    def test_self_counts_only_subtract_same_level(self):
+    def test_self_counts_skip_other_levels(self):
         # inner scopes are perf_light, outer perf_all: nothing to subtract
-        self.assertEqual(self.stf.perf_self_counts(self.outer)["cycles"], 4000)
+        self.assertEqual(
+            self.stf.perf_self_counts(self.outer), self.stf.perf_counts(self.outer)
+        )
+
+    def test_self_counts_subtract_same_level(self):
+        same = lines_parser(SAME_LEVEL)
+        parent = same.roots[0]
+        self.assertEqual(
+            same.perf_self_counts(parent),
+            {
+                "cycles": 1000 - 300 - 200,
+                "instructions": 3000 - 900 - 600,
+                "fetches": 9 - 4 - 1,
+            },
+        )
+        # a perf_all child is not subtracted from the perf_light parent
+        self.assertEqual(len(parent.c), 3)
 
     def test_metrics_use_event_set_formulas(self):
         self.assertAlmostEqual(self.stf.perf_metrics(self.outer, ctx={})["ipc"], 2.0)
@@ -55,12 +84,57 @@ class ScopePerfParseTest(unittest.TestCase):
             self.stf.perf_metrics(self.outer.c[1], ctx={})["instructions_per_fetch"]
         )
 
+    def test_ctx_from_file_is_used(self):
+        same = lines_parser(SAME_LEVEL)
+        self.assertEqual(same.ctx, {"slots": 5})
+        self.assertIsNone(self.stf.ctx)  # no #ctx line
+
     def test_old_files_without_counts_still_parse(self):
         old = [line for line in LINES if not line.startswith("#perf")]
         old = [" ".join(line.split(" ")[:3]).rstrip() + "\n" for line in old]
         stf = lines_parser(old)
         self.assertEqual(stf.perf, {})
         self.assertEqual(stf.roots[0].c[0].t, 5000)
+
+    def test_none_label_for_zero_fetches(self):
+        labels = {}
+        inner_no_fetch = self.outer.c[1]
+        self.stf.metrics_for(1, self.stf.perf_counts(inner_no_fetch), {}, labels)
+        self.assertEqual(labels["instructions_per_fetch"], "none (no RAM fetches)")
+
+    def test_group_scopes_merges_siblings_and_sums_counts(self):
+        from phlop.timing.scope_timer import group_scopes
+
+        (main,) = group_scopes(self.stf, self.stf.roots)
+        outer, inner = main.c
+        self.assertEqual((outer.key, outer.n), ("outer", 1))
+        self.assertEqual((inner.key, inner.n, inner.t), ("inner", 1, 500))
+        (merged,) = outer.c  # two inner scopes under outer
+        self.assertEqual((merged.n, merged.t, merged.n_counted), (2, 2000, 2))
+        self.assertEqual(
+            merged.counts, {"cycles": 2000, "instructions": 4000, "fetches": 6}
+        )
+
+    def test_print_scope_perf_dedupe_and_verbose(self):
+        import tempfile
+
+        from phlop.timing.scope_timer import print_scope_perf
+
+        with tempfile.NamedTemporaryFile("w", suffix=".txt") as f:
+            f.writelines(LINES)
+            f.flush()
+            lines = []
+            print_scope_perf(f.name, verbose=True, printer=lines.append)
+        text = "\n".join(lines)
+        self.assertIn("inner x2 0.002ms (mean 0.001ms) [light]", text)
+        self.assertIn("instructions_per_fetch=667", text)  # 4000 / 6, summed
+        self.assertIn("counts: cycles=2,000 instructions=4,000 fetches=6", text)
+
+    def test_cli_verbose_flag(self):
+        from phlop.timing.scope_timer import cli_args_parser
+
+        args = cli_args_parser().parse_args(["perf", "f.txt", "-v", "--no-dedupe"])
+        self.assertEqual((args.tool, args.verbose, args.dedupe), ("perf", True, False))
 
 
 if __name__ == "__main__":

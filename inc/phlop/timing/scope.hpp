@@ -68,8 +68,12 @@ struct ScopeT
         : timer{r}
     {
         if constexpr (level > 0)
-            state.on = Man::INSTANCE().active and perf::Config::INSTANCE().has(level)
-                       and perf::local().ensure() and perf::local().read(state.begin);
+        {
+            auto& config     = perf::Config::INSTANCE();
+            state.generation = config.generation.load(std::memory_order_relaxed);
+            state.on = Man::INSTANCE().active and config.has(level) and perf::local().ensure()
+                       and perf::local().read(state.begin);
+        }
     }
 
     ~ScopeT()
@@ -77,7 +81,11 @@ struct ScopeT
         if constexpr (level > 0)
         {
             perf::Counts end;
-            if (state.on and perf::local().read(end))
+            // a counter re-init inside the scope (init/reset) restarted the
+            // group, begin is from the old one: drop the counts, not wrap them
+            auto const same = state.generation
+                              == perf::Config::INSTANCE().generation.load(std::memory_order_relaxed);
+            if (state.on and same and perf::local().read(end))
             {
                 auto const& idx = perf::Config::INSTANCE().levels[level].idx;
                 timer.pending_counts.resize(idx.size());
@@ -91,7 +99,8 @@ struct ScopeT
     struct Counting
     {
         perf::Counts begin;
-        bool on = false;
+        std::uint64_t generation = 0;
+        bool on                  = false;
     };
     struct NoCounting
     {

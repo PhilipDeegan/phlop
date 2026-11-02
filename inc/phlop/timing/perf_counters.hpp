@@ -42,6 +42,9 @@ using Counts = std::array<std::uint64_t, max_events>;
 
 // level 1: perf_light, level 2: perf_all, as written to the timer file
 inline constexpr std::array<char const*, 3> level_env{"", "PHLOP_PERF_LIGHT", "PHLOP_PERF_ALL"};
+// measuring host values the metric formulas need, eg "slots=5,sve_bits=128",
+// written to the timer file as "#ctx ..." so readers on other hosts use them
+inline constexpr char const* ctx_env = "PHLOP_PERF_CTX";
 
 struct Level
 {
@@ -65,6 +68,7 @@ struct Config
 
     void close()
     {
+        ctx.clear();
         configs.clear();
         for (auto& l : levels)
             l = Level{};
@@ -77,10 +81,13 @@ struct Config
         return ok && level < levels.size() && !levels[level].idx.empty();
     }
 
-    // "#perf <level> <label> <name,...>" lines for the timer file header
+    // "#perf <level> <label> <name,...>" lines for the timer file header,
+    // and "#ctx <key=value,...>" from PHLOP_PERF_CTX
     std::vector<std::string> file_headers() const
     {
         std::vector<std::string> lines;
+        if (ok and !ctx.empty())
+            lines.emplace_back("#ctx " + ctx);
         for (std::size_t l = 1; l < levels.size(); ++l)
             if (has(l))
             {
@@ -101,6 +108,7 @@ struct Config
 
     bool ok = false;
     std::string error;
+    std::string ctx; // PHLOP_PERF_CTX
     std::array<Level, level_env.size()> levels{};
     std::vector<std::uint64_t> configs; // union of all levels, group order
     std::atomic<std::uint64_t> generation{1};
@@ -149,9 +157,11 @@ struct Group
 
     void close()
     {
+#if defined(__linux__)
         for (auto const fd : fds)
             if (fd >= 0)
                 ::close(fd);
+#endif
         fds.clear();
         ok = false;
     }
@@ -205,6 +215,8 @@ private:
         error = why;
         close();
         ++Config::INSTANCE().open_failures;
+        if (!opening) // Config::init reports its own, with ", counters disabled"
+            Config::INSTANCE().report("a thread could not open counters: " + why);
         return false;
     }
 
@@ -248,7 +260,8 @@ private:
             }
             fds.emplace_back(fd);
         }
-        ::ioctl(fds[0], PERF_EVENT_IOC_ENABLE, PERF_IOC_FLAG_GROUP);
+        if (::ioctl(fds[0], PERF_EVENT_IOC_ENABLE, PERF_IOC_FLAG_GROUP) < 0)
+            return fail(std::string{"PERF_EVENT_IOC_ENABLE: "} + std::strerror(errno));
         ok = true;
 
         Counts probe{};
@@ -291,6 +304,8 @@ inline bool Config::init()
             }
     if (configs.empty())
         return false;
+    if (auto const* e = std::getenv(ctx_env); e)
+        ctx = e;
 
     auto& group   = local(); // check now, on the calling thread, to fail early
     group.opening = true;
