@@ -258,6 +258,10 @@ def process(
     on_failure: Callable[[JobResult], None] | None = None,
     options: ProcessorOptions | None = None,
 ) -> list:
+    """Run items as Jobs on threads, at most n_cores cores in use at once,
+    widest jobs first. Returns results in input order. Any failure raises
+    ProcessorFailure: at once with fail_fast (running jobs are cancelled),
+    else after every job has finished."""
     jobs = normalize(items)
     if not jobs:
         return []

@@ -233,6 +233,9 @@ def _attached_run(pid, yaml_file, interval):
 
 
 class AttachableRuntimeStatsManager:
+    """Samples the calling process itself, from a separate daemon process so
+    sampling is not held up by this process's GIL. start(), then kill()/join()."""
+
     def __init__(self, cli_args, info=None):
         self.pid = os.getpid()
         self.cli_args = cli_args

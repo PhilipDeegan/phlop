@@ -54,6 +54,9 @@ class ScopeTimerFile:
 
 
 def lines_parser(lines):
+    """scope timer text format: "<id> <key>" lines, a blank line, then one
+    "<depth> <id> <start>:<time>" line per scope, depth is the nesting level
+    under the preceding shallower line"""
     id_keys = {}
     roots = []
 

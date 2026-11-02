@@ -175,6 +175,8 @@ def dump_batches(cli_args):
 
 
 def filter_out_regex_fails(cli_args, test_batches):
+    """keep jobs whose cmd, or any Class.method grouped into them, matches
+    --regex (a plain substring if it doesn't compile)"""
     if not cli_args.regex:
         return test_batches
     try:
