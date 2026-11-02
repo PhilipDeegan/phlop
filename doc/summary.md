@@ -98,9 +98,13 @@ shared helpers for each file.
   tree. Pick one variant per binary: `scope_timer.hpp` (single thread),
   `threaded_scope_timer.hpp` (per-thread storage, merged at shutdown) or
   `mpi_scope_timer.hpp` (MPI_Wtime clock, per-rank file names).
-- Hot path: one `make_shared` snapshot per scope exit, and child vectors
+- Hot path: one `make_unique` snapshot per scope exit, and child vectors
   grow geometrically. Don't `reserve(size()+1)`: that reallocates for every
   child, quadratic for loops.
+- `-DPHLOP_SCOPE_TIMER_SELF_STATS` (single-thread timer only, off by
+  default) records the timer's own constructor/destructor cost:
+  `print_self_stats()` gives count, mean and max ns. It costs about as much
+  as the timer itself, so keep it out of normal builds.
 - Output (`BinaryTimerFile::write`, text despite the name): a `id key` table,
   a blank line, then `depth id start:time` lines, depth first. `'\n'`, not
   `std::endl` (a flush per line). `fn_id` is `uint32_t`, depth `uint16_t`.

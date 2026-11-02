@@ -16,7 +16,6 @@ from datetime import timedelta
 from enum import Enum
 from typing import Any
 
-from phlop.logger import getLogger
 from phlop.os import usable_cores
 
 # seconds without output before a job is killed as stalled, 0=off; with psutil
@@ -28,8 +27,6 @@ STALL_BUSY_TIMEOUT = float(os.environ.get("PHLOP_STALL_BUSY_TIMEOUT", "14400"))
 FAIL_FAST = bool(json.loads(os.environ.get("PHLOP_FAIL_FAST", "false")))
 # seconds cancelled jobs get to exit on SIGTERM before SIGKILL
 CANCEL_GRACE = 5
-
-logger = getLogger(__name__)
 
 
 class ProcessorFailure(Exception): ...
