@@ -37,6 +37,13 @@ Available:
 ```
 
 ```shell
+# hardware counter analysis via libpfm event sets (./sh/setup_pfm.sh first)
+python3 -m phlop.app.pfm.stat --list
+python3 -m phlop.app.pfm.stat -s topdown,vector,flops -- ./app args
+# unprivileged counting needs kernel.perf_event_paranoid <= 2, warnings say how
+```
+
+```shell
 python3 -m phlop.run.test_cases -h
 usage: test_cases.py [-h] [--cmake] [-c CORES] [-i INPUT] [-p] [--prefix PREFIX] [--postfix POSTFIX] [--dump DUMP] [--load LOAD] [-r REGEX] [-R] [--rerun RERUN] [--logging LOGGING]
 

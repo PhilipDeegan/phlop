@@ -39,6 +39,80 @@ def check(force_kernel_space=False):
     record("ls", [], "/tmp/perf_record_check.dat")
 
 
+PARANOID_FILE = "/proc/sys/kernel/perf_event_paranoid"
+NMI_WATCHDOG_FILE = "/proc/sys/kernel/nmi_watchdog"
+CAP_SYS_ADMIN, CAP_PERFMON = 21, 38
+
+
+def _read_int(path):
+    try:
+        with open(path) as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def paranoid_level():
+    """kernel.perf_event_paranoid, None if unreadable (not linux?)
+    -1: everything, 0: no raw tracepoints, 1: no cpu wide, 2: user space only,
+    3+: (debian/android patch) unprivileged perf_event_open disabled entirely"""
+    return _read_int(PARANOID_FILE)
+
+
+def nmi_watchdog():
+    """the nmi watchdog occupies one hardware counter while enabled"""
+    return _read_int(NMI_WATCHDOG_FILE)
+
+
+def privileged():
+    """root, or CAP_PERFMON/CAP_SYS_ADMIN, bypasses perf_event_paranoid"""
+    if os.geteuid() == 0:
+        return True
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("CapEff:"):
+                    caps = int(line.split()[1], 16)
+                    return bool(caps & ((1 << CAP_PERFMON) | (1 << CAP_SYS_ADMIN)))
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+def access_warnings(kernel=False):
+    """returns (can_count, [warnings]) for unprivileged hardware counting"""
+    warnings = []
+    level = paranoid_level()
+    persist = (
+        "echo kernel.perf_event_paranoid={0} | sudo tee /etc/sysctl.d/99-perf.conf"
+    )
+    fix = "sudo sysctl -w kernel.perf_event_paranoid={0}  (persist: " + persist + ")"
+
+    if level is None:
+        return False, [f"cannot read {PARANOID_FILE}: perf_event_open unavailable?"]
+
+    if privileged():
+        level = -1  # paranoia does not apply
+    elif level >= 3:
+        warnings.append(
+            f"perf_event_paranoid={level}: unprivileged counting is disabled, "
+            f"no counters can be read. {fix.format(2)}"
+        )
+        return False, warnings
+    elif level == 2 and kernel:
+        warnings.append(
+            "perf_event_paranoid=2: kernel space excluded, counts are user only. "
+            + fix.format(1)
+        )
+
+    if nmi_watchdog() == 1:
+        warnings.append(
+            "nmi_watchdog=1: it holds one hardware counter, larger event sets will "
+            "be multiplexed (scaled estimates). sudo sysctl -w kernel.nmi_watchdog=0"
+        )
+    return True, warnings
+
+
 def parse_key(key, force_kernel_space):
     user_space_postfix = ":u"
     if key.endswith(user_space_postfix):
