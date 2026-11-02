@@ -202,7 +202,9 @@ def load_test_cases_in(
         tests += [
             Job(
                 cmd=f"{test_cmd_pre} {cmd} {test_cmd_post}".strip(),
-                log_file_path=_group_logfile(_LOG_DIR / ".phlop", by_class, granularity),
+                log_file_path=_group_logfile(
+                    _LOG_DIR / ".phlop", by_class, granularity
+                ),
                 **kwargs,
             )
         ]

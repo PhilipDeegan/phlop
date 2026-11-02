@@ -39,8 +39,6 @@ namespace detail
     inline std::size_t max_construct_time = 0;
     inline std::size_t max_destruct_time  = 0;
 
-    static ScopeTimerMan* instance = nullptr;
-
 } // namespace detail
 
 
