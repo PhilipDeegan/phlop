@@ -208,6 +208,7 @@ def _try_set(eset):
 
 def main(argv=None):
     strict = "--strict" in (argv if argv is not None else sys.argv[1:])
+    in_ci = os.environ.get("GITHUB_ACTIONS") == "true"
     diagnose_platform()
     can_count = diagnose_access()
     has_pmu = diagnose_pmus()
@@ -234,8 +235,19 @@ def main(argv=None):
             state = "ok"
         print(f"  {name:<10} {state}")
     any_counted = any(v for values in counted.values() for v in values.values())
+    if not has_pmu:
+        # nothing to count on this host, eg a VM without PMU passthrough: not
+        # a phlop failure, --strict only fails when counting should have worked
+        msg = f"no core PMU on this {platform.machine()} host, hardware counting unavailable"
+        print(f"  {msg}")
+        if in_ci:
+            print(f"::warning::{msg}")
+        return 0
+    if strict and sets is None:
+        print("  ERROR: libpfm missing")
+        return 1
     if strict and not any_counted:
-        print("  ERROR: no event set counted anything")
+        print("  ERROR: a core PMU exists but no event set counted anything")
         return 1
     return 0
 

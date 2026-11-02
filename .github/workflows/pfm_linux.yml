@@ -4,7 +4,8 @@ name: pfm on linux
 # so the hypervisor decides which events count (arm64: cycles, instructions,
 # branches, ops, L1D refills, the rest read 0). Mostly diagnostics: every step
 # prints what the host exposes, the last fails if nothing could be counted.
-# x64 runner CPUs vary (AMD EPYC / Intel Xeon), experimental until known.
+# x64 (AMD EPYC 7763 so far) exposes no core PMU at all: the job then checks
+# libpfm builds and the tools run, and warns instead of counting.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -26,7 +27,7 @@ jobs:
       matrix:
         include:
         - { arch: arm64, os: ubuntu-24.04-arm, native: -mcpu=native, experimental: false }
-        - { arch: x64, os: ubuntu-latest, native: -march=native, experimental: true }
+        - { arch: x64, os: ubuntu-latest, native: -march=native, experimental: false }
     env:
       PYTHONPATH: ${{ github.workspace }}
 
@@ -101,7 +102,7 @@ jobs:
       if: ${{ !cancelled() }}
       run: |
         python3 -m phlop.app.pfm.diagnose --strict > /dev/null \
-          || { echo "::error::no hardware events counted on $(uname -m), see the Diagnose step"; exit 1; }
+          || { echo "::error::counting failed on $(uname -m), see the Diagnose step"; exit 1; }
 
     - uses: actions/upload-artifact@v4
       if: ${{ !cancelled() }}
