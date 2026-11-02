@@ -54,21 +54,13 @@ class ScopeTimerFile:
 
 
 def lines_parser(lines):
+    """scope timer text format: "<id> <key>" lines, a blank line, then one
+    "<depth> <id> <start>:<time>" line per scope, depth is the nesting level
+    under the preceding shallower line"""
     id_keys = {}
     roots = []
-    curr = None
-    white_space = 0
-    stack = {i: 0 for i in range(128)}
-    stack_size = 0
 
-    def _parent():
-        assert stack_size >= 0
-        n = roots[stack[0]]
-        for s in range(1, stack_size):
-            assert stack[s] >= 0
-            n = n.c[stack[s]]
-        return n
-
+    idx = 0
     for idx, line in enumerate(lines):
         line = line.rstrip()
         if not line:
@@ -76,32 +68,20 @@ def lines_parser(lines):
         bits = line.split(" ")
         id_keys[int(bits[0])] = bits[1]
 
-    for i in range(idx, len(lines)):
-        line = lines[i].rstrip()  # drop new line characters
+    path = []  # path[d] is the latest node at depth d, no depth limit
+    for line in lines[idx:]:
         stripped_line = line.strip()
         if not stripped_line:  # last line might be blank
             continue
-        idx, node = RunTimerNode.from_scope_timer(stripped_line)
-        if idx == 0:  # is root node
-            stack[0] = len(roots)
+        depth, node = RunTimerNode.from_scope_timer(stripped_line)
+        if depth == 0:
             roots.append(node)
-            stack_size = 0
-            white_space = 0
-        else:  # is not root node
-            if idx > white_space:
-                parent = curr
-                curr.c.append(node)
-                stack_size += 1
-            elif idx == white_space:
-                parent = _parent()
-                parent.c.append(node)
-            elif idx < white_space:
-                stack_size -= white_space - idx
-                parent = _parent()
-                parent.c.append(node)
-            stack[stack_size] = len(parent.c) - 1
-            white_space = idx
-        curr = node
+        elif depth <= len(path):
+            path[depth - 1].c.append(node)
+        else:
+            raise ValueError(f"scope timer line nested without a parent: {line!r}")
+        del path[depth:]
+        path.append(node)
     return ScopeTimerFile(id_keys, roots)
 
 
@@ -110,11 +90,11 @@ def file_parser(times_filepath):
         return lines_parser(file.readlines())
 
 
-def write_scope_timings(scope_timer_file, outfile, sort_worst_first=True):
+def write_scope_timings(scope_timer_filepath, outfile, sort_worst_first=True):
     from contextlib import redirect_stdout
 
     with open(outfile, "w") as f, redirect_stdout(f):
-        print_scope_timings(scope_timer_file, sort_worst_first)
+        print_scope_timings(scope_timer_filepath, sort_worst_first)
 
 
 @dataclass
@@ -178,17 +158,14 @@ def dedupe_leafs(stf, n):
 
 
 def print_basic_scope_timings(
-    scope_timer_file_glob,
+    scope_timer_filepath,
     sort_worst_first=True,
     root_id=None,
     dedupe=False,
     printer=print,
 ):
-    scope_timer_files = [file_parser(f) for f in Path.cwd().glob(scope_timer_file_glob)]
-    if not scope_timer_files:
-        return
-
-    stf = scope_timer_files[0]
+    """prints one timer file, see print_variance_across for many"""
+    stf = file_parser(scope_timer_filepath)
     if sort_worst_first:
         stf.roots.sort(reverse=True, key=lambda x: x.t)
 
@@ -210,7 +187,7 @@ def print_basic_scope_timings(
 
 
 def print_scope_timings(
-    scope_timer_file_glob,
+    scope_timer_filepath,
     sort_worst_first=False,
     root_id="",
     pretty_print=True,
@@ -218,7 +195,7 @@ def print_scope_timings(
 ):
     if not pretty_print:
         print_basic_scope_timings(
-            scope_timer_file_glob, sort_worst_first, root_id, dedupe
+            scope_timer_filepath, sort_worst_first, root_id, dedupe
         )
         return
 
@@ -228,7 +205,7 @@ def print_scope_timings(
         lines.append(args)
 
     print_basic_scope_timings(
-        scope_timer_file_glob, sort_worst_first, root_id, dedupe, printer
+        scope_timer_filepath, sort_worst_first, root_id, dedupe, printer
     )
     if not lines:
         return

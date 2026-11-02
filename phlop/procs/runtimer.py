@@ -8,7 +8,7 @@ import time
 from collections import deque
 from contextlib import ExitStack, contextmanager, suppress
 
-from phlop.os import pushd, write_to_file
+from phlop.os import write_to_file
 from phlop.string import decode_bytes
 
 STALL_KILL_GRACE = 30  # seconds between terminate and kill of a stalled process
@@ -89,29 +89,37 @@ class _StallMonitor:
         return None
 
 
-def _kill_tree(p, grace):
-    """terminate p and, if psutil is available, its descendants (e.g. mpi ranks),
-    then kill whichever of them are still alive after `grace` seconds"""
+def _descendants(p):
+    """p's descendants if psutil is available (e.g. mpi ranks), else []"""
     try:
         import psutil
 
-        children = psutil.Process(p.pid).children(recursive=True)
+        return psutil.Process(p.pid).children(recursive=True)
     except Exception:  # noqa: BLE001 - psutil is optional, best effort
-        children = []
+        return []
 
-    def signal_all(procs, fn_name):
-        for proc in procs:
-            with suppress(Exception):  # may already be gone
-                getattr(proc, fn_name)()
+
+def _signal_all(procs, fn_name):
+    for proc in procs:
+        with suppress(Exception):  # may already be gone
+            getattr(proc, fn_name)()
+
+
+def _kill_tree(p, grace):
+    """terminate p and, if psutil is available, its descendants (e.g. mpi ranks),
+    then kill whichever of them are still alive after `grace` seconds"""
+    children = _descendants(p)
 
     deadline = time.monotonic() + grace
-    signal_all([p, *children], "terminate")
+    _signal_all([p, *children], "terminate")
     with suppress(subprocess.TimeoutExpired):
         p.wait(timeout=grace)  # not via psutil, Popen must reap p for its exit code
     if children:  # p may exit while children ignoring SIGTERM live on
+        import psutil
+
         remaining = max(0, deadline - time.monotonic())
         _, children = psutil.wait_procs(children, timeout=remaining)
-    signal_all([p, *children], "kill")  # no-op for p if it has exited
+    _signal_all([p, *children], "kill")  # no-op for p if it has exited
 
 
 @contextmanager
@@ -139,9 +147,14 @@ class RunTimer:
         popen=True,
         stall_timeout=None,  # seconds, see _StallMonitor (popen only)
         stall_busy_timeout=None,  # seconds, see _StallMonitor
+        on_popen=None,  # called with the Popen once started (popen only)
         **kwargs,
     ):
+        if working_dir and log_file_path:
+            # relative log paths are relative to working_dir, as the child's are
+            log_file_path = os.path.join(working_dir, log_file_path)
         self.cmd = cmd
+        self.on_popen = on_popen
         self.stdout = ""
         self.stderr = ""
         self.run_time = None
@@ -161,6 +174,11 @@ class RunTimer:
             "stdout": subprocess.DEVNULL,
             "stderr": subprocess.DEVNULL,
         }
+        if working_dir:
+            # not os.chdir: the cwd is process wide, and jobs run on threads
+            if not os.path.isdir(working_dir):
+                raise RuntimeError(f"phlop: working_dir does not exist: {working_dir}")
+            ekwargs["cwd"] = working_dir
         if not capture_output and log_file_path:
             stdout_path = f"{log_file_path}.stdout"
             stderr_path = f"{log_file_path}.stderr"
@@ -176,19 +194,10 @@ class RunTimer:
                 {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE},
             )
 
-        def go():
-            if popen:
-                self._popen(**ekwargs, **kwargs)
-            else:
-                self._run(
-                    check=check, capture_output=capture_output, **ekwargs, **kwargs
-                )
-
-        if working_dir:
-            with pushd(working_dir):
-                go()
+        if popen:
+            self._popen(**ekwargs, **kwargs)
         else:
-            go()
+            self._run(check=check, capture_output=capture_output, **ekwargs, **kwargs)
 
     def _locals(self):
         return self.capture_output, self.log_file_path, self.logging
@@ -222,6 +231,13 @@ class RunTimer:
         start = time.time()
         with _opened_streams(kwargs) as stream_kwargs:
             p = subprocess.Popen(self.cmd, **stream_kwargs)
+            if self.on_popen:
+                try:
+                    self.on_popen(p)
+                except BaseException:
+                    p.kill()
+                    p.communicate()  # reap, drain pipes
+                    raise
             self.stdout, self.stderr = self._communicate(p)
             self.run_time = time.time() - start
             self.exitcode = p.returncode

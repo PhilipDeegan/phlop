@@ -1,6 +1,6 @@
 [project]
 name = "phlop"
-version = "0.0.45"
+version = "0.0.46"
 
 dependencies = [ "dill", "pyyaml" ]
 

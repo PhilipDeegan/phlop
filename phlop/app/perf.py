@@ -62,10 +62,12 @@ def parse_stat_csv(file, force_kernel_space=False):
 
 
 def parse_stat_json(file):
+    """`perf stat -j` writes one json object per line, after `# started on`
+    comment lines when given `-o`. Returns the objects, one per event."""
     import json
 
-    with open(file, newline="") as f:
-        return json.loads(f)
+    with open(file) as f:
+        return [json.loads(line) for line in f if line.lstrip().startswith("{")]
 
 
 # https://perf.wiki.kernel.org/index.php/Tutorial
@@ -83,7 +85,6 @@ def out_str(output_file):
 
 def stat_cmd(exe, events, output_file, options=""):
     return f"perf stat -j {options} {out_str(output_file)} {events_str(events)} {exe}"
-    return f"perf stat -x , {options} {out_str(output_file)} {events_str(events)} {exe}"
 
 
 def stat(exe, events=stat_events, output_file=None):

@@ -633,6 +633,91 @@ class RunTimerStallTest(unittest.TestCase):
         self.assertFalse(child_alive)
 
 
+class ReviewFixesTest(unittest.TestCase):
+    """PR #61 review: granularity check, --regex on grouped jobs, unique group
+    log paths, Job subclasses without on_popen, killing late/orphaned children"""
+
+    def test_empty_granularity_is_rejected(self):
+        from phlop.testing.test_cases import GRANULARITY, _check_granularity
+
+        self.assertEqual(_check_granularity(None), GRANULARITY)
+        with self.assertRaises(ValueError):
+            _check_granularity("")
+
+    def test_regex_matches_method_inside_grouped_class_job(self):
+        from phlop.run.test_cases import filter_out_regex_fails
+
+        batches = load_config_tests("tests/_phlop/run", granularity="class")
+        grouped = [
+            j for b in batches for j in b.tests if "ResolveCoresTest " in f"{j.cmd} "
+        ]
+        self.assertEqual(len(grouped), 1)  # bare class name, no method in cmd
+        self.assertNotIn("test_mpirun_dash_n", grouped[0].cmd)
+
+        args = cli_args_parser().parse_args(["-r", "test_mpirun_dash_n$"])
+        kept = [j for b in filter_out_regex_fails(args, batches) for j in b.tests]
+        self.assertEqual([j.cmd for j in kept], [grouped[0].cmd])
+
+    def test_group_log_paths_are_unique(self):
+        from phlop.testing.test_cases import _unique_path
+
+        used = {}
+        paths = [_unique_path("logs/f", used) for _ in range(3)]
+        self.assertEqual(paths, ["logs/f", "logs/f_g1", "logs/f_g2"])
+
+    def test_job_subclass_without_on_popen(self):
+        import queue
+        import threading
+
+        from phlop.procs.parallel_processor import _runner
+
+        class OldStyleJob(Job):
+            def __call__(self):  # pre on_popen signature
+                return "ran"
+
+        q = queue.Queue()
+        _runner(OldStyleJob(cmd="true"), 0, q, {}, threading.Event())
+        self.assertEqual(q.get_nowait(), (0, "ran", None))
+
+    def test_child_popened_after_cancel_is_killed(self):
+        import queue
+        import threading
+
+        from phlop.procs.parallel_processor import _runner
+
+        cancelled = threading.Event()
+        ignore_term = (
+            "import signal, time; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)"
+        )
+
+        class RacingJob(Job):
+            def __call__(self, on_popen=None):
+                cancelled.set()  # cancel lands after _runner's check
+                return super().__call__(on_popen=on_popen)
+
+        job = RacingJob(cmd=shlex.join([sys.executable, "-c", ignore_term]))
+        q = queue.Queue()
+        start = time.monotonic()
+        _runner(job, 0, q, {}, cancelled)
+        _, _, error = q.get_nowait()
+        self.assertIsNotNone(error)  # killed: non zero exit
+        self.assertLess(time.monotonic() - start, 30)
+
+    def test_child_is_killed_when_on_popen_raises(self):
+        started = []
+
+        def on_popen(p):
+            started.append(p)
+            raise RuntimeError("on_popen failed")
+
+        with self.assertRaisesRegex(RuntimeError, "on_popen failed"):
+            RunTimer(
+                [sys.executable, "-c", "import time; time.sleep(60)"], on_popen=on_popen
+            )
+        self.assertIsNotNone(started[0].poll())  # reaped, not left running
+
+
 def _has_psutil():
     try:
         import psutil  # noqa: F401

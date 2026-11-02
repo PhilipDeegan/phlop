@@ -207,7 +207,8 @@ struct RunTimerReport
     auto operator()(std::size_t i) { return snapshots[i].get(); }
     auto size() { return snapshots.size(); }
 
-    std::vector<std::shared_ptr<RunTimerReportSnapshot>> snapshots;
+    // sole owner: traces/childs hold raw pointers into these
+    std::vector<std::unique_ptr<RunTimerReportSnapshot>> snapshots;
 };
 
 
@@ -267,9 +268,6 @@ struct ScopeTimer
         {
             this->pscope                       = detail::_current_ScopeTimer<Clock>;
             detail::_current_ScopeTimer<Clock> = this;
-
-            if (this->pscope)
-                pscope->childs.reserve(pscope->childs.size() + 1);
         }
     }
 
@@ -280,7 +278,7 @@ struct ScopeTimer
             detail::_current_ScopeTimer<Clock> = this->pscope;
 
             auto& s = *r.snapshots.emplace_back(
-                std::make_shared<RunTimerReportSnapshot>(&r, parent, start, now() - start));
+                std::make_unique<RunTimerReportSnapshot>(&r, parent, start, now() - start));
 
             if (this->pscope)
                 pscope->childs.emplace_back(&s);

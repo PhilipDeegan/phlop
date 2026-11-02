@@ -36,10 +36,26 @@ namespace detail
 {
     void inline write_timer_file(); // defined below after ScopeTimerMan
 
-    inline std::size_t max_construct_time = 0;
-    inline std::size_t max_destruct_time  = 0;
+#if defined(PHLOP_SCOPE_TIMER_SELF_STATS)
+    // the timer's own cost per scope, off unless defined, see print_self_stats
+    struct SelfStat
+    {
+        std::uint64_t count = 0, total = 0, max = 0;
 
-    static ScopeTimerMan* instance = nullptr;
+        void add(std::uint64_t const t)
+        {
+            ++count;
+            total += t;
+            max = std::max(max, t);
+        }
+        double mean() const
+        {
+            return count ? static_cast<double>(total) / static_cast<double>(count) : 0;
+        }
+    };
+
+    inline SelfStat construct_stats, destruct_stats;
+#endif
 
 } // namespace detail
 
@@ -93,11 +109,22 @@ struct ScopeTimerMan
         return *this;
     }
 
+    // ns per ScopeTimer constructor/destructor while active, each including
+    // one clock read for the measurement itself. Mean is the typical cost, max
+    // is usually a one off (page fault, first allocation, preemption)
     void print_self_stats() const
     {
-        std::cout << "PHLOP SCOPE TIMER STATS" << std::endl;
-        std::cout << " max_construct_time " << detail::max_construct_time << std::endl;
-        std::cout << " max_destruct_time  " << detail::max_destruct_time << std::endl;
+#if defined(PHLOP_SCOPE_TIMER_SELF_STATS)
+        auto const print = [](char const* const name, detail::SelfStat const& s) {
+            std::cout << " " << name << " n=" << s.count << " mean=" << s.mean()
+                      << "ns max=" << s.max << "ns\n";
+        };
+        std::cout << "PHLOP SCOPE TIMER STATS\n";
+        print("construct", detail::construct_stats);
+        print("destruct ", detail::destruct_stats);
+#else
+        std::cout << "PHLOP SCOPE TIMER STATS: build with -DPHLOP_SCOPE_TIMER_SELF_STATS\n";
+#endif
     }
 
     static void reset(bool const active = true)
@@ -139,7 +166,8 @@ struct RunTimerReport
     auto operator()(std::size_t i) { return snapshots[i].get(); }
     auto size() { return snapshots.size(); }
 
-    std::vector<std::shared_ptr<RunTimerReportSnapshot>> snapshots;
+    // sole owner: traces/childs hold raw pointers into these
+    std::vector<std::unique_ptr<RunTimerReportSnapshot>> snapshots;
 };
 
 
@@ -165,14 +193,12 @@ struct ScopeTimer
     {
         if (ScopeTimerMan::INSTANCE().active)
         {
-            auto const begin                   = now();
             this->pscope                       = detail::_current_ScopeTimer<Clock>;
             detail::_current_ScopeTimer<Clock> = this;
 
-            if (this->pscope)
-                pscope->childs.reserve(pscope->childs.size() + 1);
-
-            detail::max_construct_time = std::max(detail::max_construct_time, now() - begin);
+#if defined(PHLOP_SCOPE_TIMER_SELF_STATS)
+            detail::construct_stats.add(now() - _self_start);
+#endif
         }
     }
 
@@ -180,11 +206,13 @@ struct ScopeTimer
     {
         if (ScopeTimerMan::INSTANCE().active)
         {
-            auto const begin                   = now();
+#if defined(PHLOP_SCOPE_TIMER_SELF_STATS)
+            auto const self_start = now();
+#endif
             detail::_current_ScopeTimer<Clock> = this->pscope;
 
             auto& s = *r.snapshots.emplace_back(
-                std::make_shared<RunTimerReportSnapshot>(&r, parent, start, now() - start));
+                std::make_unique<RunTimerReportSnapshot>(&r, parent, start, now() - start));
 
             if (this->pscope)
                 pscope->childs.emplace_back(&s);
@@ -196,7 +224,9 @@ struct ScopeTimer
 
             ScopeTimerMan::INSTANCE().report_stack_ptr = parent;
 
-            detail::max_destruct_time = std::max(detail::max_destruct_time, now() - begin);
+#if defined(PHLOP_SCOPE_TIMER_SELF_STATS)
+            detail::destruct_stats.add(now() - self_start);
+#endif
         }
     }
 
@@ -209,6 +239,10 @@ struct ScopeTimer
         return self;
     }
 
+#if defined(PHLOP_SCOPE_TIMER_SELF_STATS)
+    // first member: initialised before the others, so they're measured too
+    std::uint64_t const _self_start = now();
+#endif
     RunTimerReport& r;
     RunTimerReport* parent    = ScopeTimerMan::INSTANCE().report_stack_ptr;
     RunTimerReport* child     = nullptr;

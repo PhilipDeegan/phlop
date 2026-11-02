@@ -1,0 +1,5 @@
+# https://docs.coderabbit.ai/reference/configuration
+reviews:
+  pre_merge_checks:
+    docstrings:
+      mode: "off" # docstrings only where a function isn't obvious from its name

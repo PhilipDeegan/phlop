@@ -12,6 +12,7 @@ from pathlib import Path
 from phlop import reflection as refl
 from phlop.dict import ValDict
 from phlop.logger import getLogger
+from phlop.os import usable_cores
 from phlop.procs.parallel_processor import LoggingMode
 from phlop.testing import parallel_processor as pp
 from phlop.testing import test_cases as tc
@@ -35,8 +36,18 @@ def cli_args_parser():
         postfix="Append string to execution string",
         dump="Dump discovered tests to filepath (hex-encoded dill pickle), no execution",
         load="globbing filepath for files exported from dump",
-        regex="Filter out non-matching execution strings",
-        reverse="reverse order - higher core count tests preferred",
+        regex=(
+            "Filter out non-matching execution strings (with --granularity "
+            "class/file a match runs the whole class/file)"
+        ),
+        reverse=(
+            "reverse discovery order (jobs always start widest core count "
+            "first, this reverses order among equal core counts)"
+        ),
+        granularity=(
+            "Python tests per process: method (isolated, pays startup + "
+            "imports per test), class or file (one process for many tests)"
+        ),
         logging="0=off, 1=on non zero exit code, 2=always",
         rerun="number of times to re-execute discovered tests",
         no_phlop_exec_yaml=(
@@ -58,7 +69,9 @@ def cli_args_parser():
         description=USAGE, formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument("--cmake", action="store_true", default=False, help=_help.cmake)
-    parser.add_argument("-c", "--cores", type=int, default=1, help=_help.cores)
+    parser.add_argument(
+        "-c", "--cores", type=int, default=usable_cores(), help=_help.cores
+    )
     # parser.add_argument("-d", "--dir", default=".", help=_help.dir)
     parser.add_argument("-i", "--input", default=".", help=_help.input)
     parser.add_argument(
@@ -74,6 +87,13 @@ def cli_args_parser():
         "-R", "--reverse", action="store_true", default=False, help=_help.reverse
     )
     parser.add_argument("--rerun", type=int, default=1, help=_help.rerun)
+    parser.add_argument(
+        "-g",
+        "--granularity",
+        choices=tc.GRANULARITIES,
+        default=tc.GRANULARITY,
+        help=_help.granularity,
+    )
     parser.add_argument("--logging", type=int, default=1, help=_help.logging)
     parser.add_argument(
         "--no-phlop-exec-yaml",
@@ -101,6 +121,7 @@ def verify_cli_args(cli_args):
 
 
 def get_test_cases(cli_args):
+    tc.GRANULARITY = cli_args.granularity  # for paths without the parameter
     if cli_args.cmake:
         return tc.load_cmake_tests(
             cli_args.input, test_cmd_pre=cli_args.prefix, test_cmd_post=cli_args.postfix
@@ -112,6 +133,7 @@ def get_test_cases(cli_args):
             test_cmd_pre=cli_args.prefix,
             test_cmd_post=cli_args.postfix,
             tags=tags,
+            granularity=cli_args.granularity,
         )
     if os.path.isfile(cli_args.input):
         return [
@@ -120,6 +142,7 @@ def get_test_cases(cli_args):
                     refl.classes_in_file(cli_args.input, unittest.TestCase),
                     test_cmd_pre=cli_args.prefix,
                     test_cmd_post=cli_args.postfix,
+                    granularity=cli_args.granularity,
                 ),
                 1,
             )
@@ -130,6 +153,7 @@ def get_test_cases(cli_args):
                 refl.classes_in_directory(cli_args.input, unittest.TestCase),
                 test_cmd_pre=cli_args.prefix,
                 test_cmd_post=cli_args.postfix,
+                granularity=cli_args.granularity,
             ),
             1,
         )
@@ -151,6 +175,8 @@ def dump_batches(cli_args):
 
 
 def filter_out_regex_fails(cli_args, test_batches):
+    """keep jobs whose cmd, or any Class.method grouped into them, matches
+    --regex (a plain substring if it doesn't compile)"""
     if not cli_args.regex:
         return test_batches
     try:
@@ -168,7 +194,8 @@ def filter_out_regex_fails(cli_args, test_batches):
     filtered = {tb.cores: [] for tb in test_batches}
     for tb in test_batches:
         for test in tb.tests:
-            if op(test.cmd):
+            names = getattr(test, "test_names", None) or ()
+            if op(test.cmd) or any(op(name) for name in names):
                 filtered[tb.cores].append(test)
     return [tc.TestBatch(v, k) for k, v in filtered.items() if v]
 
@@ -244,7 +271,10 @@ def main():
         test_batches = duplicate_reruns(cli_args, test_batches)
 
         if cli_args.reverse:
-            test_batches = list(reversed(test_batches))
+            test_batches = [
+                tc.TestBatch(list(reversed(tb.tests)), tb.cores)
+                for tb in reversed(test_batches)
+            ]
 
         pp.process(
             test_batches,
