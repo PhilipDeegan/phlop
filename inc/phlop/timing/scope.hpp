@@ -14,6 +14,13 @@
 #include <cstdint>
 #include <type_traits>
 
+// msvc ignores [[no_unique_address]], a time only Scope must stay a plain Timer
+#if defined(_MSC_VER)
+#define PHLOP_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
+#else
+#define PHLOP_NO_UNIQUE_ADDRESS [[no_unique_address]]
+#endif
+
 #if !defined(PHLOP_SCOPE_DEFAULT)
 #define PHLOP_SCOPE_DEFAULT time
 #endif
@@ -107,7 +114,7 @@ struct ScopeT
     };
 
     Timer timer;
-    [[no_unique_address]] std::conditional_t<(level > 0), Counting, NoCounting> state;
+    PHLOP_NO_UNIQUE_ADDRESS std::conditional_t<(level > 0), Counting, NoCounting> state;
 };
 
 } // namespace phlop

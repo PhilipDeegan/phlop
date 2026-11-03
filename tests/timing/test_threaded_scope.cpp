@@ -7,6 +7,7 @@
 #include "phlop/timing/threaded_scope_timer.hpp"
 
 #include <ctime>
+#include <atomic>
 #include <thread>
 #include <vector>
 #include <iostream>
@@ -21,7 +22,7 @@ double work(std::size_t const n, int const reps)
     {
         for (std::size_t i = 0; i < n; ++i)
             c[i] = a[i] * 1.000001 + c[i];
-        __asm__ volatile("" ::: "memory");
+        std::atomic_signal_fence(std::memory_order_seq_cst); // keep each pass
     }
     return c[n / 2];
 }

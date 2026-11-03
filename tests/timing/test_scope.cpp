@@ -6,6 +6,7 @@
 #include "phlop/timing/scope_timer.hpp"
 
 #include <ctime>
+#include <atomic>
 #include <vector>
 #include <iostream>
 
@@ -22,7 +23,7 @@ double fma_loop(std::vector<double>& c, std::vector<double> const& a, int const 
         PHLOP_SCOPE("fma_pass", time, perf_light);
         for (std::size_t i = 0; i < c.size(); ++i)
             c[i] = a[i] * 1.000001 + c[i];
-        __asm__ volatile("" ::: "memory");
+        std::atomic_signal_fence(std::memory_order_seq_cst); // keep each pass
     }
     return c[c.size() / 2];
 }
