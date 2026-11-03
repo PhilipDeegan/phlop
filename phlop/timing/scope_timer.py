@@ -74,6 +74,13 @@ class ScopeTimerFile:
     def __call__(self, id):
         return self.fn_for(id)
 
+    def perf_warnings(self):
+        """why the counts may be inaccurate: generic events, forced PMU"""
+        from phlop.app.pfm.sets import scope_file_warnings
+
+        pmus = {level.pmu for level in self.perf.values()}
+        return scope_file_warnings(pmus, bool((self.ctx or {}).get("pmu_forced")))
+
     def perf_counts(self, node):
         """{event alias: count} for a scope, inclusive of its children"""
         if not node.counts or node.level not in self.perf:
@@ -349,6 +356,8 @@ def print_scope_perf(
     dedupe: same named siblings on one line, xN with total and mean time,
     metrics from their summed counts. verbose: also the raw event counts"""
     stf = file_parser(scope_timer_filepath)
+    for w in stf.perf_warnings():
+        printer(f"WARNING: {w}")
 
     def fmt(v, label=None):
         if v is None:

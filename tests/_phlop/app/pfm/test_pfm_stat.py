@@ -149,6 +149,39 @@ class PfmStatTest(unittest.TestCase):
             "amd64_fam1ah_zen5/light;cycles=0x76,instructions=0xc0,fetches=0x10000c865",
         )
 
+    def test_scope_env_generic_is_perf_hardware(self):
+        sets = {s.name: s for s in generic}
+        env = stat.scope_env("light", sets, "generic")
+        self.assertEqual(
+            env,
+            "generic/light;cycles=hw:0x0,instructions=hw:0x1,branches=hw:0x4,"
+            "br_misp=hw:0x5",
+        )
+        self.assertIn("cache_misses=hw:0x3", stat.scope_env("ipc", sets, "generic"))
+
+    def test_pmu_warnings(self):
+        from phlop.app.pfm.sets import pmu_warnings
+
+        self.assertEqual(pmu_warnings("amd64_fam1ah_zen5", ["amd64_fam1ah_zen5"]), [])
+
+        (w,) = pmu_warnings("generic", ["amd64_fam19h_zen4"])  # unknown CPU
+        self.assertIn("no phlop event sets for PMU amd64_fam19h_zen4", w)
+        self.assertIn("potentially inaccurate", w)
+        self.assertIn("LIBPFM_FORCE_PMU=amd64_fam19h_zen4", w)  # how to add sets
+
+        (w,) = pmu_warnings("generic", [])  # libpfm sees nothing
+        self.assertIn("./sh/setup_pfm.sh", w)
+
+        (w,) = pmu_warnings("generic", [], forced="arm_n2")  # not in this build
+        self.assertIn("LIBPFM_FORCE_PMU=arm_n2 is not a PMU model", w)
+
+        # forced to a model with sets, on another CPU: encodings are not this CPU's
+        (w,) = pmu_warnings("arm_n2", ["arm_n2"], "arm_n2", ["arm_v2"])
+        self.assertIn("this CPU is arm_v2", w)
+        self.assertIn("potentially wrong", w)
+        self.assertIn("unset LIBPFM_FORCE_PMU", w)
+        self.assertEqual(pmu_warnings("arm_n2", ["arm_n2"], "arm_n2", ["arm_n2"]), [])
+
     def test_access_warnings(self):
         ok, warnings = perf.access_warnings()
         self.assertIsInstance(ok, bool)

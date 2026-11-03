@@ -154,8 +154,10 @@ def diagnose_libpfm():
     from phlop.app.pfm.stat import pmu_counters
 
     print(f"  event sets for: {pmu}, counters: {pmu_counters(pmu)}")
-    if pmu == "generic":
-        print(f"  WARNING: no event sets for {pmus}, only perf generic events")
+    if ce.forced_pmu():
+        print(f"  {ce.FORCE_PMU_ENV}={ce.forced_pmu()}, this CPU: {ce.host_pmus()}")
+    for w in ce.pmu_warnings(pmu):
+        print(f"  WARNING: {w}")
     return sets
 
 

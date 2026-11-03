@@ -57,6 +57,20 @@ jobs:
     - name: Python deps
       run: python3 -m pip install -r requirements.txt
 
+    - name: Event sets encode, forced PMUs
+      # every set's events via LIBPFM_FORCE_PMU, no PMU needed: names, not counts
+      run: python3 -m unittest -v tests._phlop.app.pfm.test_pfm_sets_encode
+
+    - name: Generic fallback warns
+      # a model without phlop sets: generic events, warnings on stderr
+      if: ${{ matrix.arch == 'x64' }}
+      run: |
+        LIBPFM_FORCE_PMU=amd64_fam19h_zen4 python3 -m phlop.app.pfm.stat \
+          --env perf_light=light --env perf_all=ipc 2> warnings.txt | tee env.txt
+        cat warnings.txt
+        grep -q "potentially inaccurate" warnings.txt
+        grep -q "generic/light;cycles=hw:0x0" env.txt
+
     - name: CPU
       run: lscpu || cat /proc/cpuinfo | head -30
 

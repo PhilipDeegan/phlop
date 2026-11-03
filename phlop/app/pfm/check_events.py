@@ -3,6 +3,7 @@
 import logging
 import os
 import shlex
+import subprocess
 from functools import lru_cache
 from pathlib import Path
 
@@ -14,6 +15,7 @@ FILE_DIR = Path(__file__).resolve().parent
 
 logger = logging.getLogger(__name__)
 check_events_start = "Total events:"
+FORCE_PMU_ENV = "LIBPFM_FORCE_PMU"  # libpfm encodes for this model, not the host's
 
 
 def pfm_examples_dir():
@@ -67,11 +69,53 @@ def _parse_detected_pmus(lines):
     return pmus
 
 
+def _cpu_pmus(pmus):
+    return [p for p in pmus if p not in ("perf", "perf_raw")]
+
+
 @lru_cache(maxsize=1)
 def detected_pmus():
-    """PMU models libpfm detects on this machine, excluding the generic perf ones"""
-    pmus = _parse_detected_pmus(run_check_events(""))
-    return [p for p in pmus if p not in ("perf", "perf_raw")]
+    """PMU models libpfm detects on this machine, excluding the generic perf
+    ones. With LIBPFM_FORCE_PMU set: only the forced model, if libpfm knows it"""
+    return _cpu_pmus(_parse_detected_pmus(run_check_events("")))
+
+
+def forced_pmu():
+    """the LIBPFM_FORCE_PMU model, None if not forced"""
+    return os.environ.get(FORCE_PMU_ENV) or None
+
+
+@lru_cache(maxsize=1)
+def host_pmus():
+    """PMU models libpfm detects for this CPU, ignoring LIBPFM_FORCE_PMU"""
+    if not forced_pmu():
+        return detected_pmus()
+    env = {k: v for k, v in os.environ.items() if k != FORCE_PMU_ENV}
+    try:
+        out = subprocess.run(
+            [str(pfm_examples_dir() / "check_events")],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout
+    except OSError:
+        return []
+    return _cpu_pmus(_parse_detected_pmus(out.splitlines()))
+
+
+def pmu_warnings(pmu):
+    """sets.pmu_warnings for the sets picked for pmu on this host"""
+    from phlop.app.pfm.sets import pmu_warnings as warnings_for
+
+    forced = forced_pmu()
+    return warnings_for(pmu, detected_pmus(), forced, host_pmus() if forced else None)
+
+
+def forced_encodings(pmu):
+    """True if pmu's sets are encoded for a forced model that is not this CPU"""
+    forced = forced_pmu()
+    return pmu != "generic" and bool(forced) and forced not in host_pmus()
 
 
 @lru_cache(maxsize=1)

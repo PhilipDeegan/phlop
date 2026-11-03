@@ -22,7 +22,7 @@ from functools import cache
 from phlop.app import perf
 from phlop.app.pfm import check_events as ce
 from phlop.app.pfm import host
-from phlop.app.pfm.sets import DEFAULT_SETS, EventSet, sets_for
+from phlop.app.pfm.sets import DEFAULT_SETS, PERF_HW_IDS, EventSet, sets_for
 
 NOT_COUNTED = ("<not counted>", "<not supported>")
 
@@ -212,6 +212,7 @@ def stat(
         raise ValueError(f"unknown sets {unknown} for {pmu}, have: {list(sets)}")
 
     can_count, warnings = perf.access_warnings(kernel)
+    warnings = ce.pmu_warnings(pmu) + warnings
     if shutil.which("perf") is None:
         warnings.append("perf not on PATH (linux-tools-$(uname -r) / linux-perf)")
         can_count = False
@@ -276,6 +277,8 @@ def list_sets(out=sys.stdout):
     pmu, sets = sets_for(ce.detected_pmus())
     budget = available_counters(pmu)
     print(f"PMU: {pmu}, counters available: {budget}", file=out)
+    for w in ce.pmu_warnings(pmu):
+        print(f"WARNING: {w}", file=out)
     print(f"default sets: {','.join(DEFAULT_SETS)}", file=out)
     for s in sets.values():
         print(f"\n{s.name} ({s.counters_needed()} counters): {s.desc}", file=out)
@@ -289,7 +292,8 @@ ENV_LEVELS = {"perf_light": "PHLOP_PERF_LIGHT", "perf_all": "PHLOP_PERF_ALL"}
 
 def scope_env(set_name, sets=None, pmu=None):
     """PHLOP_SCOPE env value for an event set, see perf_counters.hpp:
-    "<pmu>/<set>;<alias>=<raw config>,..." """
+    "<pmu>/<set>;<alias>=<config>,...", config raw, or "hw:<id>" for perf
+    generic events (PERF_TYPE_HARDWARE)"""
     if sets is None:
         pmu, sets = sets_for(ce.detected_pmus())
     eset = sets[set_name]
@@ -298,7 +302,10 @@ def scope_env(set_name, sets=None, pmu=None):
     items = []
     for alias, spec in eset.events.items():
         if spec.startswith("perf:"):
-            raise ValueError(f"{set_name}: perf generic event {spec} has no raw config")
+            if spec[5:] not in PERF_HW_IDS:
+                raise ValueError(f"{set_name}: {spec} is not a perf hardware event")
+            items.append(f"{alias}=hw:{PERF_HW_IDS[spec[5:]]:#x}")
+            continue
         if spec.startswith("raw:"):
             config = ce.pmu_terms_config(spec[4:])
         else:
@@ -308,8 +315,11 @@ def scope_env(set_name, sets=None, pmu=None):
 
 
 def scope_env_exports(level_sets):
-    """shell export lines for ["perf_light=light", "perf_all=topdown"]"""
+    """shell export lines for ["perf_light=light", "perf_all=topdown"].
+    Warnings go to stderr, stdout is for eval"""
     pmu, sets = sets_for(ce.detected_pmus())
+    for w in ce.pmu_warnings(pmu):
+        print(f"WARNING: {w}", file=sys.stderr)
     lines, union = [], {}  # config -> counters it costs
     for item in level_sets:
         level, _, set_name = item.partition("=")
@@ -325,6 +335,8 @@ def scope_env_exports(level_sets):
     from phlop.app.pfm import host
 
     ctx = {k: v for k, v in host.context().items() if k != "cpu_flags"}
+    if ce.forced_encodings(pmu):  # timers and scope file readers warn
+        ctx["pmu_forced"] = 1
     ctx = ",".join(f"{k}={int(v)}" for k, v in ctx.items() if v is not None)
     lines.append(f"export PHLOP_PERF_CTX='{ctx}'")  # written as the file's #ctx
     budget, needed = available_counters(pmu), sum(union.values())

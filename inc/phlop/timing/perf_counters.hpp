@@ -8,7 +8,11 @@
 //   eval "$(python3 -m phlop.app.pfm.stat --env perf_light=light --env perf_all=topdown)"
 // which exports eg
 //   PHLOP_PERF_LIGHT="amd64_fam1ah_zen5/light;cycles=0x76,instructions=0xc0,..."
-// format: "<label>;<name>=<raw config>,..." for perf_event_attr type RAW.
+// format: "<label>;<name>=<config>,...", config is perf_event_attr type RAW, or
+// "hw:<id>" for type HARDWARE: perf generic events, used on CPUs without phlop
+// event sets, label "generic/<set>". Counts are then potentially inaccurate,
+// init() says so, as it does for PHLOP_PERF_CTX "pmu_forced=1": events encoded
+// for a libpfm PMU forced via LIBPFM_FORCE_PMU, not this CPU's.
 //
 // Config: process wide, the union of both levels' events, set by init().
 // Group: per thread, perf_event_open counts only the calling thread, so each
@@ -46,6 +50,20 @@ inline constexpr std::array<char const*, 3> level_env{"", "PHLOP_PERF_LIGHT", "P
 // measuring host values the metric formulas need, eg "slots=5,sve_bits=128",
 // written to the timer file as "#ctx ..." so readers on other hosts use them
 inline constexpr char const* ctx_env = "PHLOP_PERF_CTX";
+
+// perf_event_attr.type values, stable kernel ABI, defined here for non linux
+inline constexpr std::uint32_t type_hardware = 0, type_raw = 4;
+#if defined(__linux__)
+static_assert(type_hardware == PERF_TYPE_HARDWARE and type_raw == PERF_TYPE_RAW);
+#endif
+
+struct Event
+{
+    std::uint32_t type = type_raw;
+    std::uint64_t config = 0;
+
+    bool operator==(Event const&) const = default;
+};
 
 struct Level
 {
@@ -100,6 +118,9 @@ struct Config
         return lines;
     }
 
+    // generic events or a forced PMU: printed once, after a successful init
+    void accuracy_notices();
+
     // printed once per process, the first thread to fail says why
     void report(std::string const& why)
     {
@@ -111,7 +132,7 @@ struct Config
     std::string error;
     std::string ctx; // PHLOP_PERF_CTX
     std::array<Level, level_env.size()> levels{};
-    std::vector<std::uint64_t> configs; // union of all levels, group order
+    std::vector<Event> configs; // union of all levels, group order
     std::atomic<std::uint64_t> generation{1};
     std::atomic<std::uint64_t> read_failures{0}, open_failures{0};
     std::atomic<bool> reported{false};
@@ -132,17 +153,24 @@ private:
             auto const eq    = item.find('=');
             if (eq == std::string_view::npos)
                 return false;
-            std::string const value{item.substr(eq + 1)};
-            char* end                  = nullptr;
-            std::uint64_t const config = std::strtoull(value.c_str(), &end, 0);
-            if (end == value.c_str() or *end)
+            auto value = item.substr(eq + 1);
+            Event event;
+            if (value.starts_with("hw:"))
+            {
+                event.type = type_hardware;
+                value.remove_prefix(3);
+            }
+            std::string const number{value};
+            char* end    = nullptr;
+            event.config = std::strtoull(number.c_str(), &end, 0);
+            if (end == number.c_str() or *end)
                 return false;
 
             std::size_t idx = 0; // shared with the other level if the same event
-            while (idx < configs.size() and configs[idx] != config)
+            while (idx < configs.size() and configs[idx] != event)
                 ++idx;
             if (idx == configs.size())
-                configs.emplace_back(config);
+                configs.emplace_back(event);
             level.names.emplace_back(item.substr(0, eq));
             level.idx.emplace_back(idx);
             s.remove_prefix(comma == std::string_view::npos ? s.size() : comma + 1);
@@ -234,8 +262,8 @@ private:
         {
             perf_event_attr attr{};
             attr.size           = sizeof(attr);
-            attr.type           = PERF_TYPE_RAW;
-            attr.config         = configs[i];
+            attr.type           = configs[i].type;
+            attr.config         = configs[i].config;
             attr.exclude_kernel = 1;
             attr.exclude_hv     = 1;
             attr.read_format    = PERF_FORMAT_GROUP | PERF_FORMAT_TOTAL_TIME_ENABLED
@@ -248,8 +276,9 @@ private:
             if (fd < 0)
             {
                 char hex[32];
-                std::snprintf(hex, sizeof(hex), "%#llx",
-                              static_cast<unsigned long long>(configs[i]));
+                std::snprintf(hex, sizeof(hex), "%s%#llx",
+                              configs[i].type == type_hardware ? "hw:" : "",
+                              static_cast<unsigned long long>(configs[i].config));
                 return fail(std::string{"perf_event_open config "} + hex + ": "
                             + std::strerror(errno)
                             + (errno == EACCES or errno == EPERM
@@ -320,7 +349,35 @@ inline bool Config::init()
         close();
         error = keep;
     }
+    else
+        accuracy_notices();
     return ok;
+}
+
+
+// once per process: counts that are potentially inaccurate, why, how to resolve
+inline void Config::accuracy_notices()
+{
+    static std::atomic<bool> printed{false};
+    bool generic = false;
+    for (auto const& level : levels)
+        generic = generic or level.label.starts_with("generic/");
+    bool const forced = ("," + ctx + ",").find(",pmu_forced=1,") != std::string::npos;
+    if (!(generic or forced) or printed.exchange(true))
+        return;
+    if (generic)
+        std::fprintf(stderr,
+                     "phlop perf counters: WARNING: perf generic events, no phlop event sets"
+                     " for this CPU. Counts are potentially inaccurate: the kernel maps"
+                     " them per CPU (cache events especially), compare runs on the same CPU"
+                     " model only. Resolve: add sets for this CPU in phlop/app/pfm/sets.py,"
+                     " see python3 -m phlop.app.pfm.stat --list\n");
+    if (forced)
+        std::fprintf(stderr,
+                     "phlop perf counters: WARNING: events encoded for a libpfm PMU forced"
+                     " via LIBPFM_FORCE_PMU, not this CPU's. Counts are potentially wrong:"
+                     " events may count something else or nothing. Resolve: regenerate"
+                     " PHLOP_PERF_* without LIBPFM_FORCE_PMU\n");
 }
 
 

@@ -571,7 +571,41 @@ zen5 = [
 # --------------------------------------------------------------------------- #
 # any CPU: perf generic hardware events
 
+# CPUs without sets above: perf's generic hardware events, which the kernel maps
+# to each CPU's own, so they count on any x86 or arm64 with a PMU. What they
+# count differs per CPU (see GENERIC_ACCURACY), sets only, no topdown or flops
+PERF_HW_IDS = {  # perf_event_attr.config for PERF_TYPE_HARDWARE
+    "cycles": 0,
+    "instructions": 1,
+    "cache-references": 2,
+    "cache-misses": 3,
+    "branches": 4,
+    "branch-misses": 5,
+}
+
 generic = [
+    EventSet(
+        "light",
+        "perf generic events: cycles, instructions, branches",
+        {
+            "cycles": "perf:cycles",
+            "instructions": "perf:instructions",
+            "branches": "perf:branches",
+            "br_misp": "perf:branch-misses",
+        },
+        [
+            Metric(
+                "ipc",
+                lambda c: ratio(c["instructions"], c["cycles"]),
+                hint=_hint(lambda v: v < 1, "low IPC"),
+            ),
+            Metric(
+                "branch_mispredict_rate",
+                lambda c: ratio(c["br_misp"], c["branches"]),
+                "%",
+            ),
+        ],
+    ),
     EventSet(
         "ipc",
         "perf generic events",
@@ -600,7 +634,7 @@ generic = [
                 "%",
             ),
         ],
-    )
+    ),
 ]
 
 
@@ -859,3 +893,84 @@ def sets_for(pmus):
         if pmu in SETS:
             return pmu, {s.name: s for s in SETS[pmu]}
     return "generic", {s.name: s for s in generic}
+
+
+# --------------------------------------------------------------------------- #
+# Warnings when counts are less trustworthy than with a host's own sets: what
+# the problem is, why the numbers may be off, and how to resolve it
+
+GENERIC_ACCURACY = (
+    "potentially inaccurate: the kernel maps generic events to each CPU's own, "
+    "so what they count differs between CPUs, eg cache-references/misses may be "
+    "last level cache or another level, branches may include or exclude some "
+    "branch types, and VMs may filter or approximate them. Compare runs on the "
+    "same CPU model only, treat cache metrics as indicative"
+)
+FORCED_ACCURACY = (
+    "potentially wrong: this CPU's counters are programmed with another model's "
+    "event codes, events may count something else or nothing, metrics follow"
+)
+
+
+def pmu_warnings(pmu, detected, forced=None, host=None):
+    """warnings for the sets sets_for picked. pmu: its pick, detected: libpfm's
+    PMUs (the forced one if LIBPFM_FORCE_PMU), forced: LIBPFM_FORCE_PMU, host:
+    libpfm's PMUs for this CPU, ignoring the force"""
+    known = ", ".join(SETS)
+    warnings = []
+    if pmu == "generic":
+        if detected:
+            what = f"no phlop event sets for PMU {detected[0]}"
+            fix = (
+                f"add event sets for {detected[0]} to SETS in phlop/app/pfm/sets.py "
+                f"(sets exist for {known}), check their event names offline with "
+                f"LIBPFM_FORCE_PMU={detected[0]} python3 -m phlop.app.pfm.stat --list"
+            )
+        elif forced:
+            what = f"LIBPFM_FORCE_PMU={forced} is not a PMU model this libpfm knows"
+            fix = (
+                "unset it, or use a model from tpp/pfm/examples/showevtinfo. A "
+                "libpfm build knows its own architecture's models only, eg no arm "
+                "models on x86"
+            )
+        else:
+            what = "libpfm detected no PMU model for this CPU"
+            fix = (
+                "build libpfm: ./sh/setup_pfm.sh (or set PHLOP_PFM_DIR). If built, "
+                "libpfm is too old for this CPU (update it) or this is a VM without "
+                "a PMU (python3 -m phlop.app.pfm.diagnose)"
+            )
+        warnings.append(
+            f"{what}, using perf generic events (cycles, instructions, branches, "
+            f"cache)\n  {GENERIC_ACCURACY}\n  resolve: {fix}"
+        )
+    elif forced and forced not in (host or []):
+        this = (
+            f"this CPU is {host[0]}" if host else "libpfm knows no model for this CPU"
+        )
+        warnings.append(
+            f"LIBPFM_FORCE_PMU={forced}: events are encoded for {forced}, {this}\n"
+            f"  {FORCED_ACCURACY}\n  resolve: unset LIBPFM_FORCE_PMU to count with "
+            "this CPU's own events. Forcing is for checking a model's event names "
+            "and encodings: --list, --env, -p"
+        )
+    return warnings
+
+
+def scope_file_warnings(pmus, forced):
+    """warnings for a scope timer file: pmus, its "#perf" level labels' PMUs,
+    forced: its "#ctx" says the events were encoded for a forced PMU"""
+    warnings = []
+    if "generic" in pmus:
+        warnings.append(
+            "counted with perf generic events, there were no phlop event sets for "
+            f"the measuring CPU: {GENERIC_ACCURACY}. Resolve: add sets for that "
+            "CPU in phlop/app/pfm/sets.py"
+        )
+    if forced:
+        warnings.append(
+            "counted with events encoded for a forced libpfm PMU (LIBPFM_FORCE_PMU) "
+            f"other than the measuring CPU: {FORCED_ACCURACY}. Resolve: count again "
+            "with PHLOP_PERF_* generated without LIBPFM_FORCE_PMU"
+        )
+    return warnings

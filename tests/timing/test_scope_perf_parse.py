@@ -130,6 +130,34 @@ class ScopePerfParseTest(unittest.TestCase):
         self.assertIn("instructions_per_fetch=667", text)  # 4000 / 6, summed
         self.assertIn("counts: cycles=2,000 instructions=4,000 fetches=6", text)
 
+    def test_no_accuracy_warnings_for_host_sets(self):
+        self.assertEqual(self.stf.perf_warnings(), [])
+
+    def test_generic_and_forced_files_warn(self):
+        import tempfile
+
+        from phlop.timing.scope_timer import print_scope_perf
+
+        generic = lines_parser(
+            ["#perf 1 generic/light cycles,instructions,branches,br_misp\n", "0 main\n"]
+            + ["\n", "0 0 0:100 1:1000,2000,100,1\n"]
+        )
+        (w,) = generic.perf_warnings()
+        self.assertIn("generic events", w)
+        self.assertIn("potentially inaccurate", w)
+        self.assertIn("phlop/app/pfm/sets.py", w)  # how to resolve
+        self.assertEqual(generic.perf_metrics(generic.roots[0])["ipc"], 2)
+
+        forced = LINES[:2] + ["#ctx stall_slot_counts_cycles=0,pmu_forced=1\n"]
+        with tempfile.NamedTemporaryFile("w", suffix=".txt") as f:
+            f.writelines(forced + LINES[2:])
+            f.flush()
+            lines = []
+            print_scope_perf(f.name, printer=lines.append)
+        self.assertTrue(lines[0].startswith("WARNING: "), lines[0])
+        self.assertIn("LIBPFM_FORCE_PMU", lines[0])
+        self.assertIn("potentially wrong", lines[0])
+
     def test_cli_verbose_flag(self):
         from phlop.timing.scope_timer import cli_args_parser
 
