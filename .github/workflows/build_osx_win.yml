@@ -1,0 +1,91 @@
+name: Build on macOS and Windows
+
+# Scope timers off linux: perf counters are linux only (perf_event_open), so
+# PHLOP_SCOPE(key, perf_light/perf_all) must still build, time and write a
+# valid file, with no counts even when PHLOP_PERF_* is set.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.13'
+
+    - run: python -m pip install numpy
+
+    - name: Build (clang)
+      if: runner.os == 'macOS'
+      run: |
+        mkdir -p bin
+        clang++ --version | head -1
+        CXX="clang++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread -Iinc"
+        $CXX tests/timing/test_scope_timer.cpp src/phlop/timing/scope_timer.cpp -o bin/scope_timer_test
+        $CXX tests/timing/test_threaded_scope_timer.cpp src/phlop/timing/common_threaded_timer.cpp -o bin/threaded_scope_timer_test
+        $CXX tests/timing/test_scope.cpp src/phlop/timing/scope_timer.cpp -o bin/scope_test
+        $CXX tests/timing/test_threaded_scope.cpp src/phlop/timing/common_threaded_timer.cpp -o bin/threaded_scope_test
+
+    - uses: ilammy/msvc-dev-cmd@v1
+      if: runner.os == 'Windows'
+
+    - name: Build (msvc)
+      if: runner.os == 'Windows'
+      shell: cmd # git bash's /usr/bin/link shadows link.exe
+      run: |
+        mkdir bin
+        set CXX=cl /nologo /std:c++20 /permissive- /Zc:preprocessor /EHsc /O2 /W3 /WX /wd4996 /Iinc /Fobin\
+        %CXX% tests\timing\test_scope_timer.cpp src\phlop\timing\scope_timer.cpp /Febin\scope_timer_test.exe || exit /b 1
+        %CXX% tests\timing\test_threaded_scope_timer.cpp src\phlop\timing\common_threaded_timer.cpp /Febin\threaded_scope_timer_test.exe || exit /b 1
+        %CXX% tests\timing\test_scope.cpp src\phlop\timing\scope_timer.cpp /Febin\scope_test.exe || exit /b 1
+        %CXX% tests\timing\test_threaded_scope.cpp src\phlop\timing\common_threaded_timer.cpp /Febin\threaded_scope_test.exe || exit /b 1
+
+    - name: Scope timers
+      run: |
+        ./bin/scope_timer_test
+        python tests/timing/test_scope_timer.py test_scope_timer -f bin/scope_timer.txt
+        ./bin/threaded_scope_timer_test
+        python -m phlop.timing.scope_timer times bin/threaded_scope_timer.txt
+
+    - name: Perf scopes, counters requested
+      env:
+        PHLOP_PERF_LIGHT: "fake/light;cycles=0x76,instructions=0xc0"
+        PHLOP_PERF_ALL: "fake/all;cycles=0x76,branches=0xc4"
+      run: |
+        ./bin/scope_test 2>&1 | tee scope.log
+        ./bin/threaded_scope_test 2>&1 | tee threaded_scope.log
+        grep -q "counters disabled" scope.log || { echo "::error::no counters disabled notice"; exit 1; }
+        if grep -E "^#perf| [12]:" bin/scope.txt bin/threaded_scope.txt; then
+          echo "::error::perf counts written off linux"; exit 1
+        fi
+
+    - name: Perf scope files, time only
+      run: |
+        python tests/timing/test_scope_timer.py test_scope -f bin/scope.txt
+        python tests/timing/test_scope_timer.py test_threaded_scope -f bin/threaded_scope.txt
+        python -m phlop.timing.scope_timer perf bin/scope.txt -v
+        python -m phlop.timing.scope_timer perf bin/threaded_scope.txt -v

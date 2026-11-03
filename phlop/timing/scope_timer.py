@@ -21,12 +21,18 @@ class RunTimerNode:
     s: int
     t: int
     c: list = field(default_factory=list)
+    level: int = 0  # PHLOP_SCOPE perf level: 1 perf_light, 2 perf_all, 0 none
+    counts: list | None = None  # values in ScopeTimerFile.perf[level] order
 
     @staticmethod
     def from_scope_timer(line):
-        ws, key, start_and_run_time = line.split(" ")
+        ws, key, start_and_run_time, *perf = line.split(" ")
         start_time, run_time = start_and_run_time.split(":")
-        return int(ws), RunTimerNode(*[int(e) for e in (key, start_time, run_time)])
+        node = RunTimerNode(*[int(e) for e in (key, start_time, run_time)])
+        if perf:  # "<level>:<c0>,<c1>,..."
+            level, _, counts = perf[0].partition(":")
+            node.level, node.counts = int(level), [int(c) for c in counts.split(",")]
+        return int(ws), node
 
     @property
     def key(self) -> int:
@@ -42,15 +48,93 @@ class RunTimerNode:
 
 
 @dataclass
+class PerfLevel:
+    label: str  # "<pmu>/<event set>", eg "amd64_fam1ah_zen5/light"
+    names: list  # event aliases, as in phlop.app.pfm.sets
+
+    @property
+    def pmu(self):
+        return self.label.split("/")[0]
+
+    @property
+    def set_name(self):
+        return self.label.split("/")[-1]
+
+
+@dataclass
 class ScopeTimerFile:
     id_keys: dict
     roots: list
+    perf: dict = field(default_factory=dict)  # level -> PerfLevel
+    ctx: dict | None = None  # measuring host's "#ctx", eg {"slots": 5}
 
     def fn_for(self, id):
         return self.id_keys[id]
 
     def __call__(self, id):
         return self.fn_for(id)
+
+    def perf_warnings(self):
+        """why the counts may be inaccurate: generic events, forced PMU"""
+        from phlop.app.pfm.sets import scope_file_warnings
+
+        pmus = {level.pmu for level in self.perf.values()}
+        return scope_file_warnings(pmus, bool((self.ctx or {}).get("pmu_forced")))
+
+    def perf_counts(self, node):
+        """{event alias: count} for a scope, inclusive of its children"""
+        if not node.counts or node.level not in self.perf:
+            return {}
+        return dict(zip(self.perf[node.level].names, node.counts))
+
+    def perf_self_counts(self, node):
+        """perf_counts minus children counted at the same level, the scope's
+        own work. Children at other levels or uncounted are not subtracted"""
+        counts = self.perf_counts(node)
+        for child in node.c:
+            if child.level == node.level:
+                for name, value in self.perf_counts(child).items():
+                    counts[name] -= value
+        return counts
+
+    def perf_metrics(self, node, own=False, ctx=None, labels=None):
+        """{metric: value} from the scope's event set formulas (phlop.app.pfm
+        .sets). ctx defaults to this host's, eg arm topdown slots"""
+        counts = self.perf_self_counts(node) if own else self.perf_counts(node)
+        return self.metrics_for(node.level, counts, ctx, labels)
+
+    def metrics_for(self, level, counts, ctx=None, labels=None):
+        """{metric: value} for {event alias: count} counted at level. labels,
+        if a dict, gets {metric: text} for values that are None for a known
+        reason, eg "none (no RAM fetches)" """
+        if not counts or level not in self.perf:
+            return {}
+        from phlop.app.pfm.sets import SETS, generic
+
+        perf_level = self.perf[level]
+        sets = {s.name: s for s in SETS.get(perf_level.pmu, generic)}
+        if perf_level.set_name not in sets:
+            return {}
+        if ctx is None and self.ctx is not None:
+            ctx = self.ctx  # the measuring host's, from the file
+        if ctx is None:  # older files: this host's, may differ from the measuring one
+            from phlop.app.pfm import host
+
+            ctx = host.context()
+        counts = {**counts, **{f"@{k}": v for k, v in ctx.items()}}
+        metrics = {}
+        for m in sets[perf_level.set_name].metrics:
+            try:
+                metrics[m.name] = m.fn(counts)
+            except (TypeError, ZeroDivisionError, KeyError):
+                metrics[m.name] = None
+            if metrics[m.name] is None and m.none_means and labels is not None:
+                try:
+                    if label := m.none_means(counts):
+                        labels[m.name] = label
+                except (TypeError, KeyError):
+                    pass
+        return metrics
 
 
 def lines_parser(lines):
@@ -59,6 +143,8 @@ def lines_parser(lines):
     under the preceding shallower line"""
     id_keys = {}
     roots = []
+    perf = {}
+    ctx = None
 
     idx = 0
     for idx, line in enumerate(lines):
@@ -66,6 +152,19 @@ def lines_parser(lines):
         if not line:
             break
         bits = line.split(" ")
+        if bits[0] == "#perf":  # "#perf <level> <label> <name,...>"
+            perf[int(bits[1])] = PerfLevel(bits[2], bits[3].split(","))
+            continue
+        if bits[0] == "#ctx":  # "#ctx key=value,..." measuring host context
+            ctx = {}
+            for kv in (bits[1] if len(bits) > 1 else "").split(","):
+                key, _, value = kv.partition("=")
+                try:  # key=integer only, others are skipped, not fatal
+                    if key:
+                        ctx[key] = int(value)
+                except ValueError:
+                    pass
+            continue
         id_keys[int(bits[0])] = bits[1]
 
     path = []  # path[d] is the latest node at depth d, no depth limit
@@ -82,7 +181,7 @@ def lines_parser(lines):
             raise ValueError(f"scope timer line nested without a parent: {line!r}")
         del path[depth:]
         path.append(node)
-    return ScopeTimerFile(id_keys, roots)
+    return ScopeTimerFile(id_keys, roots, perf, ctx)
 
 
 def file_parser(times_filepath):
@@ -219,6 +318,101 @@ def print_scope_timings(
         print(f"{line}" + (" " * padding) + f"{info.n.t/1e6:>10,.2f}ms")
 
 
+@dataclass
+class ScopeGroup:
+    """same named sibling scopes merged: summed time and counts, children
+    merged the same way, see group_scopes"""
+
+    key: str
+    n: int
+    t: int
+    level: int = 0
+    counts: dict | None = None  # summed, over the n_counted members with counts
+    n_counted: int = 0
+    c: list = field(default_factory=list)
+
+
+def group_scopes(stf, nodes, own=False):
+    """merge sibling nodes by name, first seen order, recursively"""
+    groups, members = {}, {}
+    for n in nodes:
+        key = stf(n.k)
+        if key not in groups:
+            groups[key] = ScopeGroup(key, 0, 0)
+            members[key] = []
+        g = groups[key]
+        g.n += 1
+        g.t += n.t
+        members[key].append(n)
+        counts = stf.perf_self_counts(n) if own else stf.perf_counts(n)
+        if counts and (g.counts is None or g.level == n.level):
+            g.level = n.level
+            g.counts = {k: (g.counts or {}).get(k, 0) + v for k, v in counts.items()}
+            g.n_counted += 1
+    for key, g in groups.items():
+        g.c = group_scopes(stf, [c for m in members[key] for c in m.c], own)
+    return list(groups.values())
+
+
+def print_scope_perf(
+    scope_timer_filepath, own=False, dedupe=True, verbose=False, printer=print
+):
+    """scope tree with time and, for counted scopes, their event set metrics.
+    own: the scope's own work, children counted at its level subtracted.
+    dedupe: same named siblings on one line, xN with total and mean time,
+    metrics from their summed counts. verbose: also the raw event counts"""
+    stf = file_parser(scope_timer_filepath)
+    for w in stf.perf_warnings():
+        printer(f"WARNING: {w}")
+
+    def fmt(v, label=None):
+        if v is None:
+            return label or "n/a"
+        return f"{v:,.0f}" if abs(v) >= 1e4 else f"{v:.3g}"
+
+    def perf_text(level, counts, depth):
+        labels = {}
+        metrics = stf.metrics_for(level, counts, labels=labels)
+        text = f" [{stf.perf[level].set_name}] " + " ".join(
+            f"{k}={fmt(v, labels.get(k))}" for k, v in metrics.items()
+        )
+        if verbose:
+            text += f"\n{'  ' * depth}  counts: " + " ".join(
+                f"{k}={v:,}" for k, v in counts.items()
+            )
+        return text
+
+    def show_node(n, depth):
+        line = f"{'  ' * depth}{stf(n.k)} {n.t / 1e6:,.3f}ms"
+        counts = stf.perf_self_counts(n) if own else stf.perf_counts(n)
+        if counts:
+            line += perf_text(n.level, counts, depth)
+        printer(line)
+        for c in n.c:
+            show_node(c, depth + 1)
+
+    def show_group(g, depth):
+        line = f"{'  ' * depth}{g.key}"
+        if g.n > 1:
+            line += f" x{g.n} {g.t / 1e6:,.3f}ms (mean {g.t / g.n / 1e6:,.3f}ms)"
+        else:
+            line += f" {g.t / 1e6:,.3f}ms"
+        if g.counts:
+            if g.n_counted != g.n:
+                line += f" ({g.n_counted}/{g.n} counted)"
+            line += perf_text(g.level, g.counts, depth)
+        printer(line)
+        for c in g.c:
+            show_group(c, depth + 1)
+
+    if dedupe:
+        for g in group_scopes(stf, stf.roots, own):
+            show_group(g, 0)
+    else:
+        for root in stf.roots:
+            show_node(root, 0)
+
+
 def write_variance_across(scope_timer_file_glob, outfile):
     from contextlib import redirect_stdout
 
@@ -336,3 +530,47 @@ def print_variance_across(scope_timer_file_glob, root_id=None, dedupe=True):
             + white
             + f", runtime: {times_sdev}"
         )
+
+
+def cli_args_parser(description="scope timer files"):
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description=description, formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument("tool", choices=["perf", "times"], help="what to print")
+    parser.add_argument("file", help="scope timer file")
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="perf: raw event counts too"
+    )
+    parser.add_argument(
+        "--own",
+        action="store_true",
+        help="perf: scopes' own work, children counted at their level subtracted",
+    )
+    parser.add_argument(
+        "--no-dedupe",
+        dest="dedupe",
+        action="store_false",
+        help="one line per scope, not same named siblings merged",
+    )
+    return parser
+
+
+def main(argv=None):
+    """python3 -m phlop.timing.scope_timer perf .phlop_scope_times.txt -v"""
+    cli_args = cli_args_parser().parse_args(argv)
+    try:
+        if cli_args.tool == "perf":
+            print_scope_perf(
+                cli_args.file, cli_args.own, cli_args.dedupe, cli_args.verbose
+            )
+        else:
+            print_scope_timings(cli_args.file, dedupe=cli_args.dedupe)
+    except BrokenPipeError:  # eg piped into head
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

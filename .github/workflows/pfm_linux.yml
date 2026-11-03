@@ -1,0 +1,144 @@
+name: pfm on linux
+
+# Hardware counters via libpfm + perf on GitHub hosted runners. These are VMs,
+# so the hypervisor decides which events count (arm64: cycles, instructions,
+# branches, ops, L1D refills, the rest read 0). Mostly diagnostics: every step
+# prints what the host exposes, the last fails if nothing could be counted.
+# x64 (AMD EPYC 7763 so far) exposes no core PMU at all: the job then checks
+# libpfm builds and the tools run, and warns instead of counting.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pfm:
+    name: pfm ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    continue-on-error: ${{ matrix.experimental }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { arch: arm64, os: ubuntu-24.04-arm, native: -mcpu=native, experimental: false }
+        - { arch: x64, os: ubuntu-latest, native: -march=native, experimental: false }
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.13'
+
+    - name: Install perf
+      run: |
+        uname -a
+        sudo apt-get update -q
+        sudo apt-get install -yq linux-tools-common "linux-tools-$(uname -r)" \
+          || sudo apt-get install -yq linux-tools-common linux-tools-generic
+        # /usr/bin/perf is a wrapper wanting the exact kernel's tools, fall
+        # back to whichever perf was installed
+        PERF_BIN=$(ls /usr/lib/linux-tools/*/perf /usr/lib/linux-tools-*/perf 2>/dev/null | head -1)
+        echo "perf binary: ${PERF_BIN:-none}"
+        if [ -n "$PERF_BIN" ]; then sudo ln -sf "$PERF_BIN" /usr/local/bin/perf; fi
+        perf --version || echo "::warning::perf unusable"
+
+    - name: Build libpfm
+      run: ./sh/setup_pfm.sh
+
+    - name: Python deps
+      run: python3 -m pip install -r requirements.txt
+
+    - name: Event sets encode, forced PMUs
+      # every set's events via LIBPFM_FORCE_PMU, no PMU needed: names, not counts
+      run: python3 -m unittest -v tests._phlop.app.pfm.test_pfm_sets_encode
+
+    - name: Generic fallback warns
+      # a model without phlop sets: generic events, warnings on stderr
+      if: ${{ matrix.arch == 'x64' }}
+      run: |
+        LIBPFM_FORCE_PMU=amd64_fam19h_zen4 python3 -m phlop.app.pfm.stat \
+          --env perf_light=light --env perf_all=ipc 2> warnings.txt | tee env.txt
+        cat warnings.txt
+        grep -q "potentially inaccurate" warnings.txt
+        grep -q "generic/light;cycles=hw:0x0" env.txt
+
+    - name: CPU
+      run: lscpu || cat /proc/cpuinfo | head -30
+
+    - name: Diagnose, default kernel settings
+      run: python3 -m phlop.app.pfm.diagnose | tee diagnose_default.txt
+
+    - name: Kernel PMU messages
+      if: ${{ !cancelled() }}
+      run: |
+        sudo dmesg | grep -iE "pmu|perf|hw perfevents|armv8|arm_spe" \
+          || echo "no PMU related kernel messages"
+
+    - name: Open up perf_event
+      if: ${{ !cancelled() }}
+      run: |
+        sudo sysctl -w kernel.perf_event_paranoid=-1
+        sudo sysctl -w kernel.nmi_watchdog=0 || true
+
+    - name: Diagnose
+      if: ${{ !cancelled() }}
+      run: python3 -m phlop.app.pfm.diagnose | tee diagnose.txt
+
+    - name: Build benchmarks
+      if: ${{ !cancelled() }}
+      run: |
+        mkdir -p bin
+        gcc --version | head -1
+        gcc -O3 ${{ matrix.native }} tests/_phlop/app/pfm/bench_fp.c -o bin/bench_fp_vec
+        gcc -O2 -fno-tree-vectorize -ffp-contract=off tests/_phlop/app/pfm/bench_fp.c -o bin/bench_fp_scalar
+        gcc -O3 ${{ matrix.native }} tests/_phlop/app/pfm/bench_stream.c -o bin/bench_stream
+
+    - name: Event sets on benchmarks
+      if: ${{ !cancelled() }}
+      run: |
+        python3 -m phlop.app.pfm.stat --list
+        for b in "bench_fp_vec" "bench_fp_scalar" "bench_stream 256 4"; do
+          echo "######## $b"
+          python3 -m phlop.app.pfm.stat -s all -o "pfm_${b%% *}.json" -- ./bin/$b \
+            || echo "::warning::phlop.app.pfm.stat failed on $b"
+        done
+
+    - name: Scope counters
+      # arm64 VMs count cycles/instructions/branches, x64 ones expose no PMU
+      if: ${{ !cancelled() && matrix.arch == 'arm64' }}
+      run: |
+        mkdir -p bin
+        g++ -std=c++20 -O2 -Iinc tests/timing/test_scope.cpp src/phlop/timing/scope_timer.cpp -o bin/scope_test
+        g++ -std=c++20 -O2 -Iinc tests/timing/test_threaded_scope.cpp src/phlop/timing/common_threaded_timer.cpp -o bin/threaded_scope_test
+        eval "$(python3 -m phlop.app.pfm.stat --env perf_light=light --env perf_all=ipc)"
+        env | grep PHLOP_PERF
+        ./bin/scope_test
+        python3 tests/timing/test_scope_timer.py test_scope -f bin/scope.txt
+        python3 -m phlop.timing.scope_timer perf bin/scope.txt -v
+        ./bin/threaded_scope_test
+        python3 tests/timing/test_scope_timer.py test_threaded_scope -f bin/threaded_scope.txt
+        python3 -m phlop.timing.scope_timer perf bin/threaded_scope.txt -v
+
+    - name: Check something was counted
+      if: ${{ !cancelled() }}
+      run: |
+        python3 -m phlop.app.pfm.diagnose --strict > /dev/null \
+          || { echo "::error::counting failed on $(uname -m), see the Diagnose step"; exit 1; }
+
+    - uses: actions/upload-artifact@v4
+      if: ${{ !cancelled() }}
+      with:
+        name: pfm-linux-${{ matrix.arch }}
+        path: |
+          diagnose_default.txt
+          diagnose.txt
+          pfm_*.json

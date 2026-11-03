@@ -1,10 +1,10 @@
 # phlop/app/pfm/showevtinfo.py
 
 import logging
+import shlex
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from phlop.os import pushd
 from phlop.proc import run
 from phlop.string import decode_bytes
 
@@ -83,8 +83,11 @@ def parse_evtinfo_output(lines):
 
 
 def run_evtinfo():
-    with pushd(FILE_DIR.parent.parent.parent):
-        return decode_bytes(run("./tpp/pfm/examples/showevtinfo").stdout).splitlines()
+    from phlop.app.pfm.check_events import pfm_examples_dir
+
+    exe = pfm_examples_dir() / "showevtinfo"
+    cmd = shlex.quote(str(exe))  # checkouts with spaces
+    return decode_bytes(run(cmd, print_cmd=False).stdout).splitlines()
 
 
 def get_evt_info():
@@ -94,4 +97,4 @@ def get_evt_info():
 if __name__ == "__main__":
     import json
 
-    print(json.dumps(asdict(get_evt_info()), tabs=2))
+    print(json.dumps(asdict(get_evt_info()), indent=2))

@@ -8,16 +8,27 @@
 
 #include "phlop/macros/def/string.hpp"
 #include "phlop/timing/common_timer.hpp"
+#include "phlop/timing/scope.hpp"
 
 #include <memory>
 #include <iostream>
 #include <algorithm>
 #include <string_view>
+#include <type_traits>
 
 #if !defined(PHLOP_SCOPE_TIMER)
 #define PHLOP_SCOPE_TIMER(key)                                                                     \
     static phlop::RunTimerReport PHLOP_STR_CAT(ridx_, __LINE__){key, __FILE__, __LINE__};          \
     phlop::ScopeTimer<> PHLOP_STR_CAT(_ScopeTimer_, __LINE__){PHLOP_STR_CAT(ridx_, __LINE__)};     \
+    phlop::ScopeTimerMan::INSTANCE().report_stack_ptr = &PHLOP_STR_CAT(ridx_, __LINE__);
+#endif
+
+// PHLOP_SCOPE("key", time, perf_light), see scope.hpp
+#if !defined(PHLOP_SCOPE)
+#define PHLOP_SCOPE(key, ...)                                                                      \
+    static phlop::RunTimerReport PHLOP_STR_CAT(ridx_, __LINE__){key, __FILE__, __LINE__};          \
+    phlop::Scope<PHLOP_SCOPE_FLAGS(__VA_ARGS__)> PHLOP_STR_CAT(_Scope_, __LINE__){                 \
+        PHLOP_STR_CAT(ridx_, __LINE__)};                                                           \
     phlop::ScopeTimerMan::INSTANCE().report_stack_ptr = &PHLOP_STR_CAT(ridx_, __LINE__);
 #endif
 
@@ -73,7 +84,12 @@ struct ScopeTimerMan
     }
 
 
-    void init() { active = true; }
+    // perf counters (PHLOP_PERF_LIGHT/ALL env) count the calling thread
+    void init()
+    {
+        active = true;
+        perf::Config::INSTANCE().init();
+    }
 
     void shutdown(bool const write = true)
     {
@@ -86,6 +102,9 @@ struct ScopeTimerMan
             report_stack_ptr = nullptr;
         }
 
+        if (auto const s = perf::summary(); !s.empty())
+            std::cerr << "phlop perf counters: " << s << '\n';
+        perf::Config::INSTANCE().close();
         active = false;
     }
 
@@ -179,7 +198,8 @@ namespace detail
     void inline write_timer_file()
     {
         auto& man = ScopeTimerMan::INSTANCE();
-        BinaryTimerFile{man.traces}.write(man.timer_file, man._force_strings, man._headers);
+        BinaryTimerFile{man.traces}.write(man.timer_file, man._force_strings, man._headers,
+                                          perf::Config::INSTANCE().file_headers());
     }
 
 } // namespace detail
@@ -218,6 +238,8 @@ struct ScopeTimer
                 pscope->childs.emplace_back(&s);
 
             s.childs = std::move(childs);
+            s.level  = pending_level;
+            s.counts = std::move(pending_counts);
 
             if (parent == nullptr)
                 ScopeTimerMan::INSTANCE().traces.emplace_back(&s);
@@ -249,7 +271,15 @@ struct ScopeTimer
     ScopeTimer* pscope        = nullptr;
     std::uint64_t const start = now();
     std::vector<RunTimerReportSnapshot*> childs;
+
+    // set by an enclosing Scope before this destructs, moved into the snapshot
+    std::uint8_t pending_level = 0;
+    std::vector<std::uint64_t> pending_counts;
 };
+
+
+template<std::uint32_t F, typename Clock = SteadyClock>
+using Scope = ScopeT<F, ScopeTimer<Clock>, ScopeTimerMan>;
 
 
 inline auto& scope_timer()

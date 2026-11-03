@@ -3,6 +3,9 @@
 
 
 #include "phlop/timing/common_timer.hpp"
+#include "phlop/timing/scope.hpp"
+
+#include <iostream>
 
 #include <mutex>
 #include <memory>
@@ -54,10 +57,13 @@ struct ScopeTimerMan
             shutdown();
     }
 
+    // perf counters (PHLOP_PERF_LIGHT/ALL env): every thread counts itself,
+    // opening its counters on its first counted scope
     void init()
     {
         active          = true;
         local().movable = true;
+        perf::Config::INSTANCE().init();
     }
 
     void shutdown(bool write = true)
@@ -66,6 +72,10 @@ struct ScopeTimerMan
         local().movable = false;
         if (write)
             detail::write_timer_file();
+
+        if (auto const s = perf::summary(); !s.empty())
+            std::cerr << "phlop perf counters: " << s << '\n';
+        perf::Config::INSTANCE().close();
 
         _headers.clear();
         thread_storage.clear();
@@ -252,7 +262,8 @@ namespace detail
 
         if (all_traces.size())
             phlop::BinaryTimerFile{all_traces}.write(man.timer_file, man._force_strings,
-                                                     man._headers);
+                                                     man._headers,
+                                                     perf::Config::INSTANCE().file_headers());
     }
 
 } // namespace detail
@@ -284,6 +295,8 @@ struct ScopeTimer
                 pscope->childs.emplace_back(&s);
 
             s.childs = std::move(childs);
+            s.level  = pending_level;
+            s.counts = std::move(pending_counts);
 
             if (parent == nullptr)
                 ScopeTimerMan::local().traces.emplace_back(&s);
@@ -307,7 +320,15 @@ struct ScopeTimer
     ScopeTimer* pscope        = nullptr;
     std::uint64_t const start = now();
     std::vector<RunTimerReportSnapshot*> childs;
+
+    // set by an enclosing Scope before this destructs, moved into the snapshot
+    std::uint8_t pending_level = 0;
+    std::vector<std::uint64_t> pending_counts;
 };
+
+
+template<std::uint32_t F, typename Clock = SteadyClock>
+using Scope = ScopeT<F, ScopeTimer<Clock>, ScopeTimerMan>;
 
 } // namespace phlop::threaded
 

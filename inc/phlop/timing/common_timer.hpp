@@ -41,6 +41,10 @@ struct RunTimerReportSnapshotT
     std::uint64_t const start;
     std::uint64_t const time;
     std::vector<RunTimerReportSnapshotT*> childs;
+
+    // PHLOP_SCOPE perf counts: level 1 perf_light, 2 perf_all, 0 none
+    std::uint8_t level = 0;
+    std::vector<std::uint64_t> counts;
 };
 
 
@@ -57,6 +61,8 @@ struct BinaryTimerFileNode
     std::uint32_t const fn_id;
     std::uint64_t const start;
     std::uint64_t const time;
+    std::uint8_t level = 0;
+    std::vector<std::uint64_t> counts{};
 
     std::vector<BinaryTimerFileNode> kinder{};
 };
@@ -70,17 +76,24 @@ struct BinaryTimerFile
         for (auto const& trace : traces)
             recurse_traces_for_keys(trace);
         for (auto const& trace : traces)
-            recurse_traces_for_nodes(trace, roots.emplace_back(key_ids[std::string{trace->self->k}],
-                                                               trace->start, trace->time));
+            recurse_traces_for_nodes(trace, add_node(roots, trace));
+    }
+
+    template<typename Trace>
+    BinaryTimerFileNode& add_node(std::vector<BinaryTimerFileNode>& nodes, Trace const& c)
+    {
+        auto const id = static_cast<std::uint32_t>(key_ids[std::string{c->self->k}]);
+        auto& node    = nodes.emplace_back(id, c->start, c->time);
+        node.level  = c->level;
+        node.counts = c->counts;
+        return node;
     }
 
     template<typename Trace>
     void recurse_traces_for_nodes(Trace const& c, BinaryTimerFileNode& node)
     {
         for (std::size_t i = 0; i < c->childs.size(); ++i)
-            recurse_traces_for_nodes(
-                c->childs[i], node.kinder.emplace_back(key_ids[std::string{c->childs[i]->self->k}],
-                                                       c->childs[i]->start, c->childs[i]->time));
+            recurse_traces_for_nodes(c->childs[i], add_node(node.kinder, c->childs[i]));
     }
 
     template<typename Trace>
@@ -108,8 +121,10 @@ struct BinaryTimerFile
     }
 
     // '\n' not std::endl: endl flushes, a write per line; closing flushes once
+    // perf_headers: "#perf ..." lines naming the counts, see perf_counters.hpp
     void write(std::string const& filename, bool const force_strings = false,
-               std::vector<std::string> const& headers = {}) const
+               std::vector<std::string> const& headers      = {},
+               std::vector<std::string> const& perf_headers = {}) const
     {
         std::ofstream f{filename, std::ios::binary};
 
@@ -122,11 +137,15 @@ struct BinaryTimerFile
                     f << "," << headers[i];
                 f << '\n';
             }
+            for (auto const& line : perf_headers) // names the counts below
+                f << line << '\n';
             for (auto const& root : roots)
                 _write_strings(f, root);
         }
         else
         {
+            for (auto const& line : perf_headers)
+                f << line << '\n';
             for (auto const& [i, k] : id_to_key)
                 _byte_write(f, i, " ", k);
             f << '\n';
@@ -142,7 +161,9 @@ struct BinaryTimerFile
     {
         for (std::size_t ti = 0; ti < tabs; ++ti)
             file << " ";
-        file << id_to_key.at(node.fn_id) << node.time << '\n';
+        file << id_to_key.at(node.fn_id) << node.time;
+        _write_counts(file, node);
+        file << '\n';
         for (auto const& n : node.kinder)
             _write_strings(file, n, tabs + 1);
     }
@@ -151,9 +172,21 @@ struct BinaryTimerFile
                 std::uint16_t const tabs = 0) const
     {
         file << tabs << " ";
-        file << node.fn_id << " " << node.start << ":" << node.time << '\n';
+        file << node.fn_id << " " << node.start << ":" << node.time;
+        _write_counts(file, node);
+        file << '\n';
         for (auto const& n : node.kinder)
             _write(file, n, tabs + 1);
+    }
+
+    // " <level>:<c0>,<c1>,..." after the time, only for scopes with counts
+    static void _write_counts(std::ofstream& file, BinaryTimerFileNode const& node)
+    {
+        if (node.counts.empty())
+            return;
+        file << " " << static_cast<unsigned>(node.level) << ":" << node.counts[0];
+        for (std::size_t i = 1; i < node.counts.size(); ++i)
+            file << "," << node.counts[i];
     }
 
     std::unordered_map<std::string, std::size_t> key_ids;

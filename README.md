@@ -37,6 +37,29 @@ Available:
 ```
 
 ```shell
+# hardware counter analysis via libpfm event sets (./sh/setup_pfm.sh first)
+python3 -m phlop.app.pfm.stat --list
+python3 -m phlop.app.pfm.stat -s topdown,vector,flops -- ./app args
+# unprivileged counting needs kernel.perf_event_paranoid <= 2, warnings say how
+```
+
+```cpp
+// per scope hardware counters: scope_timer.hpp, threaded_scope_timer.hpp, mpi_scope_timer.hpp
+// threaded: each thread counts only itself, opening its counters on first use
+PHLOP_SCOPE("solve", time, perf_all);   // time + PHLOP_PERF_ALL events
+PHLOP_SCOPE("step", time, perf_light);  // time + PHLOP_PERF_LIGHT events
+PHLOP_SCOPE("io");                      // PHLOP_SCOPE_DEFAULT, time
+```
+
+```shell
+# choose the event sets per level, then run as usual
+eval "$(python3 -m phlop.app.pfm.stat --env perf_light=light --env perf_all=topdown)"
+./app  # writes counts into the scope timer file, read with:
+python3 -m phlop.timing.scope_timer perf .phlop_scope_times.txt -v  # scope_timer.hpp
+python3 -m phlop.timing.scope_timer perf .phlop_scope_times.bin -v  # threaded, same format
+```
+
+```shell
 python3 -m phlop.run.test_cases -h
 usage: test_cases.py [-h] [--cmake] [-c CORES] [-i INPUT] [-p] [--prefix PREFIX] [--postfix POSTFIX] [--dump DUMP] [--load LOAD] [-r REGEX] [-R] [--rerun RERUN] [--logging LOGGING]
 
