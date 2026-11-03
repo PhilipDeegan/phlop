@@ -82,7 +82,8 @@ struct BinaryTimerFile
     template<typename Trace>
     BinaryTimerFileNode& add_node(std::vector<BinaryTimerFileNode>& nodes, Trace const& c)
     {
-        auto& node  = nodes.emplace_back(key_ids[std::string{c->self->k}], c->start, c->time);
+        auto const id = static_cast<std::uint32_t>(key_ids[std::string{c->self->k}]);
+        auto& node    = nodes.emplace_back(id, c->start, c->time);
         node.level  = c->level;
         node.counts = c->counts;
         return node;
