@@ -41,11 +41,20 @@ def _tree_cpu_seconds(proc):
 def _tree_runnable(proc):
     """True if proc or a descendant is running or waiting for a cpu. A busy
     process starved by others (more jobs than cores) is runnable, an idle one
-    sleeps. Windows reports every live process as running, so never there"""
+    sleeps. Also true if proc just exited, not yet collected by communicate:
+    a busy process ending between the poll timeout and this check. Windows
+    reports every live process as running, so never there"""
     if os.name == "nt":
         return False
     import psutil
 
+    try:
+        if proc.status() in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
+            return True
+    except psutil.NoSuchProcess:
+        return True
+    except Exception:  # noqa: BLE001 - best effort, fall back to cpu time
+        return False
     with suppress(Exception):  # may already be gone
         for each in [proc, *proc.children(recursive=True)]:
             with suppress(Exception):
