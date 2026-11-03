@@ -1,6 +1,7 @@
 // tests/_phlop/app/pfm/bench_stream.c
 // c[i] += 2 * a[i] over two arrays far larger than any cache: each rep reads
 // 2 * MB / 64 lines from RAM. usage: bench_stream [MB per array] [reps]
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 __attribute__((noinline)) void axpy(double* restrict c, double const* restrict a, long n) {
@@ -9,7 +10,7 @@ __attribute__((noinline)) void axpy(double* restrict c, double const* restrict a
 int main(int argc, char** argv) {
   long mb = argc > 1 ? atol(argv[1]) : 512;
   int reps = argc > 2 ? atoi(argv[2]) : 4;
-  if (mb <= 0 || reps < 0) {
+  if (mb <= 0 || mb > LONG_MAX / (1L << 20) || reps < 0) {
     fprintf(stderr, "usage: bench_stream [MB per array > 0] [reps >= 0]\n");
     return 1;
   }

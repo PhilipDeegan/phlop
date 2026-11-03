@@ -664,7 +664,8 @@ arm_light = EventSet(
         "cycles": "CPU_CYCLES",
         "instructions": "INST_RETIRED",
         # last level cache read misses: RAM. Only counts when the core is
-        # configured with an external LLC (CPUECTLR.EXTLLC), check diagnose
+        # configured with an external LLC (CPUECTLR.EXTLLC), check diagnose.
+        # So 0 does not mean no RAM fetches: no "none" label, the 0 warns
         "fetches": "LL_CACHE_MISS_RD",
     },
     [
@@ -673,7 +674,6 @@ arm_light = EventSet(
             "instructions_per_fetch",
             lambda c: ratio(c["instructions"], c["fetches"]),
             desc="instructions per line read from RAM",
-            none_means=_no_fetches,
             hint=_hint(
                 lambda v: v < 100,
                 "under 100 instructions per RAM fetch: memory bound, improve reuse",
@@ -915,7 +915,7 @@ FORCED_ACCURACY = (
 def pmu_warnings(pmu, detected, forced=None, host=None):
     """warnings for the sets sets_for picked. pmu: its pick, detected: libpfm's
     PMUs (the forced one if LIBPFM_FORCE_PMU), forced: LIBPFM_FORCE_PMU, host:
-    libpfm's PMUs for this CPU, ignoring the force"""
+    libpfm's PMUs for this CPU ignoring the force, None if that check failed"""
     known = ", ".join(SETS)
     warnings = []
     if pmu == "generic":
@@ -944,7 +944,16 @@ def pmu_warnings(pmu, detected, forced=None, host=None):
             f"{what}, using perf generic events (cycles, instructions, branches, "
             f"cache)\n  {GENERIC_ACCURACY}\n  resolve: {fix}"
         )
-    elif forced and forced not in (host or []):
+    elif forced and host is None:
+        warnings.append(
+            f"LIBPFM_FORCE_PMU={forced}: events are encoded for {forced}, could not "
+            "check this CPU's own model (check_events without LIBPFM_FORCE_PMU "
+            "failed)\n  if this CPU is not that model, counts are "
+            f"{FORCED_ACCURACY}\n  resolve: run python3 -m phlop.app.pfm.diagnose "
+            "without LIBPFM_FORCE_PMU to see this CPU's model, unset "
+            "LIBPFM_FORCE_PMU unless it matches"
+        )
+    elif forced and forced not in host:
         this = (
             f"this CPU is {host[0]}" if host else "libpfm knows no model for this CPU"
         )

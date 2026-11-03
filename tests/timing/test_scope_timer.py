@@ -12,15 +12,20 @@ from phlop.timing import scope_timer
 logger = logging.getLogger(__name__)
 
 
-def _counters_requested():
-    return any(os.environ.get(v) for v in ("PHLOP_PERF_LIGHT", "PHLOP_PERF_ALL"))
+_LEVEL_ENVS = {1: "PHLOP_PERF_LIGHT", 2: "PHLOP_PERF_ALL"}
 
 
 def _no_counts(stf, name):
-    """True for a time only file, which fails if counters were requested"""
+    """True for a time only file. Fails if a requested level, PHLOP_PERF_* set,
+    has no "#perf" header: its counts were not written"""
+    missing = [
+        env
+        for lvl, env in _LEVEL_ENVS.items()
+        if os.environ.get(env) and lvl not in stf.perf
+    ]
+    assert not missing, f"{name}: {missing} set but no counts written for them"
     if stf.perf:
         return False
-    assert not _counters_requested(), f"{name}: PHLOP_PERF_* set but no counts written"
     print(f"{name}: no perf counts in file, time only")
     return True
 

@@ -40,23 +40,26 @@ def _tree_cpu_seconds(proc):
     return total
 
 
+def _exited(proc):
+    """proc exited, not yet collected by communicate (zombie) or gone"""
+    import psutil
+
+    try:
+        return proc.status() in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD)
+    except psutil.NoSuchProcess:
+        return True
+    except Exception:  # noqa: BLE001 - best effort
+        return False
+
+
 def _tree_runnable(proc):
     """True if proc or a descendant is running or waiting for a cpu. A busy
     process starved by others (more jobs than cores) is runnable, an idle one
-    sleeps. Also true if proc just exited, not yet collected by communicate:
-    a busy process ending between the poll timeout and this check. Windows
-    reports every live process as running, so never there"""
+    sleeps. Windows reports every live process as running, so never there"""
     if os.name == "nt":
         return False
     import psutil
 
-    try:
-        if proc.status() in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
-            return True
-    except psutil.NoSuchProcess:
-        return True
-    except Exception:  # noqa: BLE001 - best effort, fall back to cpu time
-        return False
     with suppress(Exception):  # may already be gone
         for each in [proc, *proc.children(recursive=True)]:
             with suppress(Exception):
@@ -87,8 +90,18 @@ class _StallMonitor:
         self.what = "no output" if log_paths else "no log files"
         self.sig, self.last_change = _files_signature(log_paths), time.monotonic()
         self.samples = deque()
+        self.exit_seen = False
         if proc:
             self.samples.append((self.last_change, _tree_cpu_seconds(proc)))
+
+    def _busy_now(self):
+        """runnable now, or the first check after proc exited: a busy process
+        ending between the poll timeout and this check, collected next poll.
+        Only once: a descendant holding the pipes must not suspend detection"""
+        if _exited(self.proc):
+            first, self.exit_seen = not self.exit_seen, True
+            return first
+        return _tree_runnable(self.proc)
 
     def stalled(self, now):
         sig = _files_signature(self.log_paths)
@@ -110,7 +123,7 @@ class _StallMonitor:
         t0, cpu0 = self.samples[0]
         if now - t0 >= self.timeout:
             cpu_fraction = (self.samples[-1][1] - cpu0) / (now - t0)
-            if cpu_fraction < BUSY_CPU_FRACTION and not _tree_runnable(self.proc):
+            if cpu_fraction < BUSY_CPU_FRACTION and not self._busy_now():
                 return f"{self.what} for {self.timeout:g}s, {cpu_fraction:.0%} cpu"
         if quiet >= self.busy_timeout:
             return f"{self.what} for {self.busy_timeout:g}s, busy"

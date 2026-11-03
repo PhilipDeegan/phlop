@@ -158,6 +158,11 @@ class ScopePerfParseTest(unittest.TestCase):
         self.assertIn("LIBPFM_FORCE_PMU", lines[0])
         self.assertIn("potentially wrong", lines[0])
 
+    def test_malformed_ctx_values_are_skipped(self):
+        stf = lines_parser(["#ctx slots=5,sve_bits=unknown,=3,bare\n"] + LINES[2:])
+        self.assertEqual(stf.ctx, {"slots": 5})
+        self.assertEqual(stf(stf.roots[0].k), "main")
+
     def test_cli_verbose_flag(self):
         from phlop.timing.scope_timer import cli_args_parser
 

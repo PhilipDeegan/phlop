@@ -156,8 +156,14 @@ def lines_parser(lines):
             perf[int(bits[1])] = PerfLevel(bits[2], bits[3].split(","))
             continue
         if bits[0] == "#ctx":  # "#ctx key=value,..." measuring host context
-            ctx = dict(kv.split("=", 1) for kv in bits[1].split(",") if "=" in kv)
-            ctx = {k: int(v) for k, v in ctx.items()}
+            ctx = {}
+            for kv in (bits[1] if len(bits) > 1 else "").split(","):
+                key, _, value = kv.partition("=")
+                try:  # key=integer only, others are skipped, not fatal
+                    if key:
+                        ctx[key] = int(value)
+                except ValueError:
+                    pass
             continue
         id_keys[int(bits[0])] = bits[1]
 

@@ -320,7 +320,7 @@ def scope_env_exports(level_sets):
     pmu, sets = sets_for(ce.detected_pmus())
     for w in ce.pmu_warnings(pmu):
         print(f"WARNING: {w}", file=sys.stderr)
-    lines, union = [], {}  # config -> counters it costs
+    exports, costs = {}, {}  # per level, the last given wins as in the shell
     for item in level_sets:
         level, _, set_name = item.partition("=")
         if level not in ENV_LEVELS or set_name not in sets:
@@ -329,9 +329,13 @@ def scope_env_exports(level_sets):
             )
         value = scope_env(set_name, sets, pmu)
         configs = [c.split("=")[1] for c in value.split(";")[1].split(",")]
-        for config, spec in zip(configs, sets[set_name].events.values()):
-            union[config] = EventSet("", "", {"": spec}).counters_needed()
-        lines.append(f"export {ENV_LEVELS[level]}='{value}'")
+        costs[level] = {  # config -> counters it costs
+            config: EventSet("", "", {"": spec}).counters_needed()
+            for config, spec in zip(configs, sets[set_name].events.values())
+        }
+        exports[level] = f"export {ENV_LEVELS[level]}='{value}'"
+    lines = list(exports.values())
+    union = {c: n for level_costs in costs.values() for c, n in level_costs.items()}
     from phlop.app.pfm import host
 
     ctx = {k: v for k, v in host.context().items() if k != "cpu_flags"}

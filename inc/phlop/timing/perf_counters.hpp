@@ -26,6 +26,7 @@
 #include <string>
 #include <vector>
 #include <cerrno>
+#include <cctype>
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
@@ -88,6 +89,7 @@ struct Config
     void close()
     {
         ctx.clear();
+        pmu_forced = false;
         configs.clear();
         for (auto& l : levels)
             l = Level{};
@@ -130,7 +132,8 @@ struct Config
 
     bool ok = false;
     std::string error;
-    std::string ctx; // PHLOP_PERF_CTX
+    std::string ctx; // PHLOP_PERF_CTX, validated "key=integer,..."
+    bool pmu_forced = false; // ctx pmu_forced != 0, see accuracy_notices
     std::array<Level, level_env.size()> levels{};
     std::vector<Event> configs; // union of all levels, group order
     std::atomic<std::uint64_t> generation{1};
@@ -138,6 +141,33 @@ struct Config
     std::atomic<bool> reported{false};
 
 private:
+    // "key=integer,...", sets pmu_forced. False, nothing set, if malformed
+    bool parse_ctx(std::string_view s)
+    {
+        bool forced = false;
+        while (!s.empty())
+        {
+            auto const comma = s.find(',');
+            auto const item  = s.substr(0, comma);
+            auto const eq    = item.find('=');
+            if (eq == 0 or eq == std::string_view::npos)
+                return false;
+            for (char const c : item.substr(0, eq))
+                if (!(std::isalnum(static_cast<unsigned char>(c)) or c == '_'))
+                    return false;
+            std::string const value{item.substr(eq + 1)};
+            char* end              = nullptr;
+            long long const number = std::strtoll(value.c_str(), &end, 10);
+            if (value.empty() or *end)
+                return false;
+            if (item.substr(0, eq) == "pmu_forced")
+                forced = number != 0;
+            s.remove_prefix(comma == std::string_view::npos ? s.size() : comma + 1);
+        }
+        pmu_forced = forced;
+        return true;
+    }
+
     bool parse(std::size_t const l, std::string_view s)
     {
         auto const semi = s.find(';');
@@ -171,7 +201,11 @@ private:
                 ++idx;
             if (idx == configs.size())
                 configs.emplace_back(event);
-            level.names.emplace_back(item.substr(0, eq));
+            auto const name = item.substr(0, eq);
+            for (auto const& known : level.names) // counts are keyed by name
+                if (known == name)
+                    return false;
+            level.names.emplace_back(name);
             level.idx.emplace_back(idx);
             s.remove_prefix(comma == std::string_view::npos ? s.size() : comma + 1);
         }
@@ -335,7 +369,15 @@ inline bool Config::init()
     if (configs.empty())
         return false;
     if (auto const* e = std::getenv(ctx_env); e)
-        ctx = e;
+    {
+        if (parse_ctx(e))
+            ctx = e;
+        else // the "#ctx" file line must stay one line of key=integer pairs
+            std::fprintf(stderr,
+                         "phlop perf counters: %s=\"%s\" ignored, want key=integer,..."
+                         " as printed by python3 -m phlop.app.pfm.stat --env\n",
+                         ctx_env, e);
+    }
 
     auto& group   = local(); // check now, on the calling thread, to fail early
     group.opening = true;
@@ -362,7 +404,7 @@ inline void Config::accuracy_notices()
     bool generic = false;
     for (auto const& level : levels)
         generic = generic or level.label.starts_with("generic/");
-    bool const forced = ("," + ctx + ",").find(",pmu_forced=1,") != std::string::npos;
+    bool const forced = pmu_forced;
     if (!(generic or forced) or printed.exchange(true))
         return;
     if (generic)

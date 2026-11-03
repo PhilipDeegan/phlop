@@ -560,11 +560,12 @@ class RunTimerStallTest(unittest.TestCase):
             self.skipTest("psutil or sched_setaffinity unavailable")
         cpu = min(os.sched_getaffinity(0))
         pin = f"import os\nos.sched_setaffinity(0, {{{cpu}}})\n"
-        hogs = [  # outside the monitored tree
-            subprocess.Popen([sys.executable, "-c", pin + "while True: pass"])
-            for _ in range(2)
-        ]
+        hogs = []  # outside the monitored tree, killed even if one fails to start
         try:
+            for _ in range(2):
+                hogs.append(
+                    subprocess.Popen([sys.executable, "-c", pin + "while True: pass"])
+                )
             busy = (
                 pin
                 + "import time\nend = time.time() + 3\nwhile time.time() < end: pass"
@@ -576,6 +577,29 @@ class RunTimerStallTest(unittest.TestCase):
                 hog.wait()
         self.assertFalse(rt.stalled)
         self.assertEqual(rt.exitcode, 0)
+
+    def test_exited_process_is_exempt_only_once(self):
+        """exited, not yet collected: the first check is the end of a busy run,
+        later ones a descendant holding the pipes, stalled at `timeout`"""
+        if not _has_psutil():
+            self.skipTest("psutil unavailable")
+        import psutil
+
+        from phlop.procs.runtimer import _StallMonitor
+
+        p = subprocess.Popen([sys.executable, "-c", "pass"])
+        try:
+            proc = psutil.Process(p.pid)
+            deadline = time.monotonic() + 10
+            while proc.status() != psutil.STATUS_ZOMBIE:  # exited, unreaped
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(0.05)
+            monitor = _StallMonitor([], proc, timeout=1, busy_timeout=100)
+            start = monitor.last_change
+            self.assertIsNone(monitor.stalled(start + 1.5))
+            self.assertIn("cpu", monitor.stalled(start + 3))
+        finally:
+            p.wait()
 
     def test_silent_process_is_killed(self):
         rt = self._run("import time; time.sleep(60)", stall_timeout=1)

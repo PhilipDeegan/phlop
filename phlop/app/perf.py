@@ -65,9 +65,9 @@ def nmi_watchdog():
 
 
 def privileged():
-    """root, or CAP_PERFMON/CAP_SYS_ADMIN, bypasses perf_event_paranoid"""
-    if os.geteuid() == 0:
-        return True
+    """CAP_PERFMON/CAP_SYS_ADMIN bypass perf_event_paranoid, as the kernel
+    checks them, not the uid: root without them (eg containers) is limited.
+    The uid only decides when capabilities cannot be read"""
     try:
         with open("/proc/self/status") as f:
             for line in f:
@@ -76,7 +76,7 @@ def privileged():
                     return bool(caps & ((1 << CAP_PERFMON) | (1 << CAP_SYS_ADMIN)))
     except (OSError, ValueError):
         pass
-    return False
+    return os.geteuid() == 0
 
 
 def access_warnings(kernel=False):

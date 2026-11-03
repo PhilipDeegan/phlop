@@ -182,6 +182,32 @@ class PfmStatTest(unittest.TestCase):
         self.assertIn("unset LIBPFM_FORCE_PMU", w)
         self.assertEqual(pmu_warnings("arm_n2", ["arm_n2"], "arm_n2", ["arm_n2"]), [])
 
+        # this CPU's model could not be checked: say so, not a mismatch
+        (w,) = pmu_warnings("arm_n2", ["arm_n2"], "arm_n2", None)
+        self.assertIn("could not check this CPU's own model", w)
+        self.assertNotIn("libpfm knows no model", w)
+
+    def test_env_budget_counts_each_level_once(self):
+        import io
+        from contextlib import redirect_stderr
+        from unittest import mock
+
+        with (
+            mock.patch.object(stat.ce, "detected_pmus", return_value=[]),
+            mock.patch.object(stat.ce, "pmu_warnings", return_value=[]),
+            mock.patch.object(stat.ce, "forced_encodings", return_value=False),
+            mock.patch.object(stat, "available_counters", return_value=4),
+        ):
+            err = io.StringIO()
+            with redirect_stderr(err):  # ipc's 6 events, replaced by light's 4
+                lines = stat.scope_env_exports(["perf_light=ipc", "perf_light=light"])
+            self.assertNotIn("will not schedule", err.getvalue())
+            self.assertEqual(sum("PHLOP_PERF_LIGHT=" in line for line in lines), 1)
+            self.assertIn("generic/light;", lines[0])
+            with redirect_stderr(err):
+                stat.scope_env_exports(["perf_light=ipc"])
+            self.assertIn("will not schedule", err.getvalue())
+
     def test_access_warnings(self):
         ok, warnings = perf.access_warnings()
         self.assertIsInstance(ok, bool)
@@ -197,6 +223,25 @@ class PfmStatTest(unittest.TestCase):
             ok, warnings = perf.access_warnings()
         self.assertFalse(ok)
         self.assertIn("perf_event_paranoid=3", warnings[0])
+
+    def test_privileged_is_capabilities_not_uid(self):
+        from unittest import mock
+
+        def status(caps):
+            return mock.mock_open(read_data=f"Name:\tx\nCapEff:\t{caps:016x}\n")
+
+        with mock.patch("os.geteuid", return_value=0):
+            with mock.patch("builtins.open", status(0)):  # root in a container
+                self.assertFalse(perf.privileged())
+            with mock.patch("builtins.open", status(1 << perf.CAP_PERFMON)):
+                self.assertTrue(perf.privileged())
+            with mock.patch("builtins.open", side_effect=OSError):
+                self.assertTrue(perf.privileged())  # unreadable: uid decides
+        with (
+            mock.patch("os.geteuid", return_value=1000),
+            mock.patch("builtins.open", status(1 << perf.CAP_SYS_ADMIN)),
+        ):
+            self.assertTrue(perf.privileged())
 
     def test_access_privileged_without_sysctl(self):
         from unittest import mock

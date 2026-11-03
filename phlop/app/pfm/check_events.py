@@ -73,24 +73,18 @@ def _cpu_pmus(pmus):
     return [p for p in pmus if p not in ("perf", "perf_raw")]
 
 
-@lru_cache(maxsize=1)
-def detected_pmus():
-    """PMU models libpfm detects on this machine, excluding the generic perf
-    ones. With LIBPFM_FORCE_PMU set: only the forced model, if libpfm knows it"""
-    return _cpu_pmus(_parse_detected_pmus(run_check_events("")))
-
-
 def forced_pmu():
     """the LIBPFM_FORCE_PMU model, None if not forced"""
     return os.environ.get(FORCE_PMU_ENV) or None
 
 
-@lru_cache(maxsize=1)
-def host_pmus():
-    """PMU models libpfm detects for this CPU, ignoring LIBPFM_FORCE_PMU"""
-    if not forced_pmu():
-        return detected_pmus()
+@lru_cache(maxsize=8)
+def _probe(forced):
+    """libpfm's PMU models with LIBPFM_FORCE_PMU=forced, or unset if None.
+    None if check_events failed: missing, or no "Detected PMU models" block"""
     env = {k: v for k, v in os.environ.items() if k != FORCE_PMU_ENV}
+    if forced:
+        env[FORCE_PMU_ENV] = forced
     try:
         out = subprocess.run(
             [str(pfm_examples_dir() / "check_events")],
@@ -98,10 +92,25 @@ def host_pmus():
             capture_output=True,
             text=True,
             check=False,
-        ).stdout
+        ).stdout.splitlines()
     except OSError:
-        return []
-    return _cpu_pmus(_parse_detected_pmus(out.splitlines()))
+        return None
+    if not any(line.startswith("Detected PMU models:") for line in out):
+        return None
+    return tuple(_cpu_pmus(_parse_detected_pmus(out)))
+
+
+def detected_pmus():
+    """PMU models libpfm detects on this machine, excluding the generic perf
+    ones. With LIBPFM_FORCE_PMU set: only the forced model, if libpfm knows it"""
+    return list(_probe(forced_pmu()) or [])
+
+
+def host_pmus():
+    """PMU models libpfm detects for this CPU, ignoring LIBPFM_FORCE_PMU.
+    None if that check failed, unlike [] for a CPU libpfm has no model for"""
+    pmus = _probe(None)
+    return None if pmus is None else list(pmus)
 
 
 def pmu_warnings(pmu):
@@ -109,13 +118,14 @@ def pmu_warnings(pmu):
     from phlop.app.pfm.sets import pmu_warnings as warnings_for
 
     forced = forced_pmu()
-    return warnings_for(pmu, detected_pmus(), forced, host_pmus() if forced else None)
+    return warnings_for(pmu, detected_pmus(), forced, host_pmus() if forced else [])
 
 
 def forced_encodings(pmu):
-    """True if pmu's sets are encoded for a forced model that is not this CPU"""
-    forced = forced_pmu()
-    return pmu != "generic" and bool(forced) and forced not in host_pmus()
+    """True if pmu's sets are encoded for a forced model that is not this CPU.
+    False if this CPU's model could not be checked: pmu_warnings says so"""
+    forced, host = forced_pmu(), host_pmus()
+    return pmu != "generic" and bool(forced) and host is not None and forced not in host
 
 
 @lru_cache(maxsize=1)
@@ -175,29 +185,30 @@ def pmu_terms_config(pmu_string):
     return config
 
 
-_cache = {}
+_cache = {}  # forced pmu (None: host) -> {event: config}
 
 
 def encode(events):
     """{event: config} for libpfm event strings, eg "RETIRED_OPS",
     "DISPATCH_STALLS_1:FE_NO_OPS:c=8". Raises ValueError naming any
     event libpfm cannot encode on this machine"""
-    todo = [e for e in dict.fromkeys(events) if e not in _cache]
+    cache = _cache.setdefault(forced_pmu(), {})  # codes differ per forced model
+    todo = [e for e in dict.fromkeys(events) if e not in cache]
     if todo:
-        _cache.update(_parse_encodings(run_check_events(" ".join(todo))))
+        cache.update(_parse_encodings(run_check_events(" ".join(todo))))
         # check_events stops at the first bad event, find which
         bad = []
         for e in todo:
-            if e in _cache:
+            if e in cache:
                 continue
             got = _parse_encodings(run_check_events(e))
             if e in got:
-                _cache.update(got)
+                cache.update(got)
             else:
                 bad.append(e)
         if bad:
             raise ValueError(f"libpfm cannot encode: {bad} (PMUs: {detected_pmus()})")
-    return {e: _cache[e] for e in events}
+    return {e: cache[e] for e in events}
 
 
 def perf_event_string(name, config, modifiers=""):
