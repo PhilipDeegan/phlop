@@ -38,6 +38,22 @@ def _tree_cpu_seconds(proc):
     return total
 
 
+def _tree_runnable(proc):
+    """True if proc or a descendant is running or waiting for a cpu. A busy
+    process starved by others (more jobs than cores) is runnable, an idle one
+    sleeps. Windows reports every live process as running, so never there"""
+    if os.name == "nt":
+        return False
+    import psutil
+
+    with suppress(Exception):  # may already be gone
+        for each in [proc, *proc.children(recursive=True)]:
+            with suppress(Exception):
+                if each.status() == psutil.STATUS_RUNNING:
+                    return True
+    return False
+
+
 def _psutil_process(p):
     try:
         import psutil
@@ -51,7 +67,8 @@ class _StallMonitor:
     """Nothing is stalled until there's been no output for `timeout` seconds,
     without log files that's since the start. Then without psutil it's stalled,
     with psutil only if under BUSY_CPU_FRACTION cpu over the last `timeout`
-    seconds, or if there's been no output for `busy_timeout` seconds."""
+    seconds and not runnable now (a starved busy process gets little cpu but
+    is runnable), or if there's been no output for `busy_timeout` seconds."""
 
     def __init__(self, log_paths, proc, timeout, busy_timeout):
         self.log_paths, self.proc = log_paths, proc
@@ -82,7 +99,7 @@ class _StallMonitor:
         t0, cpu0 = self.samples[0]
         if now - t0 >= self.timeout:
             cpu_fraction = (self.samples[-1][1] - cpu0) / (now - t0)
-            if cpu_fraction < BUSY_CPU_FRACTION:
+            if cpu_fraction < BUSY_CPU_FRACTION and not _tree_runnable(self.proc):
                 return f"{self.what} for {self.timeout:g}s, {cpu_fraction:.0%} cpu"
         if quiet >= self.busy_timeout:
             return f"{self.what} for {self.busy_timeout:g}s, busy"

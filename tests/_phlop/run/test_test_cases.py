@@ -3,6 +3,7 @@
 import os
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -552,6 +553,29 @@ class RunTimerStallTest(unittest.TestCase):
 
         rt = self._run(busy.format(60), stall_timeout=1, stall_busy_timeout=3)
         self.assertEqual(rt.stalled, "no output for 3s, busy")
+
+    def test_starved_busy_process_gets_busy_timeout(self):
+        """busy but getting ~1/3 of a cpu, eg more test cases than cores"""
+        if not _has_psutil() or not hasattr(os, "sched_setaffinity"):
+            self.skipTest("psutil or sched_setaffinity unavailable")
+        cpu = min(os.sched_getaffinity(0))
+        pin = f"import os\nos.sched_setaffinity(0, {{{cpu}}})\n"
+        hogs = [  # outside the monitored tree
+            subprocess.Popen([sys.executable, "-c", pin + "while True: pass"])
+            for _ in range(2)
+        ]
+        try:
+            busy = (
+                pin
+                + "import time\nend = time.time() + 3\nwhile time.time() < end: pass"
+            )
+            rt = self._run(busy, stall_timeout=1, stall_busy_timeout=10)
+        finally:
+            for hog in hogs:
+                hog.kill()
+                hog.wait()
+        self.assertFalse(rt.stalled)
+        self.assertEqual(rt.exitcode, 0)
 
     def test_silent_process_is_killed(self):
         rt = self._run("import time; time.sleep(60)", stall_timeout=1)
