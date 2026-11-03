@@ -13,7 +13,9 @@ from phlop.string import decode_bytes
 
 STALL_KILL_GRACE = 30  # seconds between terminate and kill of a stalled process
 STALL_POLL_MAX = 60  # max seconds between stall checks
-BUSY_CPU_FRACTION = 0.5  # of a single cpu, at or above is considered busy
+# of a single cpu, at or above is considered busy. Low: a hung process idles
+# near 0, a busy one starved by more jobs than cores still gets 1/jobs per core
+BUSY_CPU_FRACTION = 0.1
 
 
 def _files_signature(paths):
