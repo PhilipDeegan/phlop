@@ -23,16 +23,31 @@ class RunTimerNode:
     c: list = field(default_factory=list)
     level: int = 0  # PHLOP_SCOPE perf level: 1 perf_light, 2 perf_all, 0 none
     counts: list | None = None  # values in ScopeTimerFile.perf[level] order
+    # memory, bytes, None unless the scope used the mem flag - PHLOP_SCOPE("key", time, mem)
+    r: int | None = None  # resident set size at scope entry
+    dr: int | None = None  # resident set size change, exit - entry
+    p: int | None = None  # process peak resident set size at scope exit
+    dp: int | None = None  # process peak growth during scope, exit - entry
 
     @staticmethod
     def from_scope_timer(line):
-        ws, key, start_and_run_time, *perf = line.split(" ")
+        ws, key, start_and_run_time, *extra = line.split(" ")
         start_time, run_time = start_and_run_time.split(":")
         node = RunTimerNode(*[int(e) for e in (key, start_time, run_time)])
-        if perf:  # "<level>:<c0>,<c1>,..."
-            level, _, counts = perf[0].partition(":")
-            node.level, node.counts = int(level), [int(c) for c in counts.split(",")]
+        for token in extra:
+            tag, _, values = token.partition(":")
+            if tag == "m":  # "m:<rss_in>,<rss_out>,<peak_in>,<peak_out>"
+                rss_in, rss_out, peak_in, peak_out = (int(v) for v in values.split(","))
+                node.r, node.dr = rss_in, rss_out - rss_in
+                node.p, node.dp = peak_out, peak_out - peak_in
+            else:  # "<level>:<c0>,<c1>,..."
+                node.level = int(tag)
+                node.counts = [int(c) for c in values.split(",")]
         return int(ws), node
+
+    @property
+    def has_mem(self) -> bool:
+        return self.dr is not None
 
     @property
     def key(self) -> int:
@@ -196,6 +211,16 @@ def write_scope_timings(scope_timer_filepath, outfile, sort_worst_first=True):
         print_scope_timings(scope_timer_filepath, sort_worst_first)
 
 
+def format_bytes(b, sign=False):
+    v = float(abs(b))
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if v < 1024 or unit == "GiB":
+            break
+        v /= 1024
+    s = "-" if b < 0 else ("+" if sign else "")
+    return f"{s}{v:.0f}{unit}" if unit == "B" else f"{s}{v:.2f}{unit}"
+
+
 @dataclass
 class LossLine:
     padding: int
@@ -214,6 +239,11 @@ class LossLine:
 
         else:
             return f"100% loss({LossLine.loss(self.n)}) {self.key} {self.n.t}"
+
+    def mem_str(self):
+        if not self.n.has_mem:
+            return ""
+        return f"  rss {format_bytes(self.n.dr, sign=True)} peak +{format_bytes(self.n.dp)}"
 
     def root_time(self):
         if self.par:
@@ -250,6 +280,10 @@ def dedupe_leafs(stf, n):
         for i in range(1, len(vals)):
             base.s += vals[i].s
             base.t += vals[i].t
+            if base.has_mem and vals[i].has_mem:
+                base.dr += vals[i].dr
+                base.dp = max(base.dp, vals[i].dp)
+                base.p = max(base.p, vals[i].p)
         base.s /= len(vals)
         nodes.append(base)
 
@@ -315,7 +349,9 @@ def print_scope_timings(
     for i, line in enumerate(line_strs):
         padding = line_max - len(line)
         info = lines[i]
-        print(f"{line}" + (" " * padding) + f"{info.n.t/1e6:>10,.2f}ms")
+        print(
+            f"{line}" + (" " * padding) + f"{info.n.t/1e6:>10,.2f}ms" + info.mem_str()
+        )
 
 
 @dataclass

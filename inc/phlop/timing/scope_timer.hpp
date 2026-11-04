@@ -11,6 +11,7 @@
 #include "phlop/timing/scope.hpp"
 
 #include <memory>
+#include <cstdlib>
 #include <iostream>
 #include <algorithm>
 #include <string_view>
@@ -89,6 +90,8 @@ struct ScopeTimerMan
     {
         active = true;
         perf::Config::INSTANCE().init();
+        if (auto const env = std::getenv("PHLOP_SCOPE_MEM"))
+            _memory = std::string_view{env} != "0";
     }
 
     void shutdown(bool const write = true)
@@ -117,6 +120,14 @@ struct ScopeTimerMan
     auto& force_strings(bool const b = true)
     {
         _force_strings = b;
+        return *this;
+    }
+
+    // sample memory for PHLOP_SCOPE("key", time, mem) scopes, also env PHLOP_SCOPE_MEM=1/0
+    //  resident memory is per process, not per thread
+    auto& memory(bool const b = true)
+    {
+        _memory = b;
         return *this;
     }
 
@@ -158,6 +169,7 @@ struct ScopeTimerMan
 
     bool active         = false;
     bool _force_strings = false;
+    bool _memory        = false;
     std::string timer_file;
     std::vector<std::string> _headers;
     std::vector<RunTimerReport*> reports;
@@ -240,6 +252,12 @@ struct ScopeTimer
             s.childs = std::move(childs);
             s.level  = pending_level;
             s.counts = std::move(pending_counts);
+            if (pending_mem) // after the time is taken, so the sample is not timed
+            {
+                s.has_mem = true;
+                s.mem_in  = pending_mem_in;
+                s.mem_out = MemSample::now();
+            }
 
             if (parent == nullptr)
                 ScopeTimerMan::INSTANCE().traces.emplace_back(&s);
@@ -275,6 +293,8 @@ struct ScopeTimer
     // set by an enclosing Scope before this destructs, moved into the snapshot
     std::uint8_t pending_level = 0;
     std::vector<std::uint64_t> pending_counts;
+    bool pending_mem = false;
+    MemSample pending_mem_in{};
 };
 
 

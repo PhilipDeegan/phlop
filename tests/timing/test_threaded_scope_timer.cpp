@@ -33,6 +33,13 @@ void fn1()
     fn0();
 }
 
+void fn_mem()
+{
+    PHLOP_SCOPE("fn_mem", time, mem); // memory not enabled, no mem fields recorded
+
+    fny();
+}
+
 void fn2()
 {
     PHLOP_SCOPE_TIMER("fn2");
@@ -54,6 +61,8 @@ int main()
 
     for (std::size_t i = 0; i < 2; ++i)
         fn2();
+
+    fn_mem();
 
     {
         PHLOP_SCOPE_TIMER("thread_scope");

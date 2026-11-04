@@ -7,8 +7,10 @@
 // only, so a bare `time` does not clash with ::time. No options means
 // PHLOP_SCOPE_DEFAULT, eg -DPHLOP_SCOPE_DEFAULT="time, perf_light" to count
 // in every bare PHLOP_SCOPE. Scopes always record time, perf_* add counters
-// when PHLOP_PERF_LIGHT/ALL are set, see perf_counters.hpp
+// when PHLOP_PERF_LIGHT/ALL are set, see perf_counters.hpp. mem adds resident
+// memory on entry/exit when ScopeTimerMan::memory() or PHLOP_SCOPE_MEM=1
 
+#include "phlop/timing/common_timer.hpp"
 #include "phlop/timing/perf_counters.hpp"
 
 #include <cstdint>
@@ -38,6 +40,7 @@ enum class scope_key : std::uint32_t {
     time       = 1u << 0,
     perf_light = 1u << 1, // PHLOP_PERF_LIGHT events, eg cycles, instructions, RAM fetches
     perf_all   = 1u << 2, // PHLOP_PERF_ALL events, eg a topdown set
+    mem        = 1u << 3, // resident memory (rss, process peak) on entry/exit
 };
 
 template<typename... Keys>
@@ -62,13 +65,15 @@ constexpr std::uint8_t scope_perf_level(std::uint32_t const flags)
 
 
 // A timer scope, plus the calling thread's counter group around it when F asks
-// for a perf level. Without perf flags it is exactly a Timer. Timer needs
-// pending_level / pending_counts, moved into its snapshot as it destructs,
-// and Man::INSTANCE().active. Counter reads sit inside the timed region
+// for a perf level. Without perf/mem flags it is exactly a Timer. Timer needs
+// pending_level / pending_counts / pending_mem(_in), moved into its snapshot
+// as it destructs, and Man::INSTANCE().active/_memory. Counter reads sit
+// inside the timed region, memory samples outside it (~10us each)
 template<std::uint32_t F, typename Timer, typename Man>
 struct ScopeT
 {
     static constexpr std::uint8_t level = scope_perf_level(F);
+    static constexpr bool has_mem       = F & static_cast<std::uint32_t>(scope_key::mem);
 
     template<typename Report>
     ScopeT(Report& r)
@@ -85,6 +90,12 @@ struct ScopeT
 
     ~ScopeT()
     {
+        if constexpr (has_mem)
+            if (mem.on) // exit sample is taken by the timer, after its time
+            {
+                timer.pending_mem    = true;
+                timer.pending_mem_in = mem.in;
+            }
         if constexpr (level > 0)
         {
             perf::Counts end;
@@ -113,6 +124,32 @@ struct ScopeT
     {
     };
 
+    struct Sampling
+    {
+        MemSample in{};
+        bool on = false;
+    };
+    struct NoSampling // distinct from NoCounting, so both can share no storage
+    {
+    };
+
+    static auto mem_begin()
+    {
+        if constexpr (has_mem)
+        {
+            auto const& man = Man::INSTANCE();
+            Sampling m;
+            m.on = man.active and man._memory;
+            if (m.on)
+                m.in = MemSample::now();
+            return m;
+        }
+        else
+            return NoSampling{};
+    }
+
+    // before timer: initialised first, so the entry sample is not timed
+    PHLOP_NO_UNIQUE_ADDRESS std::conditional_t<has_mem, Sampling, NoSampling> mem = mem_begin();
     Timer timer;
     PHLOP_NO_UNIQUE_ADDRESS std::conditional_t<(level > 0), Counting, NoCounting> state;
 };

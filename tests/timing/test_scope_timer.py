@@ -42,6 +42,20 @@ def test_scope_timer(scope_timer_filepath=None):
     scope_timer_file = scope_timer.file_parser(scope_timer_filepath)
     np.testing.assert_equal(scope_timer_file(scope_timer_file.roots[0].k), "fn1")
 
+    # time only scopes have no memory fields
+    assert not any(root.has_mem for root in scope_timer_file.roots)
+
+    # fn3 is time only, its child fn_mem uses the mem flag and touches 64MiB
+    fn3 = [r for r in scope_timer_file.roots if scope_timer_file(r.k) == "fn3"]
+    np.testing.assert_equal(len(fn3), 1)
+    np.testing.assert_equal(len(fn3[0].c), 1)
+    fn_mem = fn3[0].c[0]
+    np.testing.assert_equal(scope_timer_file(fn_mem.k), "fn_mem")
+    np.testing.assert_equal(fn_mem.has_mem, True)
+    np.testing.assert_array_less(0, fn_mem.r)
+    np.testing.assert_array_less(32 * 1024 * 1024, fn_mem.dp)
+    np.testing.assert_array_less(fn_mem.dp - 1, fn_mem.p)
+
 
 def test_scope(scope_timer_filepath=None):
     """bin/scope.txt from tests/timing/test_scope.cpp, counts if the

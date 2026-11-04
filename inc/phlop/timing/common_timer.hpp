@@ -9,8 +9,23 @@
 #include <fstream>
 #include <unordered_map>
 
+#include "phlop/os/mem.hpp"
+
 namespace phlop
 {
+
+// process resident memory at a point in time, see phlop/os/mem.hpp
+struct MemSample
+{
+    static MemSample now()
+    {
+        auto const u = os::mem::usage();
+        return {u.rss, u.peak};
+    }
+
+    std::uint64_t rss  = 0; // current resident set size in bytes
+    std::uint64_t peak = 0; // process lifetime peak resident set size in bytes
+};
 
 struct SteadyClock
 {
@@ -45,6 +60,10 @@ struct RunTimerReportSnapshotT
     // PHLOP_SCOPE perf counts: level 1 perf_light, 2 perf_all, 0 none
     std::uint8_t level = 0;
     std::vector<std::uint64_t> counts;
+
+    // PHLOP_SCOPE mem: resident memory on entry/exit
+    bool has_mem = false;
+    MemSample mem_in{}, mem_out{};
 };
 
 
@@ -63,6 +82,8 @@ struct BinaryTimerFileNode
     std::uint64_t const time;
     std::uint8_t level = 0;
     std::vector<std::uint64_t> counts{};
+    bool has_mem = false;
+    MemSample mem_in{}, mem_out{};
 
     std::vector<BinaryTimerFileNode> kinder{};
 };
@@ -84,8 +105,11 @@ struct BinaryTimerFile
     {
         auto const id = static_cast<std::uint32_t>(key_ids[std::string{c->self->k}]);
         auto& node    = nodes.emplace_back(id, c->start, c->time);
-        node.level  = c->level;
-        node.counts = c->counts;
+        node.level    = c->level;
+        node.counts   = c->counts;
+        node.has_mem  = c->has_mem;
+        node.mem_in   = c->mem_in;
+        node.mem_out  = c->mem_out;
         return node;
     }
 
@@ -163,6 +187,7 @@ struct BinaryTimerFile
             file << " ";
         file << id_to_key.at(node.fn_id) << node.time;
         _write_counts(file, node);
+        _write_mem(file, node);
         file << '\n';
         for (auto const& n : node.kinder)
             _write_strings(file, n, tabs + 1);
@@ -174,6 +199,7 @@ struct BinaryTimerFile
         file << tabs << " ";
         file << node.fn_id << " " << node.start << ":" << node.time;
         _write_counts(file, node);
+        _write_mem(file, node);
         file << '\n';
         for (auto const& n : node.kinder)
             _write(file, n, tabs + 1);
@@ -187,6 +213,14 @@ struct BinaryTimerFile
         file << " " << static_cast<unsigned>(node.level) << ":" << node.counts[0];
         for (std::size_t i = 1; i < node.counts.size(); ++i)
             file << "," << node.counts[i];
+    }
+
+    // " m:<rss_in>,<rss_out>,<peak_in>,<peak_out>" after any counts, only for mem scopes
+    static void _write_mem(std::ofstream& file, BinaryTimerFileNode const& node)
+    {
+        if (node.has_mem)
+            file << " m:" << node.mem_in.rss << "," << node.mem_out.rss << "," << node.mem_in.peak
+                 << "," << node.mem_out.peak;
     }
 
     std::unordered_map<std::string, std::size_t> key_ids;
