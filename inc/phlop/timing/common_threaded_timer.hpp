@@ -99,7 +99,8 @@ struct ScopeTimerMan
     }
 
     // sample memory for PHLOP_SCOPE("key", time, mem) scopes, also env PHLOP_SCOPE_MEM=1/0
-    //  resident memory is per process, not per thread
+    //  resident memory is per process, not per thread. No peak reset (see scope.hpp):
+    //  it would erase the peak other threads' scopes see, PHLOP_SCOPE_MEM=peak is =1
     ScopeTimerMan& memory(bool const b = true)
     {
         bool on = b; // PHLOP_SCOPE_MEM=1/0, if set, wins over the code either way

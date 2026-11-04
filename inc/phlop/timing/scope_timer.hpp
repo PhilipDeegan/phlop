@@ -91,7 +91,8 @@ struct ScopeTimerMan
     {
         active = true;
         perf::Config::INSTANCE().init();
-        memory(_memory.load(std::memory_order_relaxed));
+        memory(_memory.load(std::memory_order_relaxed), _memory_peak);
+        _peak_carry = 0;
     }
 
     void shutdown(bool const write = true)
@@ -125,12 +126,19 @@ struct ScopeTimerMan
 
     // sample memory for PHLOP_SCOPE("key", time, mem) scopes, also env PHLOP_SCOPE_MEM=1/0
     //  resident memory is per process, not per thread
-    ScopeTimerMan& memory(bool const b = true)
+    //  peak resets the process peak on entry to each mem scope, so the peak is
+    //  per scope, not "a new process high" (linux, else ignored), also env
+    //  PHLOP_SCOPE_MEM=peak. Process wide: anything reading VmHWM/ru_maxrss sees it
+    ScopeTimerMan& memory(bool const b = true, bool const peak = false)
     {
-        bool on = b; // PHLOP_SCOPE_MEM=1/0, if set, wins over the code either way
+        bool on = b, pk = peak; // PHLOP_SCOPE_MEM=1/0/peak, if set, wins over the code
         if (auto const env = std::getenv("PHLOP_SCOPE_MEM"))
+        {
             on = std::string_view{env} != "0";
+            pk = std::string_view{env} == "peak";
+        }
         _memory.store(on, std::memory_order_relaxed);
+        _memory_peak = on and pk;
         return *this;
     }
 
@@ -173,6 +181,8 @@ struct ScopeTimerMan
     bool active         = false;
     bool _force_strings = false;
     std::atomic<bool> _memory{false};
+    bool _memory_peak         = false;
+    std::uint64_t _peak_carry = 0; // peak erased by open mem scope resets, see scope.hpp
     std::string timer_file;
     std::vector<std::string> _headers;
     std::vector<RunTimerReport*> reports;
@@ -248,8 +258,14 @@ struct ScopeTimer
 
             // time first, then the exit memory sample, then any bookkeeping allocation
             //  so neither the sample nor the snapshot are counted in the scope
-            auto const end          = now();
-            MemSample const mem_out = pending_mem ? MemSample::now() : MemSample{};
+            auto const end    = now();
+            MemSample mem_out = pending_mem ? MemSample::now() : MemSample{};
+            if (pending_peak) // carry this scope's peak to its parent, see scope.hpp
+            {
+                auto& carry  = ScopeTimerMan::INSTANCE()._peak_carry;
+                mem_out.peak = (std::max)(mem_out.peak, carry);
+                carry        = (std::max)(pending_carry, mem_out.peak);
+            }
 
             auto& s = *r.snapshots.emplace_back(
                 std::make_unique<RunTimerReportSnapshot>(&r, parent, start, end - start));
@@ -303,6 +319,8 @@ struct ScopeTimer
     std::vector<std::uint64_t> pending_counts;
     bool pending_mem = false;
     MemSample pending_mem_in{};
+    bool pending_peak           = false; // peak reset on entry
+    std::uint64_t pending_carry = 0;
 };
 
 

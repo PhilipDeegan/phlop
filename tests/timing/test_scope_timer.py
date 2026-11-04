@@ -42,8 +42,11 @@ def test_scope_timer(scope_timer_filepath=None):
     scope_timer_file = scope_timer.file_parser(scope_timer_filepath)
     np.testing.assert_equal(scope_timer_file(scope_timer_file.roots[0].k), "fn1")
 
-    # time only scopes have no memory fields
-    assert not any(root.has_mem for root in scope_timer_file.roots)
+    # time only scopes have no memory fields, fn_peak is the only mem root
+    with_mem = {scope_timer_file(r.k) for r in scope_timer_file.roots if r.has_mem}
+    np.testing.assert_equal(
+        with_mem, set() if os.environ.get("PHLOP_SCOPE_MEM") == "0" else {"fn_peak"}
+    )
 
     if os.environ.get("PHLOP_SCOPE_MEM") == "0":  # forced off, nothing to check
         print("test_scope_timer: PHLOP_SCOPE_MEM=0, memory checks skipped")
@@ -62,6 +65,37 @@ def test_scope_timer(scope_timer_filepath=None):
         32 * 1024 * 1024, fn_mem.dp, err_msg=f"r={fn_mem.r} dr={fn_mem.dr} p={fn_mem.p}"
     )
     np.testing.assert_array_less(fn_mem.dp, fn_mem.p)  # p is absolute, above baseline
+
+    _check_fn_peak(scope_timer_file)
+
+
+def _check_fn_peak(stf):
+    """fn_peak: fn_peak_big touches 256MiB then fn_peak_small 32MiB, below that high.
+    With PHLOP_SCOPE_MEM=peak on linux the peak resets per scope, so fn_peak_small
+    sees its own 32MiB and fn_peak still sees fn_peak_big's 256MiB carried up"""
+    MiB = 1024 * 1024
+    roots = [r for r in stf.roots if stf(r.k) == "fn_peak"]
+    np.testing.assert_equal(len(roots), 1)
+    fn_peak = roots[0]
+    big, small = fn_peak.c
+    np.testing.assert_equal(
+        [stf(big.k), stf(small.k)], ["fn_peak_big", "fn_peak_small"]
+    )
+    np.testing.assert_equal([n.has_mem for n in (fn_peak, big, small)], [True] * 3)
+
+    msg = "\n".join(
+        f"{stf(n.k)}: r={n.r} dr={n.dr} p={n.p} dp={n.dp}"
+        for n in (fn_peak, big, small)
+    )
+    np.testing.assert_array_less(128 * MiB, big.dp, err_msg=msg)
+    np.testing.assert_array_less(128 * MiB, fn_peak.dp, err_msg=msg)
+
+    if os.environ.get("PHLOP_SCOPE_MEM") == "peak" and sys.platform.startswith("linux"):
+        np.testing.assert_array_less(16 * MiB, small.dp, err_msg=msg)
+        np.testing.assert_array_less(small.dp, 64 * MiB, err_msg=msg)
+        print("test_scope_timer: peak reset per scope ok")
+    elif sys.platform.startswith("linux"):  # no reset, below the earlier high
+        np.testing.assert_array_less(small.dp, 16 * MiB, err_msg=msg)
 
 
 def test_mem_parse():

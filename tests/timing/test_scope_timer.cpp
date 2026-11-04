@@ -43,11 +43,10 @@ void fn2()
     fn0();
 }
 
-void fn_mem()
+// make bytes resident, then free them
+void touch(std::size_t const bytes)
 {
-    PHLOP_SCOPE("fn_mem", time, mem);
-
-    std::vector<char> v(64 * 1024 * 1024, 1); // value initialized, so resident
+    std::vector<char> v(bytes, 1); // value initialized, so resident
 
     // read back through volatile so the optimizer can't elide the allocation
     //  or its writes (clang -O2 removes the whole vector otherwise)
@@ -57,6 +56,35 @@ void fn_mem()
         sum += static_cast<std::size_t>(p[i]);
     if (sum != v.size() / 4096)
         std::abort();
+}
+
+void fn_mem()
+{
+    PHLOP_SCOPE("fn_mem", time, mem);
+
+    touch(64 * 1024 * 1024);
+}
+
+void fn_peak_big()
+{
+    PHLOP_SCOPE("fn_peak_big", time, mem);
+
+    touch(256 * 1024 * 1024);
+}
+
+void fn_peak_small()
+{
+    PHLOP_SCOPE("fn_peak_small", time, mem);
+
+    touch(32 * 1024 * 1024); // below the earlier high, only seen with a peak reset
+}
+
+void fn_peak()
+{
+    PHLOP_SCOPE("fn_peak", time, mem); // its peak must include fn_peak_big's
+
+    fn_peak_big();
+    fn_peak_small();
 }
 
 void fn3()
@@ -80,6 +108,7 @@ int main()
         fny();
 
     fn3();
+    fn_peak();
 
     phlop::scope_timer().shutdown();
 }
