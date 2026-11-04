@@ -73,7 +73,7 @@ template<std::uint32_t F, typename Timer, typename Man>
 struct ScopeT
 {
     static constexpr std::uint8_t level = scope_perf_level(F);
-    static constexpr bool has_mem       = F & static_cast<std::uint32_t>(scope_key::mem);
+    static constexpr bool has_mem       = (F & static_cast<std::uint32_t>(scope_key::mem)) != 0;
 
     template<typename Report>
     ScopeT(Report& r)

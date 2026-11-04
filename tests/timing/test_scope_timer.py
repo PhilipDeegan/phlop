@@ -53,7 +53,9 @@ def test_scope_timer(scope_timer_filepath=None):
     np.testing.assert_equal(scope_timer_file(fn_mem.k), "fn_mem")
     np.testing.assert_equal(fn_mem.has_mem, True)
     np.testing.assert_array_less(0, fn_mem.r)
-    np.testing.assert_array_less(32 * 1024 * 1024, fn_mem.dp)
+    np.testing.assert_array_less(
+        32 * 1024 * 1024, fn_mem.dp, err_msg=f"r={fn_mem.r} dr={fn_mem.dr} p={fn_mem.p}"
+    )
     np.testing.assert_array_less(fn_mem.dp - 1, fn_mem.p)
 
 

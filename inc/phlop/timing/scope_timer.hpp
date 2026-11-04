@@ -58,7 +58,7 @@ namespace detail
         {
             ++count;
             total += t;
-            max = std::max(max, t);
+            max = (std::max)(max, t); // parens: windows.h max macro
         }
         double mean() const
         {

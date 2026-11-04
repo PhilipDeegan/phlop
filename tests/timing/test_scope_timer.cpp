@@ -48,7 +48,14 @@ void fn_mem()
     PHLOP_SCOPE("fn_mem", time, mem);
 
     std::vector<char> v(64 * 1024 * 1024, 1); // value initialized, so resident
-    if (v.back() != 1)
+
+    // read back through volatile so the optimizer can't elide the allocation
+    //  or its writes (clang -O2 removes the whole vector otherwise)
+    char const volatile* const p = v.data();
+    std::size_t sum              = 0;
+    for (std::size_t i = 0; i < v.size(); i += 4096)
+        sum += static_cast<std::size_t>(p[i]);
+    if (sum != v.size() / 4096)
         std::abort();
 }
 
