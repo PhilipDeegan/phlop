@@ -50,8 +50,14 @@ void fn_mem()
         std::abort();
 }
 
+// static init runs on the main thread
+static std::thread::id const main_thread_id = std::this_thread::get_id();
+
 void fn3()
 {
+    if (std::this_thread::get_id() == main_thread_id)
+        std::abort(); // must run on a worker thread, see main
+
     PHLOP_SCOPE_TIMER("fn3"); // time only scope, with a mem scope child
 
     fn_mem();

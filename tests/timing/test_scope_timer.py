@@ -39,8 +39,14 @@ def _check_fn_mem(stf, name):
     fn_mem = fn3[0].c[0]
     np.testing.assert_equal(stf(fn_mem.k), "fn_mem")
 
-    # time only scopes have no memory fields
-    assert not any(root.has_mem for root in stf.roots)
+    def walk(nodes):
+        for n in nodes:
+            yield n
+            yield from walk(n.c)
+
+    # fn_mem is the only mem scope, no other scope at any depth has memory fields
+    others = [stf(n.k) for n in walk(stf.roots) if n.has_mem and n is not fn_mem]
+    assert not others, f"{name}: memory recorded on time only scopes {others}"
 
     if os.environ.get("PHLOP_SCOPE_MEM") == "0":  # forced off, overrides memory()
         np.testing.assert_equal(fn_mem.has_mem, False)
