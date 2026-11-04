@@ -185,6 +185,26 @@ class MemcheckTest(unittest.TestCase):
         m = memcheck.parse(_write(self.tmp.name, "memcheck.r.p2.xml", cut))
         self.assertEqual(len(m.errors), 2)
 
+    def test_cut_mid_error(self):  # keeps the errors that were closed
+        cut = MEMCHECK[: MEMCHECK.index("<kind>Leak_DefinitelyLost")]
+        m = memcheck.parse(_write(self.tmp.name, "memcheck.r.p4.xml", cut))
+        self.assertEqual([e.kind for e in m.errors], ["InvalidRead"])
+        self.assertEqual(m.cmd, "./bad x")
+
+    def test_valgrind_3_26_leak_summary(self):  # no </still_reachable>
+        summary = """<leak_summary>
+  <still_reachable>
+    <bytes>0</bytes>
+    <blocks>0</blocks>
+  <suppressed>
+    <bytes>0</bytes>
+  </suppressed>
+</leak_summary>
+"""
+        broken = MEMCHECK.replace("<errorcounts>", summary + "<errorcounts>")
+        m = memcheck.parse(_write(self.tmp.name, "memcheck.r.p5.xml", broken))
+        self.assertEqual([e.count for e in m.problems], [3])  # errorcounts after it
+
     def test_clean(self):
         clean = MEMCHECK.split("<error>")[0] + "</valgrindoutput>\n"
         m = memcheck.parse(_write(self.tmp.name, "memcheck.r.p3.xml", clean))

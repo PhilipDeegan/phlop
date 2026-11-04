@@ -3,6 +3,7 @@
 # memcheck --xml=yes files: errors (invalid reads, uninitialised values, ...)
 # and leaks, with their stacks
 
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
@@ -70,12 +71,35 @@ def _frames(stack):
     return out
 
 
-def _root(path):
+# not used here, and valgrind 3.26 writes it without </still_reachable>
+_LEAK_SUMMARY = re.compile(r"<leak_summary>.*?</leak_summary>", re.DOTALL)
+
+
+def _complete_children(text):
+    """the top level elements that were closed: the file can be cut short (the
+    process died) or broken further on, everything before that is kept"""
+    parser = ET.XMLPullParser(events=("start", "end"))
+    depth, kept = 0, []
     try:
-        return ET.parse(path).getroot()
-    except ET.ParseError:  # the process died before valgrind closed the file
-        with open(path) as f:
-            return ET.fromstring(f.read() + "</valgrindoutput>")
+        parser.feed(text)
+        for event, el in parser.read_events():
+            depth += 1 if event == "start" else -1
+            if event == "end" and depth == 1:
+                kept.append(el)
+    except ET.ParseError:
+        pass
+    root = ET.Element("valgrindoutput")
+    root.extend(kept)
+    return root
+
+
+def _root(path):
+    with open(path, errors="replace") as f:
+        text = _LEAK_SUMMARY.sub("", f.read())
+    try:
+        return ET.fromstring(text)
+    except ET.ParseError:
+        return _complete_children(text)
 
 
 def parse(path):
