@@ -45,6 +45,10 @@ def test_scope_timer(scope_timer_filepath=None):
     # time only scopes have no memory fields
     assert not any(root.has_mem for root in scope_timer_file.roots)
 
+    if os.environ.get("PHLOP_SCOPE_MEM") == "0":  # forced off, nothing to check
+        print("test_scope_timer: PHLOP_SCOPE_MEM=0, memory checks skipped")
+        return
+
     # fn3 is time only, its child fn_mem uses the mem flag and touches 64MiB
     fn3 = [r for r in scope_timer_file.roots if scope_timer_file(r.k) == "fn3"]
     np.testing.assert_equal(len(fn3), 1)
@@ -52,11 +56,45 @@ def test_scope_timer(scope_timer_filepath=None):
     fn_mem = fn3[0].c[0]
     np.testing.assert_equal(scope_timer_file(fn_mem.k), "fn_mem")
     np.testing.assert_equal(fn_mem.has_mem, True)
-    np.testing.assert_array_less(0, fn_mem.r)
+    if not sys.platform.startswith("netbsd"):  # current rss unsupported there, 0
+        np.testing.assert_array_less(0, fn_mem.r)
     np.testing.assert_array_less(
         32 * 1024 * 1024, fn_mem.dp, err_msg=f"r={fn_mem.r} dr={fn_mem.dr} p={fn_mem.p}"
     )
-    np.testing.assert_array_less(fn_mem.dp - 1, fn_mem.p)
+    np.testing.assert_array_less(fn_mem.dp, fn_mem.p)  # p is absolute, above baseline
+
+
+def test_mem_parse():
+    """the m: token, alone and after a perf counts token, and the derived fields"""
+    _, node = scope_timer.RunTimerNode.from_scope_timer("0 1 2:3 m:1000,1600,1500,2500")
+    np.testing.assert_equal((node.k, node.s, node.t), (1, 2, 3))
+    np.testing.assert_equal((node.r, node.dr, node.p, node.dp), (1000, 600, 2500, 1000))
+    np.testing.assert_equal((node.level, node.counts), (0, None))
+
+    _, node = scope_timer.RunTimerNode.from_scope_timer(
+        "1 4 5:6 1:7,8 m:900,400,2000,2000"
+    )
+    np.testing.assert_equal((node.level, node.counts), (1, [7, 8]))
+    np.testing.assert_equal((node.r, node.dr, node.p, node.dp), (900, -500, 2000, 0))
+
+    _, node = scope_timer.RunTimerNode.from_scope_timer("0 1 2:3")
+    np.testing.assert_equal(node.has_mem, False)
+
+    # dedupe: rss deltas sum, peaks max, leaves without memory don't erase it
+    a = scope_timer.RunTimerNode(0, 0, 1)
+    b = scope_timer.RunTimerNode(0, 0, 1, r=10, dr=5, p=50, dp=20)
+    c = scope_timer.RunTimerNode(0, 0, 1, r=20, dr=-2, p=60, dp=10)
+    for order in ([a, b, c], [b, a, c], [c, b, a]):
+        base = scope_timer.RunTimerNode(0, 0, 1)
+        for n in order:
+            scope_timer._merge_mem(base, n)
+        np.testing.assert_equal((base.dr, base.p, base.dp), (3, 60, 20))
+
+    np.testing.assert_equal(
+        scope_timer.format_bytes(-10 * 1024 * 1024, sign=True), "-10.00MiB"
+    )
+    np.testing.assert_equal(scope_timer.format_bytes(512, sign=True), "+512B")
+    print("test_mem_parse: ok")
 
 
 def test_scope(scope_timer_filepath=None):

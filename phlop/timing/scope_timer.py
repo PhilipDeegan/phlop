@@ -243,7 +243,7 @@ class LossLine:
     def mem_str(self):
         if not self.n.has_mem:
             return ""
-        return f"  rss {format_bytes(self.n.dr, sign=True)} peak +{format_bytes(self.n.dp)}"
+        return f"  rss {format_bytes(self.n.dr, sign=True)} peak {format_bytes(self.n.dp, sign=True)}"
 
     def root_time(self):
         if self.par:
@@ -256,6 +256,19 @@ class LossLine:
         for c in n.c:
             lss -= c.t
         return "-" if lss < 1e-2 else float(f"{lss / n.t * 100:.2f}")
+
+
+def _merge_mem(base, other):
+    """fold other's memory into base: rss deltas sum, peaks max. Leaves
+    without memory (eg memory off for that call) neither add nor erase it"""
+    if not other.has_mem:
+        return
+    if not base.has_mem:
+        base.r, base.dr, base.p, base.dp = other.r, other.dr, other.p, other.dp
+        return
+    base.dr += other.dr
+    base.dp = max(base.dp, other.dp)
+    base.p = max(base.p, other.p)
 
 
 def dedupe_leafs(stf, n):
@@ -280,10 +293,7 @@ def dedupe_leafs(stf, n):
         for i in range(1, len(vals)):
             base.s += vals[i].s
             base.t += vals[i].t
-            if base.has_mem and vals[i].has_mem:
-                base.dr += vals[i].dr
-                base.dp = max(base.dp, vals[i].dp)
-                base.p = max(base.p, vals[i].p)
+            _merge_mem(base, vals[i])
         base.s /= len(vals)
         nodes.append(base)
 

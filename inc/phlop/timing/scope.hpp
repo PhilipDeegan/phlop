@@ -139,7 +139,7 @@ struct ScopeT
         {
             auto const& man = Man::INSTANCE();
             Sampling m;
-            m.on = man.active and man._memory;
+            m.on = man.active and man._memory.load(std::memory_order_relaxed);
             if (m.on)
                 m.in = MemSample::now();
             return m;
