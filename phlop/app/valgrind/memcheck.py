@@ -4,6 +4,7 @@
 # and leaks, with their stacks
 
 import re
+import shlex
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
@@ -107,7 +108,7 @@ def parse(path):
     out = Memcheck(path, pid=int(root.findtext("pid", "0")))
     args = root.find("args/argv")
     if args is not None:
-        out.cmd = " ".join(
+        out.cmd = shlex.join(
             [args.findtext("exe", "")] + [a.text or "" for a in args.findall("arg")]
         )
 

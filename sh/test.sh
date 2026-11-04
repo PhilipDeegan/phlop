@@ -22,9 +22,11 @@ py tests/timing/test_scope_timer.py test_scope -f "bin/scope.txt" # no -O: asser
 mkn test -p threaded_scope
 py tests/timing/test_scope_timer.py test_threaded_scope -f "bin/threaded_scope.txt"
 
-if command -v valgrind > /dev/null; then # exit codes checked, memcheck errors are 99
-    py -Om phlop.run.valgrind -q echo yes
-    py -Om phlop.run.valgrind -q --tool=massif echo yes
+# exit codes checked, memcheck errors are 99. The shell's builtin echo: ubuntu
+#  26.04's /usr/bin/echo (rust coreutils) leaks, memcheck rightly fails it
+if command -v valgrind > /dev/null; then
+    py -Om phlop.run.valgrind -q sh -c "echo yes"
+    py -Om phlop.run.valgrind -q --tool=massif sh -c "echo yes"
     py -Om phlop.run.valgrind --show --md - > /dev/null
 fi
 
