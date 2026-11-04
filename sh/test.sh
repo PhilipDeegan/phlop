@@ -17,6 +17,10 @@ py -O tests/all_concurrent.py
 mkn test -p scope_timer
 py -O tests/timing/test_scope_timer.py test_scope_timer -f "bin/scope_timer.txt"
 py tests/timing/test_scope_timer.py test_mem_parse
+mkn test -p threaded_scope_timer
+py tests/timing/test_scope_timer.py test_threaded_scope_timer -f "bin/threaded_scope_timer.txt"
+PHLOP_SCOPE_MEM=0 mkn test -p threaded_scope_timer
+PHLOP_SCOPE_MEM=0 py tests/timing/test_scope_timer.py test_threaded_scope_timer -f "bin/threaded_scope_timer.txt"
 mkn test -p scope
 py tests/timing/test_scope_timer.py test_scope -f "bin/scope.txt" # no -O: asserts
 mkn test -p threaded_scope

@@ -2,6 +2,8 @@
 #include "phlop/timing/mpi_scope_timer.hpp"
 
 #include <thread>
+#include <vector>
+#include <cstdlib>
 #include <iostream>
 
 using namespace std::chrono_literals;
@@ -41,13 +43,35 @@ void fn2()
     fn0();
 }
 
+void fn_mem()
+{
+    PHLOP_SCOPE("fn_mem", time, mem);
+
+    std::vector<char> v(64 * 1024 * 1024, 1); // value initialized, so resident
+
+    // read back through volatile so the optimizer can't elide the allocation
+    char const volatile* const p = v.data();
+    std::size_t sum              = 0;
+    for (std::size_t i = 0; i < v.size(); i += 4096)
+        sum += static_cast<std::size_t>(p[i]);
+    if (sum != v.size() / 4096)
+        std::abort();
+}
+
+void fn3()
+{
+    PHLOP_SCOPE_TIMER("fn3"); // time only scope, with a mem scope child
+
+    fn_mem();
+}
+
 int main(int argc, char** argv)
 {
     std::cout << __FILE__ << std::endl;
 
     MPI_Init(&argc, &argv);
 
-    phlop::scope_timer().file_name("bin/" + phlop::mpi::scope_timer_file_namer()).init();
+    phlop::scope_timer().file_name("bin/" + phlop::mpi::scope_timer_file_namer()).memory().init();
 
     std::thread{[&]() {
         for (std::size_t i = 0; i < 2; ++i)
@@ -64,6 +88,8 @@ int main(int argc, char** argv)
                 fny();
         }}.join();
     }
+
+    std::thread{[&]() { fn3(); }}.join(); // mem scope off the main thread
 
     MPI_Finalize();
 }
