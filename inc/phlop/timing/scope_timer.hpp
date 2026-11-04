@@ -10,7 +10,9 @@
 #include "phlop/timing/common_timer.hpp"
 #include "phlop/timing/scope.hpp"
 
+#include <atomic>
 #include <memory>
+#include <cstdlib>
 #include <iostream>
 #include <algorithm>
 #include <string_view>
@@ -57,7 +59,7 @@ namespace detail
         {
             ++count;
             total += t;
-            max = std::max(max, t);
+            max = (std::max)(max, t); // parens: windows.h max macro
         }
         double mean() const
         {
@@ -89,6 +91,7 @@ struct ScopeTimerMan
     {
         active = true;
         perf::Config::INSTANCE().init();
+        memory(_memory.load(std::memory_order_relaxed));
     }
 
     void shutdown(bool const write = true)
@@ -117,6 +120,17 @@ struct ScopeTimerMan
     auto& force_strings(bool const b = true)
     {
         _force_strings = b;
+        return *this;
+    }
+
+    // sample memory for PHLOP_SCOPE("key", time, mem) scopes, also env PHLOP_SCOPE_MEM=1/0
+    //  resident memory is per process, not per thread
+    ScopeTimerMan& memory(bool const b = true)
+    {
+        bool on = b; // PHLOP_SCOPE_MEM=1/0, if set, wins over the code either way
+        if (auto const env = std::getenv("PHLOP_SCOPE_MEM"))
+            on = std::string_view{env} != "0";
+        _memory.store(on, std::memory_order_relaxed);
         return *this;
     }
 
@@ -158,6 +172,7 @@ struct ScopeTimerMan
 
     bool active         = false;
     bool _force_strings = false;
+    std::atomic<bool> _memory{false};
     std::string timer_file;
     std::vector<std::string> _headers;
     std::vector<RunTimerReport*> reports;
@@ -231,8 +246,13 @@ struct ScopeTimer
 #endif
             detail::_current_ScopeTimer<Clock> = this->pscope;
 
+            // time first, then the exit memory sample, then any bookkeeping allocation
+            //  so neither the sample nor the snapshot are counted in the scope
+            auto const end          = now();
+            MemSample const mem_out = pending_mem ? MemSample::now() : MemSample{};
+
             auto& s = *r.snapshots.emplace_back(
-                std::make_unique<RunTimerReportSnapshot>(&r, parent, start, now() - start));
+                std::make_unique<RunTimerReportSnapshot>(&r, parent, start, end - start));
 
             if (this->pscope)
                 pscope->childs.emplace_back(&s);
@@ -240,6 +260,12 @@ struct ScopeTimer
             s.childs = std::move(childs);
             s.level  = pending_level;
             s.counts = std::move(pending_counts);
+            if (pending_mem)
+            {
+                s.has_mem = true;
+                s.mem_in  = pending_mem_in;
+                s.mem_out = mem_out;
+            }
 
             if (parent == nullptr)
                 ScopeTimerMan::INSTANCE().traces.emplace_back(&s);
@@ -275,6 +301,8 @@ struct ScopeTimer
     // set by an enclosing Scope before this destructs, moved into the snapshot
     std::uint8_t pending_level = 0;
     std::vector<std::uint64_t> pending_counts;
+    bool pending_mem = false;
+    MemSample pending_mem_in{};
 };
 
 

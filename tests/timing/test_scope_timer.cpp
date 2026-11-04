@@ -2,6 +2,8 @@
 #include "phlop/timing/scope_timer.hpp"
 
 #include <thread>
+#include <vector>
+#include <cstdlib>
 #include <iostream>
 
 using namespace std::chrono_literals;
@@ -41,11 +43,34 @@ void fn2()
     fn0();
 }
 
+void fn_mem()
+{
+    PHLOP_SCOPE("fn_mem", time, mem);
+
+    std::vector<char> v(64 * 1024 * 1024, 1); // value initialized, so resident
+
+    // read back through volatile so the optimizer can't elide the allocation
+    //  or its writes (clang -O2 removes the whole vector otherwise)
+    char const volatile* const p = v.data();
+    std::size_t sum              = 0;
+    for (std::size_t i = 0; i < v.size(); i += 4096)
+        sum += static_cast<std::size_t>(p[i]);
+    if (sum != v.size() / 4096)
+        std::abort();
+}
+
+void fn3()
+{
+    PHLOP_SCOPE_TIMER("fn3"); // time only scope, with a mem scope child
+
+    fn_mem();
+}
+
 int main()
 {
     std::cout << __FILE__ << std::endl;
     // ONLY SUPPORTS SERIAL OPERATIONS!
-    phlop::scope_timer().file_name("bin/scope_timer.txt").init();
+    phlop::scope_timer().file_name("bin/scope_timer.txt").memory().init();
 
     for (std::size_t i = 0; i < 2; ++i)
         fn1();
@@ -53,6 +78,8 @@ int main()
         fn2();
     for (std::size_t i = 0; i < 2; ++i)
         fny();
+
+    fn3();
 
     phlop::scope_timer().shutdown();
 }
