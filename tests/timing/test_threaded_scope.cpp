@@ -35,11 +35,12 @@ int main()
         PHLOP_SCOPE("main", time, perf_all); // counts the main thread only
         std::vector<std::thread> threads;
         for (std::size_t t = 0; t < results.size(); ++t) // thread t does (t + 1) units
-            threads.emplace_back([&, t] { results[t] = work(4096, 1000 * static_cast<int>(t + 1)); });
+            threads.emplace_back(
+                [&, t] { results[t] = work(4096, 1000 * static_cast<int>(t + 1)); });
         for (auto& t : threads)
             t.join();
     }
     phlop::scope_timer().shutdown();
-    std::cout << "results " << results[0] << " " << results[3] << " at "
-              << (std::time(nullptr) > 0) << '\n';
+    std::cout << "results " << results[0] << " " << results[3] << " at " << (std::time(nullptr) > 0)
+              << '\n';
 }

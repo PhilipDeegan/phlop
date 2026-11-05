@@ -111,8 +111,9 @@ struct ScopeT
             perf::Counts end;
             // a counter re-init inside the scope (init/reset) restarted the
             // group, begin is from the old one: drop the counts, not wrap them
-            auto const same = state.generation
-                              == perf::Config::INSTANCE().generation.load(std::memory_order_relaxed);
+            auto const same
+                = state.generation
+                  == perf::Config::INSTANCE().generation.load(std::memory_order_relaxed);
             if (state.on and same and perf::local().read(end))
             {
                 auto const& idx = perf::Config::INSTANCE().levels[level].idx;

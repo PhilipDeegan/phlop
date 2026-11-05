@@ -69,7 +69,17 @@ jobs:
         ./bin/scope_timer_test
         python tests/timing/test_scope_timer.py test_scope_timer -f bin/scope_timer.txt
         ./bin/threaded_scope_timer_test
+        python tests/timing/test_scope_timer.py test_threaded_scope_timer -f bin/threaded_scope_timer.txt
         python -m phlop.timing.scope_timer times bin/threaded_scope_timer.txt
+
+    - name: Scope timers, memory forced off
+      env:
+        PHLOP_SCOPE_MEM: "0"
+      run: |
+        ./bin/scope_timer_test
+        python tests/timing/test_scope_timer.py test_scope_timer -f bin/scope_timer.txt
+        ./bin/threaded_scope_timer_test
+        python tests/timing/test_scope_timer.py test_threaded_scope_timer -f bin/threaded_scope_timer.txt
 
     - name: Perf scopes, counters requested
       env:
