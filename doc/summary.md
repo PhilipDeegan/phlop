@@ -91,6 +91,14 @@ shared helpers for each file.
 - `cmake.py` (ctest listing), `git.py`, `nvidia/` (ncu, compute-sanitizer),
   `pfm/` (libpfm event lookup, needs `sh/setup_pfm.sh`).
 
+- `nvidia/cuobjdump.py`: `cuobjdump --dump-resource-usage`, one block per
+  arch in the fatbin, names through `llvm-cxxfilt` (binutils `c++filt` leaves
+  C++20 manglings, eg auto template parameters). `max_threads()`: registers
+  are allocated per warp in units of 256 out of 65536 per block, so R
+  registers per thread launch at most `65536 // (ceil(R*32/256)*256) * 32`
+  threads, capped at 1024 (86 -> 736, 148 -> 416); options override the
+  three numbers. LOCAL > 0 is spills or local arrays.
+
 ## Scope timers
 
 ### C++ (`inc/phlop/timing`, `src/phlop/timing`)
