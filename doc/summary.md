@@ -84,7 +84,16 @@ shared helpers for each file.
     covers the whole interval (the first covers 0.1s).
   - A thread samples while the main thread waits on (reaps) the child.
     Polling `os.kill(pid, 0)` instead never ends: zombies still answer it.
-  - yaml headers: `fds, mem_used_mb, cpu_usage`.
+  - yaml headers: `fds, mem_used_mb, cpu_usage`, then per GPU sampled
+    `gpu<i>_{util,mem_mb,proc_mem_mb,power_w,sm_mhz,temp_c,slowdown}`.
+  - GPUs (`nvidia/smi.py`): on by default when `nvidia-smi` is on PATH
+    (`--gpu/--no-gpu`), only those in `CUDA_VISIBLE_DEVICES`. Two
+    `nvidia-smi` queries per sample (~30ms); `proc_mem_mb` sums
+    `--query-compute-apps` over the process and its children. `util` is the
+    share of time any kernel ran, not SM occupancy. Slowdowns are the named
+    `clocks_event_reasons.*` fields (power cap, thermal, hw slowdown, power
+    brake), not the `.active` bitmask, which sets bits outside them. The
+    summary names slowdowns active in > 5% of samples and util under 50%.
   - `AttachableRuntimeStatsManager` samples the current process from a
     daemon subprocess (not held up by our GIL). SIGINT (`kill()`) or SIGTERM
     (exit) stop it, and it writes `end:`.
