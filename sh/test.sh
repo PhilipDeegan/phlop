@@ -30,6 +30,19 @@ if command -v valgrind > /dev/null; then
     py -Om phlop.run.valgrind --show --md - > /dev/null
 fi
 
+# needs a GPU, nsys's exit code is the program's
+if command -v nsys > /dev/null && nvidia-smi -L > /dev/null 2>&1; then
+    py -Om phlop.run.nsys -q sh -c "exit 0"
+    py -Om phlop.run.nsys --show --md - > /dev/null
+fi
+if command -v compute-sanitizer > /dev/null && nvidia-smi -L > /dev/null 2>&1; then
+    py -Om phlop.run.csan -q sh -c "exit 0" && exit 1 # 255: no CUDA calls, no results
+fi
+# no kernels, so nothing replayed: real profiles via PHLOP_NCU_TEST=1, see test_ncu.py
+if command -v ncu > /dev/null && nvidia-smi -L > /dev/null 2>&1; then
+    py -Om phlop.run.ncu -q sh -c "exit 0"
+fi
+
 py -Om phlop.run.perf -e="--all-user" echo yes || echo "perf failed, assumed CI"
 
 # install via ./sh/setup_pfm.sh
