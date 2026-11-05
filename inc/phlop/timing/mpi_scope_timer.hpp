@@ -7,6 +7,7 @@
 #define _PHLOP_TIMER_EXPORTED_ 2
 
 #include "phlop/macros/def/string.hpp"
+#include "phlop/timing/nvtx.hpp"
 #include "phlop/timing/common_threaded_timer.hpp"
 
 #include <memory>
@@ -18,6 +19,7 @@
 
 #if !defined(PHLOP_SCOPE_TIMER)
 #define PHLOP_SCOPE_TIMER(key)                                                                     \
+    PHLOP_NVTX_RANGE(key)                                                                          \
     static thread_local auto PHLOP_STR_CAT(ridx_, __LINE__)                                        \
         = std::make_shared<phlop::threaded::RunTimerReport>(key, __FILE__, __LINE__);              \
     static thread_local phlop::threaded::ThreadLifeWatcher PHLOP_STR_CAT(_watcher_, __LINE__){     \
@@ -31,6 +33,7 @@
 // PHLOP_SCOPE("key", time, perf_light), see scope.hpp
 #if !defined(PHLOP_SCOPE)
 #define PHLOP_SCOPE(key, ...)                                                                      \
+    PHLOP_NVTX_RANGE(key)                                                                          \
     static thread_local auto PHLOP_STR_CAT(ridx_, __LINE__)                                        \
         = std::make_shared<phlop::threaded::RunTimerReport>(key, __FILE__, __LINE__);              \
     static thread_local phlop::threaded::ThreadLifeWatcher PHLOP_STR_CAT(_watcher_, __LINE__){     \

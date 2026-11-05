@@ -112,6 +112,15 @@ shared helpers for each file.
   scope_timer,threaded_scope_timer -Oa "-fPIC -std=c++20" -W 9` before
   `sh/test.sh`, which only runs `mkn test`.
 
+- `-DPHLOP_NVTX` (`nvtx.hpp`): each `PHLOP_SCOPE`/`PHLOP_SCOPE_TIMER` macro
+  starts with `PHLOP_NVTX_RANGE(key)`, a push/pop in NVTX domain "phlop",
+  declared before the timer so it encloses it. Names are registered once per
+  call site (a static, as the key's report is). Nothing without the define.
+  `sh/test_nvtx.sh` builds the scope and threaded tests with it, runs them
+  under `nsys --trace=nvtx` and checks the ranges against the timer file:
+  same (scope, parent) pairs and counts, nesting per thread. Skipped without
+  nsys and the nvtx3 headers (CI).
+
 ### Python (`phlop/timing/scope_timer.py`)
 - `file_parser`/`lines_parser` read the format above, keeping the path of
   open nodes, so there's no depth limit and O(1) per line.

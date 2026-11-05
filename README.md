@@ -52,6 +52,14 @@ PHLOP_SCOPE("io");                      // PHLOP_SCOPE_DEFAULT, time
 ```
 
 ```shell
+# -DPHLOP_NVTX: every PHLOP_SCOPE / PHLOP_SCOPE_TIMER is also an NVTX range in domain
+#  "phlop", so scopes show on the Nsight Systems timeline next to their kernels
+g++ -DPHLOP_NVTX -I/usr/local/cuda/include ... -ldl   # nvtx3 is header only
+nsys profile --trace=cuda,nvtx ./app
+ncu --nvtx --nvtx-include "phlop@step/" ./app         # only kernels inside scope "step"
+```
+
+```shell
 # choose the event sets per level, then run as usual
 eval "$(python3 -m phlop.app.pfm.stat --env perf_light=light --env perf_all=topdown)"
 ./app  # writes counts into the scope timer file, read with:

@@ -20,6 +20,7 @@ PHLOP_SCOPE_MEM=peak mkn test -p scope_timer # peak reset per mem scope
 PHLOP_SCOPE_MEM=peak py -O tests/timing/test_scope_timer.py test_scope_timer -f "bin/scope_timer.txt"
 py tests/timing/test_scope_timer.py test_mem_parse
 ./sh/test_shared_libs.sh
+./sh/test_nvtx.sh # skipped without nsys and the nvtx3 headers
 mkn test -p threaded_scope_timer
 py tests/timing/test_scope_timer.py test_threaded_scope_timer -f "bin/threaded_scope_timer.txt"
 PHLOP_SCOPE_MEM=0 mkn test -p threaded_scope_timer
