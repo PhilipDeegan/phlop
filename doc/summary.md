@@ -9,8 +9,8 @@ behaviour and the performance notes behind past changes.
 ### `phlop/proc.py`
 - `run()` → `RunTimer`, the one place subprocesses are started.
 - `run_raw()` → bare `Popen`, used by stats_man.
-- `run_mp()` runs commands on a thread pool. Its default concurrency is
-  unbounded, see `todo.md`.
+- `run_mp()` runs commands on a thread pool, by default
+  `min(len(cmds), usable_cores())` threads, at least 1.
 
 ### `phlop/procs/runtimer.py` - `RunTimer`
 - Starts a command with `Popen` (default) or `subprocess.run`, timed, with
@@ -88,8 +88,8 @@ shared helpers for each file.
     peaks, the worst's detail. `--compare`: peak difference and functions at
     one side's peak that no profile of the other has. markdown (tables,
     mermaid charts) and matplotlib plots, matplotlib imported only for --plot.
-  - `run/mpi_valgrind.py`: under mpirun, files by rank, the run id from the
-    launcher's job id. Rank 0 waits for every rank's file, then reports.
+  - `run/mpi_valgrind.py`: under mpirun, files by rank, rank 0 reports once
+    every rank finished (`run/mpi_ranks.py`).
 - `stats_man.py`: runs a program and samples its fds, rss and cpu.
   - Keeps one `psutil.Process` and calls `cpu_percent(None)`, so each sample
     covers the whole interval (the first covers 0.1s).
@@ -108,7 +108,53 @@ shared helpers for each file.
   - `AttachableRuntimeStatsManager` samples the current process from a
     daemon subprocess (not held up by our GIL). SIGINT (`kill()`) or SIGTERM
     (exit) stop it, and it writes `end:`.
-- `cmake.py` (ctest listing), `git.py`, `nvidia/` (ncu, compute-sanitizer),
+- `nvidia/nsys.py`: `nsys profile --export=sqlite`, files
+  `.phlop/nsys/nsys.<run id>.<label>.*`, read back with `sqlite3`, no nsys
+  python deps. A `.nsys-rep` alone is exported on load. Interval unions give
+  GPU busy/idle (kernels, copies, memsets), NCCL kernels (name starts `nccl`)
+  vs compute overlap, and NVTX "GPU busy while open" (wall clock overlap, not
+  nsys's projection of ranges onto the GPU). `Coverage` answers a range in
+  O(log n) with prefix sums.
+  - `nsys_report.py`: text/markdown, `hints()` with thresholds at the top,
+    `straggler()`: most kernel time vs the median rank; the others' MPI +
+    NCCL time is the wait it causes.
+  - `run/nsys.py`, `run/mpi_nsys.py` mirror the valgrind runners; mpi_nsys
+    adds `mpi` to the trace.
+- `nvidia/csan.py`: compute-sanitizer `--xml --save`, files
+  `.phlop/csan/csan-<tool>.<run id>.<label>.{xml,log}`. Records are grouped
+  by (kind, text, device line, host caller); the caller is the first host
+  frame outside libcuda/cudart. `--print-limit` caps records, so counts at the
+  cap show `N+`. A cut short xml keeps its closed records (iterparse). Exit
+  code 99 on errors; 255 is compute-sanitizer's own for a program that never
+  called CUDA. `csan_report.py` hints that errors after a kernel fault are
+  sticky: later API errors and failed-free leaks follow from the first.
+- `nvidia/ncu.py`: `ncu --set detailed --section WarpStateStats --nvtx
+  --filter-mode=per-launch-config -c 1`: each distinct (kernel, grid, block,
+  smem) launch profiled once. Files `.phlop/ncu/ncu.<run id>.<label>.{ncu-repz,log}`
+  (older ncu writes `.ncu-rep`, both load). Loading imports the report once to
+  `<report>.raw.csv` (`--page raw --print-units base`: ns, byte/s; numbers
+  carry thousands commas) and `<report>.rules.csv` (`--page details
+  --print-rule-details yes`, OPT/WRN rules with ncu's estimated speedup).
+  Launches of one config are averaged. `verdict()`: a unit at >= 60% of peak
+  bounds the kernel (memory: the busiest of DRAM/L2/L1), else latency, "small
+  grid" under one wave. Coalescing is `memory_l2_theoretical_sectors_global`
+  over its `_ideal` (independent of access width), bank conflicts the same for
+  shared wavefronts; the detailed set lacks the per-request sector metrics.
+  `log_problem()` turns ERR_NVGPUCTRPERM and "no kernels profiled" (with
+  ncu's list of the program's kernels) into a message.
+  - `ncu_report.py`: phlop hints, then up to 3 ncu rules over 1% speedup;
+    for memory bound kernels idle compute pipe rules, and CPIStall when the
+    top stall is long_scoreboard, are dropped: they restate the verdict.
+    Stragglers compare a rank's kernel time to the other ranks' median (2
+    ranks: a median including the slow one halves the ratio).
+  - The real profile test is opt-in, `PHLOP_NCU_TEST=1`: replays hold a GPU
+    that may drive the desktop.
+- `run/mpi_ranks.py`: rank/size/run id for every mpi_* runner (valgrind,
+  nsys, csan, ncu), slurm included. mpirun kills the job when a rank exits non
+  zero, so ranks write `<run id>.rank<N>.rc`, rank 0 waits for all, reports,
+  writes `<run id>.done` and exits with the worst code; the others exit on
+  `.done`. Slurm run ids include the step id: steps share the job id.
+- `cmake.py` (ctest listing), `git.py`, `nvidia/`,
   `pfm/` (libpfm event lookup, needs `sh/setup_pfm.sh`).
 
 - `nvidia/cuobjdump.py`: `cuobjdump --dump-resource-usage`, one block per
@@ -138,7 +184,8 @@ shared helpers for each file.
   `std::endl` (a flush per line). `fn_id` is `uint32_t`, depth `uint16_t`.
 - Built and tested with mkn: CI runs `mkn clean build test run -p
   scope_timer,threaded_scope_timer -Oa "-fPIC -std=c++20" -W 9` before
-  `sh/test.sh`, which only runs `mkn test`.
+  `sh/test.sh`, which builds and tests each profile again (`mkn clean build
+  test`): `mkn test` alone does nothing on a fresh checkout.
 
 ### Python (`phlop/timing/scope_timer.py`)
 - `file_parser`/`lines_parser` read the format above, keeping the path of
@@ -150,8 +197,8 @@ shared helpers for each file.
 ## Repo
 - `sh/test.sh`: full test run (CLI modes, concurrency, timers, valgrind,
   perf, pfm, forced failure exit codes). `sh/lint.sh` rewrites files (black,
-  autoflake), so for checks only use `black --check`, `ruff check`,
-  `pylint --errors-only`.
+  autoflake); with `CI` set (GitHub sets it) it only checks, failing on
+  changes: `CI=true ./sh/lint.sh` for checks only.
 - Version lives in both `pyproject.toml` and `setup.py`. Publishing to PyPI
   runs when a GitHub release is published.
-- `todo.md`: known follow-ups. `ISSUES.md`: older notes.
+- `todo.md`: known follow-ups.
