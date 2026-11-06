@@ -27,13 +27,18 @@ def run_raw(args: list, shell=False, quiet=False):
 
 def run_mp(cmds, N_CORES=None, **kwargs):
     """
-    spawns N_CORES threads (default=len(cmds)) running commands and waiting for results
+    runs cmds on N_CORES threads, waits for the results. N_CORES defaults to the
+    usable cores (affinity, cgroup quota), at most one per command: 500 commands
+    don't start 500 processes at once
     https://docs.python.org/3/library/concurrent.futures.html
     """
     import concurrent.futures
 
+    from phlop.os import usable_cores
+
     if N_CORES is None:
-        N_CORES = len(cmds)
+        N_CORES = min(len(cmds), usable_cores())
+    N_CORES = max(1, N_CORES)  # ThreadPoolExecutor rejects 0, eg no cmds
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=N_CORES) as executor:
         jobs = [executor.submit(run, cmd, **kwargs) for cmd in cmds]

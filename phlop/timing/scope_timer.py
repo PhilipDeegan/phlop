@@ -71,8 +71,13 @@ class PerfLevel:
         return self.label.split("/")[0]
 
     @property
+    def kernel(self):
+        """counts include kernel space, --env ... --kernel"""
+        return self.label.endswith("+kernel")
+
+    @property
     def set_name(self):
-        return self.label.split("/")[-1]
+        return self.label.split("/")[-1].removesuffix("+kernel")
 
 
 @dataclass
@@ -441,7 +446,9 @@ def print_scope_perf(
         labels, hints = {}, {}
         metrics = stf.metrics_for(level, counts, labels=labels, hints=hints)
         flagged[0] = flagged[0] or bool(hints)
-        text = f" [{stf.perf[level].set_name}] " + " ".join(
+        perf_level = stf.perf[level]
+        kernel = " +kernel" if perf_level.kernel else ""
+        text = f" [{perf_level.set_name}{kernel}] " + " ".join(
             colors(f"{k}={fmt(v, labels.get(k))}", WARN if k in hints else OK)
             for k, v in metrics.items()
         )

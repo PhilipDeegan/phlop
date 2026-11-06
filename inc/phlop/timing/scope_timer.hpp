@@ -40,7 +40,6 @@ namespace phlop
 struct RunTimerReport;
 using RunTimerReportSnapshot = RunTimerReportSnapshotT<RunTimerReport>;
 
-// forward declare so detail::_current_ScopeTimer<Clock> can use it as a pointer type
 template<typename Clock = SteadyClock>
 struct ScopeTimer;
 struct ScopeTimerMan;
@@ -81,6 +80,7 @@ struct ScopeTimerMan
     ScopeTimerMan()
         : timer_file{file_name_default}
     {
+        perf::Config::INSTANCE(); // constructed first so destroyed after this
         reports.reserve(25);
         traces.reserve(25);
     }
@@ -215,10 +215,26 @@ struct RunTimerReport
 };
 
 
+// non-template link in the scope stack: the current scope per thread is held
+//  out of line, see detail::current_scope(), so it is shared across shared libraries
+struct ScopeTimerNode
+{
+    static ScopeTimerNode& root_parent_from(ScopeTimerNode& self)
+    {
+        if (self.pscope)
+            return root_parent_from(*self.pscope);
+        return self;
+    }
+
+    ScopeTimerNode* pscope = nullptr;
+    std::vector<RunTimerReportSnapshot*> childs;
+};
+
+
 namespace detail
 {
-    template<typename Clock>
-    inline ScopeTimer<Clock>* _current_ScopeTimer = nullptr;
+    // the innermost active scope, defined in src/phlop/timing/scope_timer.cpp
+    ScopeTimerNode*& current_scope();
 
     void inline write_timer_file()
     {
@@ -231,15 +247,15 @@ namespace detail
 
 
 template<typename Clock>
-struct ScopeTimer
+struct ScopeTimer : ScopeTimerNode
 {
     ScopeTimer(RunTimerReport& _r)
         : r{_r}
     {
         if (ScopeTimerMan::INSTANCE().active)
         {
-            this->pscope                       = detail::_current_ScopeTimer<Clock>;
-            detail::_current_ScopeTimer<Clock> = this;
+            this->pscope            = detail::current_scope();
+            detail::current_scope() = this;
 
 #if defined(PHLOP_SCOPE_TIMER_SELF_STATS)
             detail::construct_stats.add(now() - _self_start);
@@ -254,7 +270,7 @@ struct ScopeTimer
 #if defined(PHLOP_SCOPE_TIMER_SELF_STATS)
             auto const self_start = now();
 #endif
-            detail::_current_ScopeTimer<Clock> = this->pscope;
+            detail::current_scope() = this->pscope;
 
             // time first, then the exit memory sample, then any bookkeeping allocation
             //  so neither the sample nor the snapshot are counted in the scope
@@ -296,13 +312,6 @@ struct ScopeTimer
 
     static std::uint64_t now() { return Clock::now(); }
 
-    static ScopeTimer& root_parent_from(ScopeTimer& self)
-    {
-        if (self.pscope)
-            return root_parent_from(*self.pscope);
-        return self;
-    }
-
 #if defined(PHLOP_SCOPE_TIMER_SELF_STATS)
     // first member: initialised before the others, so they're measured too
     std::uint64_t const _self_start = now();
@@ -310,9 +319,7 @@ struct ScopeTimer
     RunTimerReport& r;
     RunTimerReport* parent    = ScopeTimerMan::INSTANCE().report_stack_ptr;
     RunTimerReport* child     = nullptr;
-    ScopeTimer* pscope        = nullptr;
     std::uint64_t const start = now();
-    std::vector<RunTimerReportSnapshot*> childs;
 
     // set by an enclosing Scope before this destructs, moved into the snapshot
     std::uint8_t pending_level = 0;
