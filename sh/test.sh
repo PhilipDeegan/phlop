@@ -33,6 +33,7 @@ if command -v mpicxx >/dev/null && command -v mpirun >/dev/null; then # not in C
 else
     echo "mpicxx/mpirun not found, mpi scope timer skipped"
 fi
+./sh/test_shared_libs.sh
 mkn test -p scope
 py tests/timing/test_scope_timer.py test_scope -f "bin/scope.txt" # no -O: asserts
 mkn test -p threaded_scope
