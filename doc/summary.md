@@ -78,13 +78,33 @@ shared helpers for each file.
 ## Tool wrappers (`phlop/app`, CLIs in `phlop/run`)
 - `perf.py`: `perf stat`/`record` command builders. Needs
   `kernel.perf_event_paranoid` low enough. `sh/test.sh` tolerates failure.
-- `valgrind.py`: memcheck / massif.
+- `valgrind/`: runs a valgrind tool with defaults (memcheck: full leak
+  check, origins, exit code 99 on errors; massif: ms time), valgrind's files
+  in `.phlop/valgrind/<tool>.<run id>.<p pid|rank N>.<ext>`, its text in .log.
+  - `massif.py`, `memcheck.py`: parse `.out` / `--xml=yes` files.
+  - `report.py`: the answer first. massif: peak, when, allocation sites at the
+    peak with C++ runtime frames (stl_vector.h, new_allocator.h...) collapsed
+    to the code using them, other libraries kept. Several processes: sorted
+    peaks, the worst's detail. `--compare`: peak difference and functions at
+    one side's peak that no profile of the other has. markdown (tables,
+    mermaid charts) and matplotlib plots, matplotlib imported only for --plot.
+  - `run/mpi_valgrind.py`: under mpirun, files by rank, the run id from the
+    launcher's job id. Rank 0 waits for every rank's file, then reports.
 - `stats_man.py`: runs a program and samples its fds, rss and cpu.
   - Keeps one `psutil.Process` and calls `cpu_percent(None)`, so each sample
     covers the whole interval (the first covers 0.1s).
   - A thread samples while the main thread waits on (reaps) the child.
     Polling `os.kill(pid, 0)` instead never ends: zombies still answer it.
-  - yaml headers: `fds, mem_used_mb, cpu_usage`.
+  - yaml headers: `fds, mem_used_mb, cpu_usage`, then per GPU sampled
+    `gpu<i>_{util,mem_mb,proc_mem_mb,power_w,sm_mhz,temp_c,slowdown}`.
+  - GPUs (`nvidia/smi.py`): on by default when `nvidia-smi` is on PATH
+    (`--gpu/--no-gpu`), only those in `CUDA_VISIBLE_DEVICES`. Two
+    `nvidia-smi` queries per sample (~30ms); `proc_mem_mb` sums
+    `--query-compute-apps` over the process and its children. `util` is the
+    share of time any kernel ran, not SM occupancy. Slowdowns are the named
+    `clocks_event_reasons.*` fields (power cap, thermal, hw slowdown, power
+    brake), not the `.active` bitmask, which sets bits outside them. The
+    summary names slowdowns active in > 5% of samples and util under 50%.
   - `AttachableRuntimeStatsManager` samples the current process from a
     daemon subprocess (not held up by our GIL). SIGINT (`kill()`) or SIGTERM
     (exit) stop it, and it writes `end:`.
