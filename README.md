@@ -57,6 +57,8 @@ eval "$(python3 -m phlop.app.pfm.stat --env perf_light=light --env perf_all=topd
 ./app  # writes counts into the scope timer file, read with:
 python3 -m phlop.timing.scope_timer perf .phlop_scope_times.txt -v  # scope_timer.hpp
 python3 -m phlop.timing.scope_timer perf .phlop_scope_times.bin -v  # threaded, same format
+# opt in: count kernel space too (eg I/O scopes), needs perf_event_paranoid <= 1
+eval "$(python3 -m phlop.app.pfm.stat --env perf_light=light --kernel)"
 ```
 
 ```shell
