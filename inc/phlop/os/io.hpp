@@ -103,8 +103,10 @@ public:
 #endif
     }
 
+#if defined(__linux__) // only read there, an unused private field elsewhere
 private:
     int fd = -1; // -1 not opened yet, -2 unsupported
+#endif
 };
 
 } // namespace phlop::os
