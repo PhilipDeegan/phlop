@@ -12,7 +12,10 @@
 // The peak is the process high-water mark, it only shows a scope that sets a
 // new high. memory(true, true) or PHLOP_SCOPE_MEM=peak (linux, single threaded
 // scope timer) resets it on entry to each mem scope instead, so peak_out -
-// peak_in is that scope's own spike above its entry rss, see mem_begin
+// peak_in is that scope's own spike above its entry rss, see mem_begin.
+// io adds the calling thread's I/O over the scope, /proc/thread-self/io (linux),
+// when ScopeTimerMan::io() or PHLOP_SCOPE_IO=1: bytes and calls through read/
+// write like syscalls, bytes to/from the block layer, see phlop/os/io.hpp
 
 #include "phlop/timing/common_timer.hpp"
 #include "phlop/timing/perf_counters.hpp"
@@ -46,6 +49,7 @@ enum class scope_key : std::uint32_t {
     perf_light = 1u << 1, // PHLOP_PERF_LIGHT events, eg cycles, instructions, RAM fetches
     perf_all   = 1u << 2, // PHLOP_PERF_ALL events, eg a topdown set
     mem        = 1u << 3, // resident memory (rss, process peak) on entry/exit
+    io         = 1u << 4, // the thread's I/O over the scope, /proc/thread-self/io
 };
 
 template<typename... Keys>
@@ -71,14 +75,15 @@ constexpr std::uint8_t scope_perf_level(std::uint32_t const flags)
 
 // A timer scope, plus the calling thread's counter group around it when F asks
 // for a perf level. Without perf/mem flags it is exactly a Timer. Timer needs
-// pending_level / pending_counts / pending_mem(_in), moved into its snapshot
-// as it destructs, and Man::INSTANCE().active/_memory. Counter reads sit
-// inside the timed region, memory samples outside it (~10us each)
+// pending_level / pending_counts / pending_mem(_in) / pending_io(_in), moved
+// into its snapshot as it destructs, and Man::INSTANCE().active/_memory/_io.
+// Counter reads sit inside the timed region, memory and io samples outside it
 template<std::uint32_t F, typename Timer, typename Man>
 struct ScopeT
 {
     static constexpr std::uint8_t level = scope_perf_level(F);
     static constexpr bool has_mem       = (F & static_cast<std::uint32_t>(scope_key::mem)) != 0;
+    static constexpr bool has_io        = (F & static_cast<std::uint32_t>(scope_key::io)) != 0;
 
     template<typename Report>
     ScopeT(Report& r)
@@ -122,6 +127,18 @@ struct ScopeT
                 timer.pending_level = level;
             }
         }
+        if constexpr (has_io)
+            if (io_state.on) // exit sample is taken by the timer, after its time
+            {
+                if constexpr (level > 0) // our counter reads since the entry sample,
+                {                        //  incl a thread's first group open probe
+                    auto const& group = perf::local();
+                    io_state.in.self_calls += group.read_calls - io_state.perf_calls;
+                    io_state.in.self_bytes += group.read_bytes - io_state.perf_bytes;
+                }
+                timer.pending_io    = true;
+                timer.pending_io_in = io_state.in;
+            }
     }
 
     struct Counting
@@ -181,8 +198,44 @@ struct ScopeT
             return NoSampling{};
     }
 
-    // before timer: initialised first, so the entry sample is not timed
+    struct IoSampling
+    {
+        IoSample in{};
+        std::uint64_t perf_calls = 0, perf_bytes = 0; // the group's reads at entry
+        bool on = false;
+    };
+    struct NoIoSampling // distinct from NoSampling and NoCounting, see above
+    {
+    };
+
+    // after any mem entry sample, so its /proc read is not counted as the scope's
+    static auto io_begin()
+    {
+        if constexpr (has_io)
+        {
+            auto& man = Man::INSTANCE();
+            IoSampling s;
+            if (man.active and man._io.load(std::memory_order_relaxed))
+            {
+                if constexpr (level > 0)
+                {
+                    auto const& group = perf::local();
+                    s.perf_calls      = group.read_calls;
+                    s.perf_bytes      = group.read_bytes;
+                }
+                s.in = IoSample::now();
+                s.on = s.in.ok;
+            }
+            return s;
+        }
+        else
+            return NoIoSampling{};
+    }
+
+    // before timer: initialised first, so the entry samples are not timed
     PHLOP_NO_UNIQUE_ADDRESS std::conditional_t<has_mem, Sampling, NoSampling> mem = mem_begin();
+    PHLOP_NO_UNIQUE_ADDRESS std::conditional_t<has_io, IoSampling, NoIoSampling> io_state
+        = io_begin();
     Timer timer;
     PHLOP_NO_UNIQUE_ADDRESS std::conditional_t<(level > 0), Counting, NoCounting> state;
 };

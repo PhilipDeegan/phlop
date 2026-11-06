@@ -33,6 +33,39 @@ SAME_LEVEL = """#perf 1 amd64_fam1ah_zen5/light cycles,instructions,fetches
 """.splitlines(keepends=True)
 
 
+class ScopeIoParseTest(unittest.TestCase):
+    def test_io_token(self):
+        from phlop.timing.scope_timer import IO_FIELDS, RunTimerNode, io_str
+
+        _, node = RunTimerNode.from_scope_timer("0 1 2:3 io:10,4194304,1,4,0,4194304,0")
+        self.assertTrue(node.has_io)
+        self.assertFalse(node.has_mem)
+        self.assertEqual(list(node.io), list(IO_FIELDS))
+        self.assertEqual((node.io["wchar"], node.io["syscw"]), (4194304, 4))
+        self.assertEqual(
+            io_str(node.io), "  write 4.00MiB/4 read 10B/1 disk w 4.00MiB r 0B"
+        )
+        # after counts and mem, as written
+        _, node = RunTimerNode.from_scope_timer(
+            "1 4 5:6 1:7,8 m:900,400,2000,2000 io:1,2,3,4,5,6,7"
+        )
+        self.assertEqual(
+            (node.counts, node.dr, node.io["cancelled_write_bytes"]), ([7, 8], -500, 7)
+        )
+        _, plain = RunTimerNode.from_scope_timer("0 1 2:3")
+        self.assertFalse(plain.has_io)
+
+    def test_dedupe_sums_io(self):
+        from phlop.timing.scope_timer import dedupe_leafs
+
+        stf = lines_parser(
+            "0 root\n1 w\n\n0 0 0:9\n1 1 0:1 io:1,2,3,4,5,6,7\n"
+            "1 1 0:1\n1 1 0:1 io:1,1,1,1,1,1,1\n".splitlines(keepends=True)
+        )
+        (w,) = dedupe_leafs(stf, stf.roots[0])
+        self.assertEqual(list(w.io.values()), [2, 3, 4, 5, 6, 7, 8])
+
+
 class ScopePerfParseTest(unittest.TestCase):
     def setUp(self):
         self.stf = lines_parser(LINES)

@@ -92,6 +92,7 @@ struct ScopeTimerMan
         active = true;
         perf::Config::INSTANCE().init();
         memory(_memory.load(std::memory_order_relaxed), _memory_peak);
+        io(_io.load(std::memory_order_relaxed));
         _peak_carry = 0;
     }
 
@@ -142,6 +143,17 @@ struct ScopeTimerMan
         return *this;
     }
 
+    // sample the calling thread's I/O for PHLOP_SCOPE("key", time, io) scopes,
+    //  also env PHLOP_SCOPE_IO=1/0, which wins over the code. linux, else ignored
+    ScopeTimerMan& io(bool const b = true)
+    {
+        bool on = b;
+        if (auto const env = std::getenv("PHLOP_SCOPE_IO"))
+            on = std::string_view{env} != "0";
+        _io.store(on, std::memory_order_relaxed);
+        return *this;
+    }
+
     template<typename... Args>
     auto& headers(Args const... args)
     {
@@ -181,6 +193,7 @@ struct ScopeTimerMan
     bool active         = false;
     bool _force_strings = false;
     std::atomic<bool> _memory{false};
+    std::atomic<bool> _io{false};
     bool _memory_peak         = false;
     std::uint64_t _peak_carry = 0; // peak erased by open mem scope resets, see scope.hpp
     std::string timer_file;
@@ -258,8 +271,9 @@ struct ScopeTimer
 
             // time first, then the exit memory sample, then any bookkeeping allocation
             //  so neither the sample nor the snapshot are counted in the scope
-            auto const end    = now();
-            MemSample mem_out = pending_mem ? MemSample::now() : MemSample{};
+            auto const end        = now();
+            IoSample const io_out = pending_io ? IoSample::now() : IoSample{}; // before mem's read
+            MemSample mem_out     = pending_mem ? MemSample::now() : MemSample{};
             if (pending_peak) // carry this scope's peak to its parent, see scope.hpp
             {
                 auto& carry  = ScopeTimerMan::INSTANCE()._peak_carry;
@@ -281,6 +295,11 @@ struct ScopeTimer
                 s.has_mem = true;
                 s.mem_in  = pending_mem_in;
                 s.mem_out = mem_out;
+            }
+            if (pending_io and io_out.ok)
+            {
+                s.has_io = true;
+                s.io     = io_out - pending_io_in;
             }
 
             if (parent == nullptr)
@@ -321,6 +340,8 @@ struct ScopeTimer
     MemSample pending_mem_in{};
     bool pending_peak           = false; // peak reset on entry
     std::uint64_t pending_carry = 0;
+    bool pending_io             = false;
+    IoSample pending_io_in{};
 };
 
 

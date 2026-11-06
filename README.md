@@ -49,6 +49,10 @@ python3 -m phlop.app.pfm.stat -s topdown,vector,flops -- ./app args
 PHLOP_SCOPE("solve", time, perf_all);   // time + PHLOP_PERF_ALL events
 PHLOP_SCOPE("step", time, perf_light);  // time + PHLOP_PERF_LIGHT events
 PHLOP_SCOPE("io");                      // PHLOP_SCOPE_DEFAULT, time
+// the calling thread's I/O over the scope, /proc/thread-self/io (linux), when
+// enabled: phlop::scope_timer().io() or PHLOP_SCOPE_IO=1. Bytes and calls through
+// read/write, bytes to/from the block layer, shown by: scope_timer times <file>
+PHLOP_SCOPE("h5_write", time, io);
 ```
 
 ```shell

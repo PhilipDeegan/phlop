@@ -15,6 +15,18 @@ import numpy as np
 TERM_COLORS = bool(json.loads(os.environ.get("PHLOP_TERM_COLORS", "true")))
 
 
+# "io:" token values, the scope's exit - entry of /proc/thread-self/io
+IO_FIELDS = (
+    "rchar",  # bytes through read like syscalls, page cache included
+    "wchar",  # bytes through write like syscalls
+    "syscr",  # read like syscalls
+    "syscw",  # write like syscalls
+    "read_bytes",  # bytes fetched from the block layer, local filesystems
+    "write_bytes",  # bytes sent to the block layer, local filesystems
+    "cancelled_write_bytes",  # dirty page cache truncated before writeback
+)
+
+
 @dataclass
 class RunTimerNode:
     k: int
@@ -28,6 +40,9 @@ class RunTimerNode:
     dr: int | None = None  # resident set size change, exit - entry
     p: int | None = None  # process peak resident set size at scope exit
     dp: int | None = None  # process peak growth during scope, exit - entry
+    # the thread's I/O over the scope, None unless PHLOP_SCOPE("key", time, io):
+    # {name: exit - entry} for IO_FIELDS, see phlop/os/io.hpp
+    io: dict | None = None
 
     @staticmethod
     def from_scope_timer(line):
@@ -36,7 +51,9 @@ class RunTimerNode:
         node = RunTimerNode(*[int(e) for e in (key, start_time, run_time)])
         for token in extra:
             tag, _, values = token.partition(":")
-            if tag == "m":  # "m:<rss_in>,<rss_out>,<peak_in>,<peak_out>"
+            if tag == "io":  # "io:<rchar>,<wchar>,...", IO_FIELDS order
+                node.io = dict(zip(IO_FIELDS, (int(v) for v in values.split(","))))
+            elif tag == "m":  # "m:<rss_in>,<rss_out>,<peak_in>,<peak_out>"
                 rss_in, rss_out, peak_in, peak_out = (int(v) for v in values.split(","))
                 node.r, node.dr = rss_in, rss_out - rss_in
                 node.p, node.dp = peak_out, peak_out - peak_in
@@ -48,6 +65,10 @@ class RunTimerNode:
     @property
     def has_mem(self) -> bool:
         return self.dr is not None
+
+    @property
+    def has_io(self) -> bool:
+        return self.io is not None
 
     @property
     def key(self) -> int:
@@ -245,6 +266,9 @@ class LossLine:
             return ""
         return f"  rss {format_bytes(self.n.dr, sign=True)} peak {format_bytes(self.n.dp, sign=True)}"
 
+    def io_str(self):
+        return io_str(self.n.io) if self.n.has_io else ""
+
     def root_time(self):
         if self.par:
             return self.par.root_time()
@@ -271,6 +295,26 @@ def _merge_mem(base, other):
     base.p = max(base.p, other.p)
 
 
+def io_str(io):
+    """ "  write 8.00MiB/1 read 4.00KiB/2 disk w 8.00MiB" for an io dict"""
+    text = f"  write {format_bytes(io['wchar'])}/{io['syscw']}"
+    text += f" read {format_bytes(io['rchar'])}/{io['syscr']}"
+    if io["write_bytes"] or io["read_bytes"]:
+        text += f" disk w {format_bytes(io['write_bytes'])} r {format_bytes(io['read_bytes'])}"
+    return text
+
+
+def _merge_io(base, other):
+    """fold other's io into base, summed. Members without io neither add nor
+    erase it, as for memory"""
+    if not other.has_io:
+        return
+    if not base.has_io:
+        base.io = dict(other.io)
+        return
+    base.io = {k: v + other.io[k] for k, v in base.io.items()}
+
+
 def dedupe_leafs(stf, n):
     nodes = []
     leafs = {}
@@ -294,6 +338,7 @@ def dedupe_leafs(stf, n):
             base.s += vals[i].s
             base.t += vals[i].t
             _merge_mem(base, vals[i])
+            _merge_io(base, vals[i])
         base.s /= len(vals)
         nodes.append(base)
 
@@ -360,7 +405,11 @@ def print_scope_timings(
         padding = line_max - len(line)
         info = lines[i]
         print(
-            f"{line}" + (" " * padding) + f"{info.n.t/1e6:>10,.2f}ms" + info.mem_str()
+            f"{line}"
+            + (" " * padding)
+            + f"{info.n.t/1e6:>10,.2f}ms"
+            + info.mem_str()
+            + info.io_str()
         )
 
 

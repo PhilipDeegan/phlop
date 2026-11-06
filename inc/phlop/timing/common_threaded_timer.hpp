@@ -67,6 +67,7 @@ struct ScopeTimerMan
         local().movable = true;
         perf::Config::INSTANCE().init();
         memory(_memory.load(std::memory_order_relaxed));
+        io(_io.load(std::memory_order_relaxed));
     }
 
     void shutdown(bool write = true)
@@ -107,6 +108,17 @@ struct ScopeTimerMan
         if (auto const env = std::getenv("PHLOP_SCOPE_MEM"))
             on = std::string_view{env} != "0";
         _memory.store(on, std::memory_order_relaxed);
+        return *this;
+    }
+
+    // sample each thread's own I/O for PHLOP_SCOPE("key", time, io) scopes,
+    //  also env PHLOP_SCOPE_IO=1/0, which wins over the code. linux, else ignored
+    ScopeTimerMan& io(bool const b = true)
+    {
+        bool on = b;
+        if (auto const env = std::getenv("PHLOP_SCOPE_IO"))
+            on = std::string_view{env} != "0";
+        _io.store(on, std::memory_order_relaxed);
         return *this;
     }
 
@@ -202,6 +214,7 @@ struct ScopeTimerMan
     bool active         = false;
     bool _force_strings = false;
     std::atomic<bool> _memory{false}; // read by every thread entering a mem scope
+    std::atomic<bool> _io{false};     // read by every thread entering an io scope
     std::string timer_file = "";
     std::vector<std::string> _headers;
 
@@ -306,7 +319,8 @@ struct ScopeTimer
 
             // time first, then the exit memory sample, then any bookkeeping allocation
             //  so neither the sample nor the snapshot are counted in the scope
-            auto const end          = now();
+            auto const end        = now();
+            IoSample const io_out = pending_io ? IoSample::now() : IoSample{}; // before mem's read
             MemSample const mem_out = pending_mem ? MemSample::now() : MemSample{};
 
             auto& s = *r.snapshots.emplace_back(
@@ -323,6 +337,11 @@ struct ScopeTimer
                 s.has_mem = true;
                 s.mem_in  = pending_mem_in;
                 s.mem_out = mem_out;
+            }
+            if (pending_io and io_out.ok)
+            {
+                s.has_io = true;
+                s.io     = io_out - pending_io_in;
             }
 
             if (parent == nullptr)
@@ -353,6 +372,8 @@ struct ScopeTimer
     std::vector<std::uint64_t> pending_counts;
     bool pending_mem = false;
     MemSample pending_mem_in{};
+    bool pending_io = false;
+    IoSample pending_io_in{};
 };
 
 

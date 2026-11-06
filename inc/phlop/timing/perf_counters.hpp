@@ -251,7 +251,13 @@ struct Group
         // PERF_FORMAT_GROUP | TOTAL_TIME_ENABLED | TOTAL_TIME_RUNNING
         std::array<std::uint64_t, 3 + max_events> buf{};
         auto const want = static_cast<ssize_t>((3 + fds.size()) * sizeof(std::uint64_t));
-        if (!ok or ::read(fds[0], buf.data(), want) != want or buf[1] != buf[2])
+        auto const got  = ok ? ::read(fds[0], buf.data(), want) : ssize_t{-1};
+        if (ok) // io scopes subtract these, the kernel counts them as the thread's reads
+        {
+            ++read_calls;
+            read_bytes += got > 0 ? static_cast<std::uint64_t>(got) : 0;
+        }
+        if (got != want or buf[1] != buf[2])
         {
             // a pinned group that lost its counters reads 0 bytes, never scaled
             ++Config::INSTANCE().read_failures;
@@ -267,6 +273,7 @@ struct Group
     }
 
     std::vector<int> fds;
+    std::uint64_t read_calls = 0, read_bytes = 0; // read() syscalls made, bytes returned
     std::uint64_t generation = 0;
     bool ok                  = false;
     bool opening             = false; // Config::init checking the first group
