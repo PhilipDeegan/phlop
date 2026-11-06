@@ -8,15 +8,31 @@
 
 #include <ctime>
 #include <atomic>
+#include <cstdlib>
 #include <thread>
 #include <vector>
 #include <iostream>
 
+#if defined(__linux__)
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 using namespace std; // bare `time` below must still mean phlop::scope_key::time
 
+// reps / 1000 writes of 64KiB to /dev/null: per thread io, linux
 double work(std::size_t const n, int const reps)
 {
-    PHLOP_SCOPE("work", time, perf_light);
+    PHLOP_SCOPE("work", time, perf_light, io);
+#if defined(__linux__)
+    std::vector<char> const buf(64 * 1024, 'x');
+    int const fd = ::open("/dev/null", O_WRONLY | O_CLOEXEC);
+    for (int w = 0; fd >= 0 and w < reps / 1000; ++w)
+        if (::write(fd, buf.data(), buf.size()) != static_cast<ssize_t>(buf.size()))
+            std::abort();
+    if (fd >= 0)
+        ::close(fd);
+#endif
     std::vector<double> a(n, 1.5), c(n, 0.0);
     for (int r = 0; r < reps; ++r)
     {
@@ -29,10 +45,10 @@ double work(std::size_t const n, int const reps)
 
 int main()
 {
-    phlop::scope_timer().file_name("bin/threaded_scope.txt").init();
+    phlop::scope_timer().file_name("bin/threaded_scope.txt").io().init();
     std::vector<double> results(4);
     {
-        PHLOP_SCOPE("main", time, perf_all); // counts the main thread only
+        PHLOP_SCOPE("main", time, perf_all, io); // counts the main thread only
         std::vector<std::thread> threads;
         for (std::size_t t = 0; t < results.size(); ++t) // thread t does (t + 1) units
             threads.emplace_back(
