@@ -159,6 +159,15 @@ class PfmStatTest(unittest.TestCase):
         )
         self.assertIn("cache_misses=hw:0x3", stat.scope_env("ipc", sets, "generic"))
 
+    def test_scope_env_kernel(self):
+        sets = {s.name: s for s in generic}
+        env = stat.scope_env("light", sets, "generic", kernel=True)
+        self.assertEqual(
+            env,
+            "generic/light+kernel;cycles=k:hw:0x0,instructions=k:hw:0x1,"
+            "branches=k:hw:0x4,br_misp=k:hw:0x5",
+        )
+
     def test_pmu_warnings(self):
         from phlop.app.pfm.sets import pmu_warnings
 

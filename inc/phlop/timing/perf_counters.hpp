@@ -10,7 +10,11 @@
 //   PHLOP_PERF_LIGHT="amd64_fam1ah_zen5/light;cycles=0x76,instructions=0xc0,..."
 // format: "<label>;<name>=<config>,...", config is perf_event_attr type RAW, or
 // "hw:<id>" for type HARDWARE: perf generic events, used on CPUs without phlop
-// event sets, label "generic/<set>". Counts are then potentially inaccurate,
+// event sets, label "generic/<set>". A "k:" prefix, eg "k:0xc0" or "k:hw:1",
+// counts kernel space too, from --env ... --kernel, label "<pmu>/<set>+kernel":
+// needs perf_event_paranoid <= 1 or CAP_PERFMON. Kernel counts include the
+// kernel side of the scope's own counter read() calls, ~2k instructions per
+// scope on zen5: noise for I/O scopes, not for tiny ones. Counts are then potentially inaccurate,
 // init() says so, as it does for PHLOP_PERF_CTX "pmu_forced=1": events encoded
 // for a libpfm PMU forced via LIBPFM_FORCE_PMU, not this CPU's.
 //
@@ -18,8 +22,8 @@
 // Group: per thread, perf_event_open counts only the calling thread, so each
 // thread opens its own pinned group on its first counted scope. A scope reads
 // the whole group with one read() and keeps its level's values. Pinned means
-// exact counts or a loud failure, never silent multiplexing. User space only,
-// works with perf_event_paranoid=2.
+// exact counts or a loud failure, never silent multiplexing. User space only
+// unless "k:", works with perf_event_paranoid=2.
 
 #include <array>
 #include <atomic>
@@ -62,6 +66,7 @@ struct Event
 {
     std::uint32_t type = type_raw;
     std::uint64_t config = 0;
+    bool kernel          = false; // "k:", user and kernel space
 
     bool operator==(Event const&) const = default;
 };
@@ -183,6 +188,11 @@ private:
                 return false;
             auto value = item.substr(eq + 1);
             Event event;
+            if (value.starts_with("k:"))
+            {
+                event.kernel = true;
+                value.remove_prefix(2);
+            }
             if (value.starts_with("hw:"))
             {
                 event.type = type_hardware;
@@ -303,7 +313,7 @@ private:
             attr.size           = sizeof(attr);
             attr.type           = configs[i].type;
             attr.config         = configs[i].config;
-            attr.exclude_kernel = 1;
+            attr.exclude_kernel = !configs[i].kernel;
             attr.exclude_hv     = 1;
             attr.read_format    = PERF_FORMAT_GROUP | PERF_FORMAT_TOTAL_TIME_ENABLED
                                | PERF_FORMAT_TOTAL_TIME_RUNNING;
@@ -315,12 +325,15 @@ private:
             if (fd < 0)
             {
                 char hex[32];
-                std::snprintf(hex, sizeof(hex), "%s%#llx",
+                std::snprintf(hex, sizeof(hex), "%s%s%#llx", configs[i].kernel ? "k:" : "",
                               configs[i].type == type_hardware ? "hw:" : "",
                               static_cast<unsigned long long>(configs[i].config));
                 return fail(std::string{"perf_event_open config "} + hex + ": "
                             + std::strerror(errno)
-                            + (errno == EACCES or errno == EPERM
+                            + ((errno == EACCES or errno == EPERM) and configs[i].kernel
+                                   ? " (kernel space counting: kernel.perf_event_paranoid"
+                                     " > 1? or set CAP_PERFMON)"
+                               : errno == EACCES or errno == EPERM
                                    ? " (kernel.perf_event_paranoid > 2?)"
                                : errno == EINVAL and i > 0
                                    ? " (does not fit the PMU with the events before it,"

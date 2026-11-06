@@ -3,6 +3,7 @@
 # PHLOP_SCOPE timer files with perf counts, synthetic: needs no counters
 
 import unittest
+import unittest.mock
 
 from phlop.timing.scope_timer import lines_parser
 
@@ -71,6 +72,23 @@ class ScopePerfParseTest(unittest.TestCase):
         self.stf = lines_parser(LINES)
         self.main = self.stf.roots[0]
         self.outer = self.main.c[0]
+
+    def test_kernel_label(self):
+        stf = lines_parser([LINES[0].replace("/light", "/light+kernel")] + LINES[1:])
+        self.assertTrue(stf.perf[1].kernel)
+        self.assertFalse(stf.perf[2].kernel)
+        self.assertEqual(stf.perf[1].set_name, "light")
+        metrics = stf.perf_metrics(stf.roots[0].c[0].c[0])  # inner, perf_light
+        self.assertAlmostEqual(metrics["ipc"], 3.0)
+
+        from phlop.timing.scope_timer import print_scope_perf
+
+        lines = []
+        with unittest.mock.patch(
+            "phlop.timing.scope_timer.file_parser", return_value=stf
+        ):
+            print_scope_perf("unused", dedupe=False, printer=lines.append)
+        self.assertTrue(any("[light +kernel]" in line for line in lines))
 
     def test_header_and_tree(self):
         self.assertEqual(self.stf.perf[1].set_name, "light")
