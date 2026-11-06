@@ -23,7 +23,6 @@ namespace phlop::threaded
 struct RunTimerReport;
 using RunTimerReportSnapshot = RunTimerReportSnapshotT<RunTimerReport>;
 
-// forward declare so detail::_current_ScopeTimer<Clock> can hold a pointer
 template<typename Clock = SteadyClock>
 struct ScopeTimer;
 
@@ -52,6 +51,7 @@ struct ScopeTimerMan
     ScopeTimerMan(std::function<std::string()> namer = detail::default_file_name)
         : timer_file{namer()}
     {
+        perf::Config::INSTANCE(); // constructed first so destroyed after this, see ~ScopeTimerMan
     }
     ~ScopeTimerMan()
     {
@@ -177,16 +177,9 @@ struct ScopeTimerMan
         bool movable                     = true;
     };
 
-    static per_thread& local()
-    {
-        static thread_local per_thread* ptr;
-        if (!ptr)
-        {
-            static thread_local per_thread inst;
-            ptr = &inst;
-        }
-        return *ptr;
-    }
+    // the calling thread's storage, defined in src/phlop/timing/common_threaded_timer.cpp
+    //  not inline, so shared across shared libraries built with -fvisibility=hidden
+    static per_thread& local();
 
     void move(per_thread& pt)
     {
@@ -259,10 +252,27 @@ struct ThreadLifeWatcher
 };
 
 
+// non-template link in the scope stack: the current scope per thread is held
+//  out of line, see detail::current_scope(), so it is shared across shared libraries
+struct ScopeTimerNode
+{
+    static ScopeTimerNode& root_parent_from(ScopeTimerNode& self)
+    {
+        if (self.pscope)
+            return root_parent_from(*self.pscope);
+        return self;
+    }
+
+    ScopeTimerNode* pscope = nullptr;
+    std::vector<RunTimerReportSnapshot*> childs;
+};
+
+
 namespace detail
 {
-    template<typename Clock>
-    inline thread_local ScopeTimer<Clock>* _current_ScopeTimer = nullptr;
+    // the innermost active scope on the calling thread, defined in
+    // src/phlop/timing/common_threaded_timer.cpp
+    ScopeTimerNode*& current_scope();
 
     inline void write_timer_file()
     {
@@ -299,15 +309,15 @@ namespace detail
 
 
 template<typename Clock>
-struct ScopeTimer
+struct ScopeTimer : ScopeTimerNode
 {
     ScopeTimer(RunTimerReport& _r)
         : r{_r}
     {
         if (ScopeTimerMan::INSTANCE().active)
         {
-            this->pscope                       = detail::_current_ScopeTimer<Clock>;
-            detail::_current_ScopeTimer<Clock> = this;
+            this->pscope            = detail::current_scope();
+            detail::current_scope() = this;
         }
     }
 
@@ -315,7 +325,7 @@ struct ScopeTimer
     {
         if (ScopeTimerMan::INSTANCE().active)
         {
-            detail::_current_ScopeTimer<Clock> = this->pscope;
+            detail::current_scope() = this->pscope;
 
             // time first, then the exit memory sample, then any bookkeeping allocation
             //  so neither the sample nor the snapshot are counted in the scope
@@ -353,19 +363,10 @@ struct ScopeTimer
 
     static std::uint64_t now() { return Clock::now(); }
 
-    static ScopeTimer& root_parent_from(ScopeTimer& self)
-    {
-        if (self.pscope)
-            return root_parent_from(*self.pscope);
-        return self;
-    }
-
     RunTimerReport& r;
     RunTimerReport* parent    = ScopeTimerMan::local().report_stack_ptr;
     RunTimerReport* child     = nullptr;
-    ScopeTimer* pscope        = nullptr;
     std::uint64_t const start = now();
-    std::vector<RunTimerReportSnapshot*> childs;
 
     // set by an enclosing Scope before this destructs, moved into the snapshot
     std::uint8_t pending_level = 0;
