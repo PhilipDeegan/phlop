@@ -1,6 +1,7 @@
 # tests/_phlop/test_proc.py
 #
-# run_mp: how many commands run at once, and no commands at all
+# run_mp: how many commands run at once, and no commands at all. usable_cores
+# when the affinity query is refused
 
 import concurrent.futures
 import unittest
@@ -43,6 +44,24 @@ class RunMpTest(unittest.TestCase):
     def test_runs(self):
         results = proc.run_mp(["exit 0", "exit 3"])
         self.assertEqual(sorted(r.exitcode for r in results), [0, 3])
+
+
+class UsableCoresTest(unittest.TestCase):
+    def test_affinity_refused(self):
+        """python < 3.13 without the affinity syscall (seccomp): os.cpu_count"""
+        import types
+
+        import phlop.os
+
+        def refused(pid):
+            raise PermissionError(1, "Operation not permitted")
+
+        fake_os = types.SimpleNamespace(sched_getaffinity=refused, cpu_count=lambda: 3)
+        with (
+            mock.patch.object(phlop.os, "os", fake_os),
+            mock.patch.object(phlop.os, "cgroup_cpu_limit", return_value=None),
+        ):
+            self.assertEqual(phlop.os.usable_cores(), 3)
 
 
 if __name__ == "__main__":
