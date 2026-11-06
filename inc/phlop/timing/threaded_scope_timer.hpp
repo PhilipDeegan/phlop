@@ -11,6 +11,7 @@
 
 #include <memory>
 
+#if !defined(PHLOP_SCOPE_TIMER)
 #define PHLOP_SCOPE_TIMER(key)                                                                     \
     static thread_local auto PHLOP_STR_CAT(ridx_, __LINE__)                                        \
         = std::make_shared<phlop::threaded::RunTimerReport>(key, __FILE__, __LINE__);              \
@@ -19,6 +20,7 @@
     phlop::threaded::ScopeTimer<> PHLOP_STR_CAT(_scope_timer_,                                     \
                                                 __LINE__){*PHLOP_STR_CAT(ridx_, __LINE__)};        \
     phlop::threaded::ScopeTimerMan::local().report_stack_ptr = PHLOP_STR_CAT(ridx_, __LINE__).get();
+#endif
 
 
 // PHLOP_SCOPE("key", time, perf_light), see scope.hpp
@@ -28,7 +30,7 @@
         = std::make_shared<phlop::threaded::RunTimerReport>(key, __FILE__, __LINE__);              \
     static thread_local phlop::threaded::ThreadLifeWatcher PHLOP_STR_CAT(_watcher_, __LINE__){     \
         PHLOP_STR_CAT(ridx_, __LINE__)};                                                           \
-    phlop::threaded::Scope<PHLOP_SCOPE_FLAGS(__VA_ARGS__)> PHLOP_STR_CAT(_Scope_, __LINE__){        \
+    phlop::threaded::Scope<PHLOP_SCOPE_FLAGS(__VA_ARGS__)> PHLOP_STR_CAT(_Scope_, __LINE__){       \
         *PHLOP_STR_CAT(ridx_, __LINE__)};                                                          \
     phlop::threaded::ScopeTimerMan::local().report_stack_ptr = PHLOP_STR_CAT(ridx_, __LINE__).get();
 #endif
