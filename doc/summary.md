@@ -9,8 +9,8 @@ behaviour and the performance notes behind past changes.
 ### `phlop/proc.py`
 - `run()` → `RunTimer`, the one place subprocesses are started.
 - `run_raw()` → bare `Popen`, used by stats_man.
-- `run_mp()` runs commands on a thread pool. Its default concurrency is
-  unbounded, see `todo.md`.
+- `run_mp()` runs commands on a thread pool, by default
+  `min(len(cmds), usable_cores())` threads, at least 1.
 
 ### `phlop/procs/runtimer.py` - `RunTimer`
 - Starts a command with `Popen` (default) or `subprocess.run`, timed, with
@@ -130,7 +130,8 @@ shared helpers for each file.
   `std::endl` (a flush per line). `fn_id` is `uint32_t`, depth `uint16_t`.
 - Built and tested with mkn: CI runs `mkn clean build test run -p
   scope_timer,threaded_scope_timer -Oa "-fPIC -std=c++20" -W 9` before
-  `sh/test.sh`, which only runs `mkn test`.
+  `sh/test.sh`, which builds and tests each profile again (`mkn clean build
+  test`): `mkn test` alone does nothing on a fresh checkout.
 
 ### Python (`phlop/timing/scope_timer.py`)
 - `file_parser`/`lines_parser` read the format above, keeping the path of
@@ -142,8 +143,8 @@ shared helpers for each file.
 ## Repo
 - `sh/test.sh`: full test run (CLI modes, concurrency, timers, valgrind,
   perf, pfm, forced failure exit codes). `sh/lint.sh` rewrites files (black,
-  autoflake), so for checks only use `black --check`, `ruff check`,
-  `pylint --errors-only`.
+  autoflake); with `CI` set (GitHub sets it) it only checks, failing on
+  changes: `CI=true ./sh/lint.sh` for checks only.
 - Version lives in both `pyproject.toml` and `setup.py`. Publishing to PyPI
   runs when a GitHub release is published.
-- `todo.md`: known follow-ups. `ISSUES.md`: older notes.
+- `todo.md`: known follow-ups.
