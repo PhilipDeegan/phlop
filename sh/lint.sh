@@ -10,13 +10,18 @@ CWD="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
   PY_FILES=$(find . -name "*.py")
 
-  python3 -m black phlop tests
+  # locally the formatters fix files; in CI (GitHub sets CI=true) they would
+  #  fix the runner's copy and pass, so check instead and fail on changes
+  FIX=(-i) BLACK=()
+  [ -n "$CI" ] && FIX=(--check-diff) BLACK=(--check --diff)
+
+  python3 -m black "${BLACK[@]}" phlop tests
   pylint --errors-only phlop tests
   # isort phlop tests
   python3 -m ruff check phlop tests
   for FILE in ${PY_FILES[@]}; do
 
-    autoflake -i "$FILE"
+    autoflake "${FIX[@]}" "$FILE"
 
   done
 
