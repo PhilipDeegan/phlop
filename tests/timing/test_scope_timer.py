@@ -174,6 +174,76 @@ def _check_io(stf):
     print("test_scope_timer: io ok", scope_timer.io_str(io))
 
 
+def _nvtx_pairs(sqlite_path):
+    """Counter of (range, innermost enclosing range or None) for the "phlop"
+    domain's push/pop ranges in an nsys sqlite export, per thread"""
+    import sqlite3
+    from collections import Counter, defaultdict
+
+    db = sqlite3.connect(sqlite_path)
+    try:
+        has_nvtx = db.execute(
+            "select 1 from sqlite_master where type = 'table' and name = 'NVTX_EVENTS'"
+        ).fetchone()
+        row = (
+            has_nvtx
+            and db.execute(
+                "select domainId from NVTX_EVENTS where eventType = 75 and text = 'phlop'"
+            ).fetchone()
+        )
+        assert (
+            row
+        ), f"{sqlite_path}: no NVTX domain 'phlop', built without -DPHLOP_NVTX?"
+        (domain,) = row
+        rows = db.execute(
+            "select e.start, e.end, e.globalTid, coalesce(e.text, s.value)"
+            " from NVTX_EVENTS e left join StringIds s on s.id = e.textId"
+            " where e.eventType = 59 and e.domainId = ? order by e.start, e.end desc",
+            (domain,),
+        ).fetchall()
+    finally:
+        db.close()
+    by_thread = defaultdict(list)
+    for start, end, tid, name in rows:
+        by_thread[tid].append((start, end, name))
+    pairs = Counter()
+    for ranges in by_thread.values():
+        stack = []  # open ranges, sorted by start: a stack per thread
+        for start, end, name in ranges:
+            while stack and stack[-1][1] <= start:
+                stack.pop()
+            pairs[(name, stack[-1][2] if stack else None)] += 1
+            stack.append((start, end, name))
+    return pairs
+
+
+def test_nvtx(scope_timer_filepath=None, sqlite_path=None):
+    """from sh/test_nvtx.sh: a -DPHLOP_NVTX build run under nsys. Every scope
+    is an NVTX range in domain "phlop": the same (scope, parent) pairs, with
+    the same counts, as the timer file of the same run"""
+    from collections import Counter
+
+    if scope_timer_filepath is None:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("-f", "--file", required=True, help="timer file")
+        parser.add_argument("-s", "--sqlite", required=True, help="nsys export")
+        args = parser.parse_args()
+        scope_timer_filepath, sqlite_path = args.file, args.sqlite
+
+    stf = scope_timer.file_parser(scope_timer_filepath)
+    expect = Counter()
+
+    def walk(nodes, parent):
+        for n in nodes:
+            expect[(stf(n.k), parent)] += 1
+            walk(n.c, stf(n.k))
+
+    walk(stf.roots, None)
+    got = _nvtx_pairs(sqlite_path)
+    np.testing.assert_equal(dict(got), dict(expect))
+    print(f"test_nvtx: {sum(got.values())} ranges match the timer file")
+
+
 def test_mem_parse():
     """the m: token, alone and after a perf counts token, and the derived fields"""
     _, node = scope_timer.RunTimerNode.from_scope_timer("0 1 2:3 m:1000,1600,1500,2500")

@@ -41,6 +41,7 @@ else
     echo "mpicxx/mpirun not found, mpi scope timer skipped"
 fi
 ./sh/test_shared_libs.sh
+./sh/test_nvtx.sh # skipped without nsys and the nvtx3 headers
 mkn_test scope
 py tests/timing/test_scope_timer.py test_scope -f "bin/scope.txt" # no -O: asserts
 mkn_test threaded_scope
