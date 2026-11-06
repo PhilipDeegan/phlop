@@ -76,11 +76,9 @@ struct Level
 
 struct Config
 {
-    static Config& INSTANCE()
-    {
-        static Config c;
-        return c;
-    }
+    // defined in src/phlop/timing/{scope_timer,common_threaded_timer}.cpp, not inline:
+    // one instance per process even across shared libraries built with -fvisibility=hidden
+    static Config& INSTANCE();
 
     // parse the env and open the calling thread's group to check it works.
     // Without any env this is a no-op, perf scopes then only time
@@ -342,12 +340,8 @@ private:
 };
 
 
-// the calling thread's group
-inline Group& local()
-{
-    static thread_local Group group;
-    return group;
-}
+// the calling thread's group, defined next to Config::INSTANCE() for the same reason
+Group& local();
 
 
 inline bool Config::init()

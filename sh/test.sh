@@ -17,13 +17,35 @@ py -O tests/all_concurrent.py
 mkn test -p scope_timer
 py -O tests/timing/test_scope_timer.py test_scope_timer -f "bin/scope_timer.txt"
 py tests/timing/test_scope_timer.py test_mem_parse
+mkn test -p threaded_scope_timer
+py tests/timing/test_scope_timer.py test_threaded_scope_timer -f "bin/threaded_scope_timer.txt"
+PHLOP_SCOPE_MEM=0 mkn test -p threaded_scope_timer
+PHLOP_SCOPE_MEM=0 py tests/timing/test_scope_timer.py test_threaded_scope_timer -f "bin/threaded_scope_timer.txt"
+if command -v mpicxx >/dev/null && command -v mpirun >/dev/null; then # not in CI
+    mpicxx -std=c++20 -O2 -Iinc tests/timing/test_mpi_scope_timer.cpp \
+        src/phlop/timing/common_threaded_timer.cpp -o bin/mpi_scope_timer_test
+    rm -f bin/phlop_scope_timers.*.bin
+    OMPI_MCA_rmaps_base_oversubscribe=1 mpirun -n 2 bin/mpi_scope_timer_test
+    [ "$(ls bin/phlop_scope_timers.*.bin | wc -l)" = 2 ]
+    for f in bin/phlop_scope_timers.*.bin; do
+        py tests/timing/test_scope_timer.py test_threaded_scope_timer -f "$f"
+    done
+else
+    echo "mpicxx/mpirun not found, mpi scope timer skipped"
+fi
+./sh/test_shared_libs.sh
 mkn test -p scope
 py tests/timing/test_scope_timer.py test_scope -f "bin/scope.txt" # no -O: asserts
 mkn test -p threaded_scope
 py tests/timing/test_scope_timer.py test_threaded_scope -f "bin/threaded_scope.txt"
 
-py -Om phlop.run.valgrind echo yes
-py -Om phlop.run.valgrind --tool=massif echo yes
+# exit codes checked, memcheck errors are 99. The shell's builtin echo: ubuntu
+#  26.04's /usr/bin/echo (rust coreutils) leaks, memcheck rightly fails it
+if command -v valgrind > /dev/null; then
+    py -Om phlop.run.valgrind -q sh -c "echo yes"
+    py -Om phlop.run.valgrind -q --tool=massif sh -c "echo yes"
+    py -Om phlop.run.valgrind --show --md - > /dev/null
+fi
 
 py -Om phlop.run.perf -e="--all-user" echo yes || echo "perf failed, assumed CI"
 
