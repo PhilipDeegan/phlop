@@ -94,12 +94,24 @@ python3 -m phlop.app.pfm.stat -s topdown,vector,flops -- ./app args
 # unprivileged counting needs kernel.perf_event_paranoid <= 2, warnings say how
 ```
 
+```shell
+# per kernel registers, stack, shared and local memory from a built binary (no
+#  GPU needed), and the largest block size each kernel can launch with
+python3 -m phlop.app.nvidia.cuobjdump bin/app
+python3 -m phlop.app.nvidia.cuobjdump -t 512 bin/app            # kernels that can't launch 512
+python3 -m phlop.app.nvidia.cuobjdump dbg=bin/a rel=bin/b       # compare builds
+```
+
 ```cpp
 // per scope hardware counters: scope_timer.hpp, threaded_scope_timer.hpp, mpi_scope_timer.hpp
 // threaded: each thread counts only itself, opening its counters on first use
 PHLOP_SCOPE("solve", time, perf_all);   // time + PHLOP_PERF_ALL events
 PHLOP_SCOPE("step", time, perf_light);  // time + PHLOP_PERF_LIGHT events
 PHLOP_SCOPE("io");                      // PHLOP_SCOPE_DEFAULT, time
+// the calling thread's I/O over the scope, /proc/thread-self/io (linux), when
+// enabled: phlop::scope_timer().io() or PHLOP_SCOPE_IO=1. Bytes and calls through
+// read/write, bytes to/from the block layer, shown by: scope_timer times <file>
+PHLOP_SCOPE("h5_write", time, io);
 ```
 
 ```shell

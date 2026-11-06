@@ -85,6 +85,8 @@ def test_scope_timer(scope_timer_filepath=None):
     scope_timer_file = scope_timer.file_parser(scope_timer_filepath)
     np.testing.assert_equal(scope_timer_file(scope_timer_file.roots[0].k), "fn1")
 
+    _check_io(scope_timer_file)
+
     # fn_peak and its children are the only mem scopes besides fn_mem
     if _check_fn_mem(scope_timer_file, "test_scope_timer", _FN_PEAK_SCOPES):
         _check_fn_peak(scope_timer_file)
@@ -154,6 +156,22 @@ def test_shared_libs(scope_timer_filepath=None):
     print(
         f"test_shared_libs: ok, perf counts {'yes' if 1 in stf.perf else 'unavailable'}"
     )
+
+
+def _check_io(stf):
+    """fn_io: 4 writes of 1MiB and one read of 1MiB, exactly, the scope's own
+    samples and counter reads excluded. Linux only, PHLOP_SCOPE_IO=0 skips"""
+    if not sys.platform.startswith("linux") or os.environ.get("PHLOP_SCOPE_IO") == "0":
+        print("test_scope_timer: io checks skipped")
+        return
+    MiB = 1024 * 1024
+    (fn_io,) = [r for r in stf.roots if stf(r.k) == "fn_io"]
+    assert fn_io.has_io, "fn_io has no io: token"
+    io = fn_io.io
+    expected = {"wchar": 4 * MiB, "syscw": 4, "rchar": MiB, "syscr": 1}
+    np.testing.assert_equal({k: io[k] for k in expected}, expected, err_msg=str(io))
+    assert not any(r.has_io for r in stf.roots if stf(r.k) != "fn_io")
+    print("test_scope_timer: io ok", scope_timer.io_str(io))
 
 
 def _nvtx_pairs(sqlite_path):
@@ -301,6 +319,16 @@ def test_threaded_scope(scope_timer_filepath=None):
     works = [r for r in stf.roots if stf(r.k) == "work"]
     mains = [r for r in stf.roots if stf(r.k) == "main"]
     np.testing.assert_equal((len(works), len(mains)), (4, 1))
+    if sys.platform.startswith("linux") and os.environ.get("PHLOP_SCOPE_IO") != "0":
+        # thread t writes t + 1 times 64KiB, the main thread nothing itself
+        # and no reads: phlop's own (io samples, counter reads, a thread's first
+        # counter open) are subtracted
+        writes = sorted(
+            (w.io["syscw"], w.io["wchar"], w.io["syscr"], w.io["rchar"]) for w in works
+        )
+        np.testing.assert_equal(writes, [(k, k * 64 * 1024, 0, 0) for k in range(1, 5)])
+        np.testing.assert_equal((mains[0].io["syscw"], mains[0].io["wchar"]), (0, 0))
+        print("test_threaded_scope: per thread io ok")
     if _no_counts(stf, "test_threaded_scope"):
         return
     instructions = []
