@@ -132,6 +132,30 @@ def _check_fn_peak(stf):
         np.testing.assert_array_less(small.dp, 16 * MiB, err_msg=msg)
 
 
+def test_shared_libs(scope_timer_filepath=None):
+    """from sh/test_shared_libs.sh: a module scope called inside a core library
+    scope nests under it, so both libraries share phlop's per thread state.
+    If the core library has counters, the module's scopes have them too"""
+    if scope_timer_filepath is None:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("-f", "--file", default="bin/shared_libs/times.txt")
+        scope_timer_filepath = parser.parse_args().file
+
+    stf = scope_timer.file_parser(scope_timer_filepath)
+    names = sorted(stf(r.k) for r in stf.roots)
+    np.testing.assert_equal(names, ["core_outer", "module_scope"])
+    outer = next(r for r in stf.roots if stf(r.k) == "core_outer")
+    np.testing.assert_equal([stf(c.k) for c in outer.c], ["module_scope"])
+
+    module_scopes = [r for r in stf.roots if stf(r.k) == "module_scope"] + outer.c
+    assert all(n.has_mem for n in module_scopes), "PHLOP_SCOPE_MEM=1 set"
+    if 1 in stf.perf:  # the core library opened counters, the module must use them
+        assert all(n.level == 1 and n.counts for n in module_scopes), module_scopes
+    print(
+        f"test_shared_libs: ok, perf counts {'yes' if 1 in stf.perf else 'unavailable'}"
+    )
+
+
 def test_mem_parse():
     """the m: token, alone and after a perf counts token, and the derived fields"""
     _, node = scope_timer.RunTimerNode.from_scope_timer("0 1 2:3 m:1000,1600,1500,2500")
