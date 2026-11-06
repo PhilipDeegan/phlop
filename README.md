@@ -34,6 +34,16 @@ Available:
     phlop.run.stats_man -h
     phlop.run.test_cases -h
     phlop.run.valgrind -h
+    phlop.run.mpi_valgrind -h
+```
+
+```shell
+# valgrind with a short answer, files kept under .phlop/valgrind
+python3 -m phlop.run.valgrind ./app args            # memcheck: errors and leaks, where
+python3 -m phlop.run.valgrind -t massif ./app args  # heap peak, and what holds it
+python3 -m phlop.run.valgrind --show --md -         # the latest run again, as markdown
+python3 -m phlop.run.valgrind --compare RUN1 RUN2 --plot cmp.png  # eg master vs a branch
+mpirun -n 4 python3 -m phlop.run.mpi_valgrind -t massif ./app  # per rank, one report
 ```
 
 ```shell

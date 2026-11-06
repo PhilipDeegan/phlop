@@ -30,10 +30,14 @@ def _no_counts(stf, name):
     return True
 
 
-def _check_fn_mem(stf, name, also_mem=()):
+_FN_PEAK_SCOPES = {"fn_peak", "fn_peak_big", "fn_peak_small"}
+
+
+def _check_fn_mem(stf, name, other_mem=()):
     """fn3 is a time only root scope with one child, fn_mem, a mem scope that
     touches 64MiB. Memory is enabled in code, PHLOP_SCOPE_MEM=0 turns it off.
-    also_mem: names of other scopes allowed memory fields, checked elsewhere"""
+    other_mem names any other mem scopes in the file. Returns True if memory
+    was recorded"""
     fn3 = [r for r in stf.roots if stf(r.k) == "fn3"]
     np.testing.assert_equal(len(fn3), 1)
     np.testing.assert_equal(len(fn3[0].c), 1)
@@ -45,18 +49,18 @@ def _check_fn_mem(stf, name, also_mem=()):
             yield n
             yield from walk(n.c)
 
-    # fn_mem is the only mem scope, no other scope at any depth has memory fields
+    # fn_mem and other_mem are the only mem scopes, none other at any depth
     others = [
         stf(n.k)
         for n in walk(stf.roots)
-        if n.has_mem and n is not fn_mem and stf(n.k) not in also_mem
+        if n.has_mem and n is not fn_mem and stf(n.k) not in other_mem
     ]
     assert not others, f"{name}: memory recorded on time only scopes {others}"
 
     if os.environ.get("PHLOP_SCOPE_MEM") == "0":  # forced off, overrides memory()
         np.testing.assert_equal(fn_mem.has_mem, False)
         print(f"{name}: PHLOP_SCOPE_MEM=0, no memory recorded")
-        return
+        return False
 
     np.testing.assert_equal(fn_mem.has_mem, True)
     if not sys.platform.startswith("netbsd"):  # current rss unsupported there, 0
@@ -66,6 +70,7 @@ def _check_fn_mem(stf, name, also_mem=()):
     )
     np.testing.assert_array_less(fn_mem.dp, fn_mem.p)  # p is absolute, above baseline
     print(f"{name}: memory ok, peak +{scope_timer.format_bytes(fn_mem.dp)}")
+    return True
 
 
 def test_scope_timer(scope_timer_filepath=None):
@@ -80,9 +85,8 @@ def test_scope_timer(scope_timer_filepath=None):
     scope_timer_file = scope_timer.file_parser(scope_timer_filepath)
     np.testing.assert_equal(scope_timer_file(scope_timer_file.roots[0].k), "fn1")
 
-    peak = {"fn_peak", "fn_peak_big", "fn_peak_small"}  # see _check_fn_peak
-    _check_fn_mem(scope_timer_file, "test_scope_timer", also_mem=peak)
-    if os.environ.get("PHLOP_SCOPE_MEM") != "0":
+    # fn_peak and its children are the only mem scopes besides fn_mem
+    if _check_fn_mem(scope_timer_file, "test_scope_timer", _FN_PEAK_SCOPES):
         _check_fn_peak(scope_timer_file)
 
 

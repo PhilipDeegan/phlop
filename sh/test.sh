@@ -19,8 +19,6 @@ py -O tests/timing/test_scope_timer.py test_scope_timer -f "bin/scope_timer.txt"
 PHLOP_SCOPE_MEM=peak mkn test -p scope_timer # peak reset per mem scope
 PHLOP_SCOPE_MEM=peak py -O tests/timing/test_scope_timer.py test_scope_timer -f "bin/scope_timer.txt"
 py tests/timing/test_scope_timer.py test_mem_parse
-./sh/test_shared_libs.sh
-./sh/test_nvtx.sh # skipped without nsys and the nvtx3 headers
 mkn test -p threaded_scope_timer
 py tests/timing/test_scope_timer.py test_threaded_scope_timer -f "bin/threaded_scope_timer.txt"
 PHLOP_SCOPE_MEM=0 mkn test -p threaded_scope_timer
@@ -37,13 +35,20 @@ if command -v mpicxx >/dev/null && command -v mpirun >/dev/null; then # not in C
 else
     echo "mpicxx/mpirun not found, mpi scope timer skipped"
 fi
+./sh/test_shared_libs.sh
+./sh/test_nvtx.sh # skipped without nsys and the nvtx3 headers
 mkn test -p scope
 py tests/timing/test_scope_timer.py test_scope -f "bin/scope.txt" # no -O: asserts
 mkn test -p threaded_scope
 py tests/timing/test_scope_timer.py test_threaded_scope -f "bin/threaded_scope.txt"
 
-py -Om phlop.run.valgrind echo yes
-py -Om phlop.run.valgrind --tool=massif echo yes
+# exit codes checked, memcheck errors are 99. The shell's builtin echo: ubuntu
+#  26.04's /usr/bin/echo (rust coreutils) leaks, memcheck rightly fails it
+if command -v valgrind > /dev/null; then
+    py -Om phlop.run.valgrind -q sh -c "echo yes"
+    py -Om phlop.run.valgrind -q --tool=massif sh -c "echo yes"
+    py -Om phlop.run.valgrind --show --md - > /dev/null
+fi
 
 py -Om phlop.run.perf -e="--all-user" echo yes || echo "perf failed, assumed CI"
 
