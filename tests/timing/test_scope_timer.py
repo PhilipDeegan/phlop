@@ -30,6 +30,39 @@ def _no_counts(stf, name):
     return True
 
 
+def _check_fn_mem(stf, name):
+    """fn3 is a time only root scope with one child, fn_mem, a mem scope that
+    touches 64MiB. Memory is enabled in code, PHLOP_SCOPE_MEM=0 turns it off"""
+    fn3 = [r for r in stf.roots if stf(r.k) == "fn3"]
+    np.testing.assert_equal(len(fn3), 1)
+    np.testing.assert_equal(len(fn3[0].c), 1)
+    fn_mem = fn3[0].c[0]
+    np.testing.assert_equal(stf(fn_mem.k), "fn_mem")
+
+    def walk(nodes):
+        for n in nodes:
+            yield n
+            yield from walk(n.c)
+
+    # fn_mem is the only mem scope, no other scope at any depth has memory fields
+    others = [stf(n.k) for n in walk(stf.roots) if n.has_mem and n is not fn_mem]
+    assert not others, f"{name}: memory recorded on time only scopes {others}"
+
+    if os.environ.get("PHLOP_SCOPE_MEM") == "0":  # forced off, overrides memory()
+        np.testing.assert_equal(fn_mem.has_mem, False)
+        print(f"{name}: PHLOP_SCOPE_MEM=0, no memory recorded")
+        return
+
+    np.testing.assert_equal(fn_mem.has_mem, True)
+    if not sys.platform.startswith("netbsd"):  # current rss unsupported there, 0
+        np.testing.assert_array_less(0, fn_mem.r)
+    np.testing.assert_array_less(
+        32 * 1024 * 1024, fn_mem.dp, err_msg=f"r={fn_mem.r} dr={fn_mem.dr} p={fn_mem.p}"
+    )
+    np.testing.assert_array_less(fn_mem.dp, fn_mem.p)  # p is absolute, above baseline
+    print(f"{name}: memory ok, peak +{scope_timer.format_bytes(fn_mem.dp)}")
+
+
 def test_scope_timer(scope_timer_filepath=None):
     if scope_timer_filepath is None:  # assume cli
         parser = argparse.ArgumentParser()
@@ -42,26 +75,20 @@ def test_scope_timer(scope_timer_filepath=None):
     scope_timer_file = scope_timer.file_parser(scope_timer_filepath)
     np.testing.assert_equal(scope_timer_file(scope_timer_file.roots[0].k), "fn1")
 
-    # time only scopes have no memory fields
-    assert not any(root.has_mem for root in scope_timer_file.roots)
+    _check_fn_mem(scope_timer_file, "test_scope_timer")
 
-    if os.environ.get("PHLOP_SCOPE_MEM") == "0":  # forced off, nothing to check
-        print("test_scope_timer: PHLOP_SCOPE_MEM=0, memory checks skipped")
-        return
 
-    # fn3 is time only, its child fn_mem uses the mem flag and touches 64MiB
-    fn3 = [r for r in scope_timer_file.roots if scope_timer_file(r.k) == "fn3"]
-    np.testing.assert_equal(len(fn3), 1)
-    np.testing.assert_equal(len(fn3[0].c), 1)
-    fn_mem = fn3[0].c[0]
-    np.testing.assert_equal(scope_timer_file(fn_mem.k), "fn_mem")
-    np.testing.assert_equal(fn_mem.has_mem, True)
-    if not sys.platform.startswith("netbsd"):  # current rss unsupported there, 0
-        np.testing.assert_array_less(0, fn_mem.r)
-    np.testing.assert_array_less(
-        32 * 1024 * 1024, fn_mem.dp, err_msg=f"r={fn_mem.r} dr={fn_mem.dr} p={fn_mem.p}"
+def test_threaded_scope_timer(scope_timer_filepath=None):
+    """bin/threaded_scope_timer.txt from tests/timing/test_threaded_scope_timer.cpp,
+    its mem scope runs on a worker thread"""
+    if scope_timer_filepath is None:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("-f", "--file", default="bin/threaded_scope_timer.txt")
+        scope_timer_filepath = parser.parse_args().file
+
+    _check_fn_mem(
+        scope_timer.file_parser(scope_timer_filepath), "test_threaded_scope_timer"
     )
-    np.testing.assert_array_less(fn_mem.dp, fn_mem.p)  # p is absolute, above baseline
 
 
 def test_mem_parse():
