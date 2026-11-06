@@ -6,6 +6,11 @@
 #include <cstdlib>
 #include <iostream>
 
+#if defined(__linux__)
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 using namespace std::chrono_literals;
 
 void fny()
@@ -87,6 +92,29 @@ void fn_peak()
     fn_peak_small();
 }
 
+// exact io: 4 writes of 1MiB, one read of 1MiB back. perf_light too, so the
+//  scope's own counter reads (with PHLOP_PERF_LIGHT set) must not show
+void fn_io()
+{
+#if defined(__linux__)
+    std::size_t constexpr MiB = 1024 * 1024;
+    std::vector<char> buf(MiB, 'x');
+    int const fd = ::open("bin/scope_timer_io.bin", O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd < 0)
+        std::abort();
+    {
+        PHLOP_SCOPE("fn_io", time, perf_light, io);
+        for (int i = 0; i < 4; ++i)
+            if (::write(fd, buf.data(), MiB) != static_cast<ssize_t>(MiB))
+                std::abort();
+        if (::pread(fd, buf.data(), MiB, 0) != static_cast<ssize_t>(MiB))
+            std::abort();
+    }
+    ::close(fd);
+    ::unlink("bin/scope_timer_io.bin");
+#endif
+}
+
 void fn3()
 {
     PHLOP_SCOPE_TIMER("fn3"); // time only scope, with a mem scope child
@@ -98,7 +126,7 @@ int main()
 {
     std::cout << __FILE__ << std::endl;
     // ONLY SUPPORTS SERIAL OPERATIONS!
-    phlop::scope_timer().file_name("bin/scope_timer.txt").memory().init();
+    phlop::scope_timer().file_name("bin/scope_timer.txt").memory().io().init();
 
     for (std::size_t i = 0; i < 2; ++i)
         fn1();
@@ -109,6 +137,7 @@ int main()
 
     fn3();
     fn_peak();
+    fn_io();
 
     phlop::scope_timer().shutdown();
 }
