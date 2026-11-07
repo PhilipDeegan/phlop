@@ -210,5 +210,43 @@ class ScopeCompareRunsTest(unittest.TestCase):
                 load(root)  # default *.txt also finds summary.txt
 
 
+def mem_text(peaks, kept=0):
+    """main > solve x len(peaks), solve's rss 1GiB in, peak 1GiB in, peak out
+    as given"""
+    body = "0 0 0:9000000\n"
+    gib = 1 << 30
+    for peak in peaks:
+        body += f"1 1 0:1000000 m:{gib},{gib + kept},{gib},{peak}\n"
+    return lines_parser((HEADER + body).splitlines())
+
+
+class ScopeCompareMemTest(unittest.TestCase):
+    def test_mem_values(self):
+        gib = 1 << 30
+        base = mem_text([gib + (1 << 20), gib + (2 << 20)], kept=1 << 20)
+        c = compare(base, base, {"mem_peak": 1}, all_events=True)
+        by = {ch.name: ch.base for ch in c.changes if ch.path == ("main", "solve")}
+        self.assertEqual(by["mem_peak"], gib + (2 << 20))  # max of the merged
+        self.assertEqual(by["mem_spike"], 2 << 20)
+        self.assertEqual(by["mem_kept"], 2 << 20)  # summed
+        self.assertNotIn(
+            "mem_peak", {ch.name for ch in c.changes if ch.path == ("main",)}
+        )
+
+    def test_mem_regression_and_worst_rank(self):
+        gib = 1 << 30
+        base = mem_text([gib + (1 << 20)])
+        big = mem_text([gib + (200 << 20)])  # +19% peak
+        gate = {"mem_peak": 2}
+        c = compare([base, base], [base, big], gate)
+        self.assertEqual(
+            [(r.path, r.name) for r in c.regressions], [(("main", "solve"), "mem_peak")]
+        )
+        self.assertFalse(compare([base, base], [base, base], gate).regressions)
+        lines = []
+        report(c, printer=lines.append)
+        self.assertTrue(any("GiB" in line and "REGRESSION" in line for line in lines))
+
+
 if __name__ == "__main__":
     unittest.main()

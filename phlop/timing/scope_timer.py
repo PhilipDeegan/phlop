@@ -447,6 +447,7 @@ class ScopeGroup:
     counts: dict | None = None  # summed, over the n_counted members with counts
     n_counted: int = 0
     c: list = field(default_factory=list)
+    mem: dict | None = None  # MEM_VALUES over members with memory, see group_mem
 
 
 def group_scopes(stf, nodes, own=False):
@@ -466,9 +467,29 @@ def group_scopes(stf, nodes, own=False):
             g.level = n.level
             g.counts = {k: (g.counts or {}).get(k, 0) + v for k, v in counts.items()}
             g.n_counted += 1
+        g.mem = group_mem(g.mem, n)
     for key, g in groups.items():
         g.c = group_scopes(stf, [c for m in members[key] for c in m.c], own)
     return list(groups.values())
+
+
+# a scope's memory as values: peak, the process high water mark at exit (or
+# the scope's own with PHLOP_SCOPE_MEM=peak), spike, the peak's rise during
+# the scope, kept, resident growth exit - entry
+MEM_VALUES = ("mem_peak", "mem_spike", "mem_kept")
+
+
+def group_mem(mem, node):
+    """mem with node's folded in, as _merge_mem: peaks max, kept summed"""
+    if not node.has_mem:
+        return mem
+    if mem is None:
+        return dict(zip(MEM_VALUES, (node.p, node.dp, node.dr)))
+    return {
+        "mem_peak": max(mem["mem_peak"], node.p),
+        "mem_spike": max(mem["mem_spike"], node.dp),
+        "mem_kept": mem["mem_kept"] + node.dr,
+    }
 
 
 def print_scope_perf(

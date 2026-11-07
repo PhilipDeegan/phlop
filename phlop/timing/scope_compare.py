@@ -21,6 +21,13 @@
 # that side's noise: a value only regresses if it grows beyond its threshold
 # plus both sides' noise. One run per side, no noise, the threshold alone.
 #
+# Values are time, the perf events' aliases and, for PHLOP_SCOPE("key", time,
+# mem) scopes run with PHLOP_SCOPE_MEM=1 (or =peak), memory: mem_peak, the
+# process high water mark at scope exit (with =peak the scope's own), mem_spike,
+# the peak's rise during the scope, and mem_kept, resident growth exit - entry.
+# Memory is the worst rank's and never "own": a peak is a level, not a sum.
+# Gate them like events, eg -t mem_peak=2, --min-count is then bytes.
+#
 # Scopes match by path, root to scope, same named siblings merged (summed) as
 # in print_scope_perf. Counts are the scope's own by default: children counted
 # at its level subtracted, so a regression is reported where it happened, not
@@ -44,8 +51,10 @@ from pathlib import Path
 import numpy as np
 
 from phlop.timing.scope_timer import (
+    MEM_VALUES,
     ScopeTimerFile,
     file_parser,
+    format_bytes,
     group_scopes,
     lines_parser,
 )
@@ -162,13 +171,16 @@ def as_runs(side):
 
 def merge_ranks(run, own, warnings):
     """{path: ScopeValues} of one run, a value per name: calls and counts
-    summed over ranks, time the slowest rank's"""
+    summed over ranks, time and memory the worst rank's. Memory is never own,
+    a peak is a level, not a sum over children"""
     merged = {}
     for stf in run:
         for path, (g, t) in flatten(group_scopes(stf, stf.roots, own), own).items():
             sv = merged.setdefault(path, ScopeValues(0, g.level, False, {"time": 0}))
             sv.n += g.n
             sv.values["time"] = max(sv.values["time"], t)
+            for name, value in (g.mem or {}).items():
+                sv.values[name] = max(sv.values.get(name, value), value)
             if not g.counts:
                 continue
             if sv.counted and g.level != sv.level:
@@ -250,7 +262,9 @@ def compare(
         values_a, values_b = sa.values, sb.values
         if sa.counted and sb.counted and sa.level != sb.level:
             warnings.append(f"{'/'.join(path)}: perf level {sa.level} vs {sb.level}")
-            values_a, values_b = {"time": values_a["time"]}, {"time": values_b["time"]}
+            keep = ("time", *MEM_VALUES)
+            values_a = {k: v for k, v in values_a.items() if k in keep}
+            values_b = {k: v for k, v in values_b.items() if k in keep}
         for name in values_a:
             if name not in values_b:
                 continue
@@ -266,9 +280,10 @@ def compare(
                 and change.threshold is not None
                 and change.noise > change.threshold
             ):
+                why = "" if name in MEM_VALUES else ": spin waits?"
                 warnings.append(
                     f"{'/'.join(path)} {name} varies {change.noise:.2f}% between runs"
-                    f" (threshold {change.threshold:g}%): spin waits?"
+                    f" (threshold {change.threshold:g}%){why}"
                 )
             changes.append(change)
 
@@ -292,7 +307,11 @@ def report(comparison, printer=print, top=None):
         printer(f"WARNING: {w}")
 
     def line(tag, c):
-        fmt = (lambda v: f"{v / 1e6:,.3f}ms") if c.name == "time" else "{:,.0f}".format
+        fmt = "{:,.0f}".format
+        if c.name == "time":
+            fmt = lambda v: f"{v / 1e6:,.3f}ms"
+        elif c.name in MEM_VALUES:
+            fmt = lambda v: format_bytes(v, sign=c.name == "mem_kept")
         limit = ""
         if c.threshold is not None:
             noise = f" + {c.noise:.2f}% noise" if c.noise else ""
@@ -396,7 +415,7 @@ def cli_args_parser():
         action="append",
         default=[],
         metavar="NAME=PCT",
-        help="gate an event alias, or time, on growth over PCT percent plus"
+        help="gate an event alias, time or mem_peak/spike/kept on growth over PCT percent plus"
         f" noise, repeatable. Default {DEFAULT_THRESHOLDS}",
     )
     parser.add_argument(
