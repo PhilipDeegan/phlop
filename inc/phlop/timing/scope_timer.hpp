@@ -7,6 +7,7 @@
 #define _PHLOP_TIMER_EXPORTED_ 0
 
 #include "phlop/macros/def/string.hpp"
+#include "phlop/timing/nvtx.hpp"
 #include "phlop/timing/common_timer.hpp"
 #include "phlop/timing/scope.hpp"
 
@@ -20,6 +21,7 @@
 
 #if !defined(PHLOP_SCOPE_TIMER)
 #define PHLOP_SCOPE_TIMER(key)                                                                     \
+    PHLOP_NVTX_RANGE(key)                                                                          \
     static phlop::RunTimerReport PHLOP_STR_CAT(ridx_, __LINE__){key, __FILE__, __LINE__};          \
     phlop::ScopeTimer<> PHLOP_STR_CAT(_ScopeTimer_, __LINE__){PHLOP_STR_CAT(ridx_, __LINE__)};     \
     phlop::ScopeTimerMan::INSTANCE().report_stack_ptr = &PHLOP_STR_CAT(ridx_, __LINE__);
@@ -28,6 +30,7 @@
 // PHLOP_SCOPE("key", time, perf_light), see scope.hpp
 #if !defined(PHLOP_SCOPE)
 #define PHLOP_SCOPE(key, ...)                                                                      \
+    PHLOP_NVTX_RANGE(key)                                                                          \
     static phlop::RunTimerReport PHLOP_STR_CAT(ridx_, __LINE__){key, __FILE__, __LINE__};          \
     phlop::Scope<PHLOP_SCOPE_FLAGS(__VA_ARGS__)> PHLOP_STR_CAT(_Scope_, __LINE__){                 \
         PHLOP_STR_CAT(ridx_, __LINE__)};                                                           \
@@ -40,7 +43,6 @@ namespace phlop
 struct RunTimerReport;
 using RunTimerReportSnapshot = RunTimerReportSnapshotT<RunTimerReport>;
 
-// forward declare so detail::_current_ScopeTimer<Clock> can use it as a pointer type
 template<typename Clock = SteadyClock>
 struct ScopeTimer;
 struct ScopeTimerMan;
@@ -81,6 +83,7 @@ struct ScopeTimerMan
     ScopeTimerMan()
         : timer_file{file_name_default}
     {
+        perf::Config::INSTANCE(); // constructed first so destroyed after this
         reports.reserve(25);
         traces.reserve(25);
     }
@@ -91,7 +94,9 @@ struct ScopeTimerMan
     {
         active = true;
         perf::Config::INSTANCE().init();
-        memory(_memory.load(std::memory_order_relaxed));
+        memory(_memory.load(std::memory_order_relaxed), _memory_peak);
+        io(_io.load(std::memory_order_relaxed));
+        _peak_carry = 0;
     }
 
     void shutdown(bool const write = true)
@@ -125,12 +130,30 @@ struct ScopeTimerMan
 
     // sample memory for PHLOP_SCOPE("key", time, mem) scopes, also env PHLOP_SCOPE_MEM=1/0
     //  resident memory is per process, not per thread
-    ScopeTimerMan& memory(bool const b = true)
+    //  peak resets the process peak on entry to each mem scope, so the peak is
+    //  per scope, not "a new process high" (linux, else ignored), also env
+    //  PHLOP_SCOPE_MEM=peak. Process wide: anything reading VmHWM/ru_maxrss sees it
+    ScopeTimerMan& memory(bool const b = true, bool const peak = false)
     {
-        bool on = b; // PHLOP_SCOPE_MEM=1/0, if set, wins over the code either way
+        bool on = b, pk = peak; // PHLOP_SCOPE_MEM=1/0/peak, if set, wins over the code
         if (auto const env = std::getenv("PHLOP_SCOPE_MEM"))
+        {
             on = std::string_view{env} != "0";
+            pk = std::string_view{env} == "peak";
+        }
         _memory.store(on, std::memory_order_relaxed);
+        _memory_peak = on and pk;
+        return *this;
+    }
+
+    // sample the calling thread's I/O for PHLOP_SCOPE("key", time, io) scopes,
+    //  also env PHLOP_SCOPE_IO=1/0, which wins over the code. linux, else ignored
+    ScopeTimerMan& io(bool const b = true)
+    {
+        bool on = b;
+        if (auto const env = std::getenv("PHLOP_SCOPE_IO"))
+            on = std::string_view{env} != "0";
+        _io.store(on, std::memory_order_relaxed);
         return *this;
     }
 
@@ -173,6 +196,9 @@ struct ScopeTimerMan
     bool active         = false;
     bool _force_strings = false;
     std::atomic<bool> _memory{false};
+    std::atomic<bool> _io{false};
+    bool _memory_peak         = false;
+    std::uint64_t _peak_carry = 0; // peak erased by open mem scope resets, see scope.hpp
     std::string timer_file;
     std::vector<std::string> _headers;
     std::vector<RunTimerReport*> reports;
@@ -205,10 +231,26 @@ struct RunTimerReport
 };
 
 
+// non-template link in the scope stack: the current scope per thread is held
+//  out of line, see detail::current_scope(), so it is shared across shared libraries
+struct ScopeTimerNode
+{
+    static ScopeTimerNode& root_parent_from(ScopeTimerNode& self)
+    {
+        if (self.pscope)
+            return root_parent_from(*self.pscope);
+        return self;
+    }
+
+    ScopeTimerNode* pscope = nullptr;
+    std::vector<RunTimerReportSnapshot*> childs;
+};
+
+
 namespace detail
 {
-    template<typename Clock>
-    inline ScopeTimer<Clock>* _current_ScopeTimer = nullptr;
+    // the innermost active scope, defined in src/phlop/timing/scope_timer.cpp
+    ScopeTimerNode*& current_scope();
 
     void inline write_timer_file()
     {
@@ -221,15 +263,15 @@ namespace detail
 
 
 template<typename Clock>
-struct ScopeTimer
+struct ScopeTimer : ScopeTimerNode
 {
     ScopeTimer(RunTimerReport& _r)
         : r{_r}
     {
         if (ScopeTimerMan::INSTANCE().active)
         {
-            this->pscope                       = detail::_current_ScopeTimer<Clock>;
-            detail::_current_ScopeTimer<Clock> = this;
+            this->pscope            = detail::current_scope();
+            detail::current_scope() = this;
 
 #if defined(PHLOP_SCOPE_TIMER_SELF_STATS)
             detail::construct_stats.add(now() - _self_start);
@@ -244,12 +286,19 @@ struct ScopeTimer
 #if defined(PHLOP_SCOPE_TIMER_SELF_STATS)
             auto const self_start = now();
 #endif
-            detail::_current_ScopeTimer<Clock> = this->pscope;
+            detail::current_scope() = this->pscope;
 
             // time first, then the exit memory sample, then any bookkeeping allocation
             //  so neither the sample nor the snapshot are counted in the scope
-            auto const end          = now();
-            MemSample const mem_out = pending_mem ? MemSample::now() : MemSample{};
+            auto const end        = now();
+            IoSample const io_out = pending_io ? IoSample::now() : IoSample{}; // before mem's read
+            MemSample mem_out     = pending_mem ? MemSample::now() : MemSample{};
+            if (pending_peak) // carry this scope's peak to its parent, see scope.hpp
+            {
+                auto& carry  = ScopeTimerMan::INSTANCE()._peak_carry;
+                mem_out.peak = (std::max)(mem_out.peak, carry);
+                carry        = (std::max)(pending_carry, mem_out.peak);
+            }
 
             auto& s = *r.snapshots.emplace_back(
                 std::make_unique<RunTimerReportSnapshot>(&r, parent, start, end - start));
@@ -266,6 +315,11 @@ struct ScopeTimer
                 s.mem_in  = pending_mem_in;
                 s.mem_out = mem_out;
             }
+            if (pending_io and io_out.ok)
+            {
+                s.has_io = true;
+                s.io     = io_out - pending_io_in;
+            }
 
             if (parent == nullptr)
                 ScopeTimerMan::INSTANCE().traces.emplace_back(&s);
@@ -280,13 +334,6 @@ struct ScopeTimer
 
     static std::uint64_t now() { return Clock::now(); }
 
-    static ScopeTimer& root_parent_from(ScopeTimer& self)
-    {
-        if (self.pscope)
-            return root_parent_from(*self.pscope);
-        return self;
-    }
-
 #if defined(PHLOP_SCOPE_TIMER_SELF_STATS)
     // first member: initialised before the others, so they're measured too
     std::uint64_t const _self_start = now();
@@ -294,15 +341,17 @@ struct ScopeTimer
     RunTimerReport& r;
     RunTimerReport* parent    = ScopeTimerMan::INSTANCE().report_stack_ptr;
     RunTimerReport* child     = nullptr;
-    ScopeTimer* pscope        = nullptr;
     std::uint64_t const start = now();
-    std::vector<RunTimerReportSnapshot*> childs;
 
     // set by an enclosing Scope before this destructs, moved into the snapshot
     std::uint8_t pending_level = 0;
     std::vector<std::uint64_t> pending_counts;
     bool pending_mem = false;
     MemSample pending_mem_in{};
+    bool pending_peak           = false; // peak reset on entry
+    std::uint64_t pending_carry = 0;
+    bool pending_io             = false;
+    IoSample pending_io_in{};
 };
 
 

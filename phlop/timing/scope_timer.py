@@ -4,15 +4,25 @@
 
 from __future__ import annotations
 
-import json
+import glob
 import os
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import numpy as np
 
-TERM_COLORS = bool(json.loads(os.environ.get("PHLOP_TERM_COLORS", "true")))
+from phlop.timing.severity import OK, TERM_COLORS, WARN, Colors, level  # noqa: F401
+
+# "io:" token values, the scope's exit - entry of /proc/thread-self/io
+IO_FIELDS = (
+    "rchar",  # bytes through read like syscalls, page cache included
+    "wchar",  # bytes through write like syscalls
+    "syscr",  # read like syscalls
+    "syscw",  # write like syscalls
+    "read_bytes",  # bytes fetched from the block layer, local filesystems
+    "write_bytes",  # bytes sent to the block layer, local filesystems
+    "cancelled_write_bytes",  # dirty page cache truncated before writeback
+)
 
 
 @dataclass
@@ -28,6 +38,9 @@ class RunTimerNode:
     dr: int | None = None  # resident set size change, exit - entry
     p: int | None = None  # process peak resident set size at scope exit
     dp: int | None = None  # process peak growth during scope, exit - entry
+    # the thread's I/O over the scope, None unless PHLOP_SCOPE("key", time, io):
+    # {name: exit - entry} for IO_FIELDS, see phlop/os/io.hpp
+    io: dict | None = None
 
     @staticmethod
     def from_scope_timer(line):
@@ -36,7 +49,9 @@ class RunTimerNode:
         node = RunTimerNode(*[int(e) for e in (key, start_time, run_time)])
         for token in extra:
             tag, _, values = token.partition(":")
-            if tag == "m":  # "m:<rss_in>,<rss_out>,<peak_in>,<peak_out>"
+            if tag == "io":  # "io:<rchar>,<wchar>,...", IO_FIELDS order
+                node.io = dict(zip(IO_FIELDS, (int(v) for v in values.split(","))))
+            elif tag == "m":  # "m:<rss_in>,<rss_out>,<peak_in>,<peak_out>"
                 rss_in, rss_out, peak_in, peak_out = (int(v) for v in values.split(","))
                 node.r, node.dr = rss_in, rss_out - rss_in
                 node.p, node.dp = peak_out, peak_out - peak_in
@@ -48,6 +63,10 @@ class RunTimerNode:
     @property
     def has_mem(self) -> bool:
         return self.dr is not None
+
+    @property
+    def has_io(self) -> bool:
+        return self.io is not None
 
     @property
     def key(self) -> int:
@@ -72,8 +91,13 @@ class PerfLevel:
         return self.label.split("/")[0]
 
     @property
+    def kernel(self):
+        """counts include kernel space, --env ... --kernel"""
+        return self.label.endswith("+kernel")
+
+    @property
     def set_name(self):
-        return self.label.split("/")[-1]
+        return self.label.split("/")[-1].removesuffix("+kernel")
 
 
 @dataclass
@@ -112,16 +136,17 @@ class ScopeTimerFile:
                     counts[name] -= value
         return counts
 
-    def perf_metrics(self, node, own=False, ctx=None, labels=None):
+    def perf_metrics(self, node, own=False, ctx=None, labels=None, hints=None):
         """{metric: value} from the scope's event set formulas (phlop.app.pfm
         .sets). ctx defaults to this host's, eg arm topdown slots"""
         counts = self.perf_self_counts(node) if own else self.perf_counts(node)
-        return self.metrics_for(node.level, counts, ctx, labels)
+        return self.metrics_for(node.level, counts, ctx, labels, hints)
 
-    def metrics_for(self, level, counts, ctx=None, labels=None):
+    def metrics_for(self, level, counts, ctx=None, labels=None, hints=None):
         """{metric: value} for {event alias: count} counted at level. labels,
         if a dict, gets {metric: text} for values that are None for a known
-        reason, eg "none (no RAM fetches)" """
+        reason, eg "none (no RAM fetches)". hints, if a dict, gets {metric:
+        text} for values the event set flags, eg "low IPC: see -s topdown" """
         if not counts or level not in self.perf:
             return {}
         from phlop.app.pfm.sets import SETS, generic
@@ -148,6 +173,12 @@ class ScopeTimerFile:
                     if label := m.none_means(counts):
                         labels[m.name] = label
                 except (TypeError, KeyError):
+                    pass
+            if m.hint and hints is not None:
+                try:  # hints see ctx without the "@", as in pfm.stat.evaluate
+                    if hint := m.hint(metrics[m.name], counts, ctx):
+                        hints[m.name] = hint
+                except (TypeError, KeyError, ZeroDivisionError):
                     pass
         return metrics
 
@@ -245,6 +276,9 @@ class LossLine:
             return ""
         return f"  rss {format_bytes(self.n.dr, sign=True)} peak {format_bytes(self.n.dp, sign=True)}"
 
+    def io_str(self):
+        return io_str(self.n.io) if self.n.has_io else ""
+
     def root_time(self):
         if self.par:
             return self.par.root_time()
@@ -271,6 +305,37 @@ def _merge_mem(base, other):
     base.p = max(base.p, other.p)
 
 
+def _merge_counts(base, other):
+    """fold other's perf counts into base, summed. Mixed levels or a member
+    without counts leave none: partial sums would read as the whole"""
+    if base.counts is None:
+        return
+    if other.counts is None or other.level != base.level:
+        base.counts = None
+        return
+    base.counts = [a + b for a, b in zip(base.counts, other.counts)]
+
+
+def io_str(io):
+    """ "  write 8.00MiB/1 read 4.00KiB/2 disk w 8.00MiB" for an io dict"""
+    text = f"  write {format_bytes(io['wchar'])}/{io['syscw']}"
+    text += f" read {format_bytes(io['rchar'])}/{io['syscr']}"
+    if io["write_bytes"] or io["read_bytes"]:
+        text += f" disk w {format_bytes(io['write_bytes'])} r {format_bytes(io['read_bytes'])}"
+    return text
+
+
+def _merge_io(base, other):
+    """fold other's io into base, summed. Members without io neither add nor
+    erase it, as for memory"""
+    if not other.has_io:
+        return
+    if not base.has_io:
+        base.io = dict(other.io)
+        return
+    base.io = {k: v + other.io[k] for k, v in base.io.items()}
+
+
 def dedupe_leafs(stf, n):
     nodes = []
     leafs = {}
@@ -294,6 +359,8 @@ def dedupe_leafs(stf, n):
             base.s += vals[i].s
             base.t += vals[i].t
             _merge_mem(base, vals[i])
+            _merge_counts(base, vals[i])
+            _merge_io(base, vals[i])
         base.s /= len(vals)
         nodes.append(base)
 
@@ -360,7 +427,11 @@ def print_scope_timings(
         padding = line_max - len(line)
         info = lines[i]
         print(
-            f"{line}" + (" " * padding) + f"{info.n.t/1e6:>10,.2f}ms" + info.mem_str()
+            f"{line}"
+            + (" " * padding)
+            + f"{info.n.t/1e6:>10,.2f}ms"
+            + info.mem_str()
+            + info.io_str()
         )
 
 
@@ -376,6 +447,7 @@ class ScopeGroup:
     counts: dict | None = None  # summed, over the n_counted members with counts
     n_counted: int = 0
     c: list = field(default_factory=list)
+    mem: dict | None = None  # MEM_VALUES over members with memory, see group_mem
 
 
 def group_scopes(stf, nodes, own=False):
@@ -395,9 +467,29 @@ def group_scopes(stf, nodes, own=False):
             g.level = n.level
             g.counts = {k: (g.counts or {}).get(k, 0) + v for k, v in counts.items()}
             g.n_counted += 1
+        g.mem = group_mem(g.mem, n)
     for key, g in groups.items():
         g.c = group_scopes(stf, [c for m in members[key] for c in m.c], own)
     return list(groups.values())
+
+
+# a scope's memory as values: peak, the process high water mark at exit (or
+# the scope's own with PHLOP_SCOPE_MEM=peak), spike, the peak's rise during
+# the scope, kept, resident growth exit - entry
+MEM_VALUES = ("mem_peak", "mem_spike", "mem_kept")
+
+
+def group_mem(mem, node):
+    """mem with node's folded in, as _merge_mem: peaks max, kept summed"""
+    if not node.has_mem:
+        return mem
+    if mem is None:
+        return dict(zip(MEM_VALUES, (node.p, node.dp, node.dr)))
+    return {
+        "mem_peak": max(mem["mem_peak"], node.p),
+        "mem_spike": max(mem["mem_spike"], node.dp),
+        "mem_kept": mem["mem_kept"] + node.dr,
+    }
 
 
 def print_scope_perf(
@@ -406,8 +498,11 @@ def print_scope_perf(
     """scope tree with time and, for counted scopes, their event set metrics.
     own: the scope's own work, children counted at its level subtracted.
     dedupe: same named siblings on one line, xN with total and mean time,
-    metrics from their summed counts. verbose: also the raw event counts"""
+    metrics from their summed counts. Metrics the event set flags, eg low
+    IPC, are colored. verbose: also the raw event counts and the flags' hints"""
     stf = file_parser(scope_timer_filepath)
+    colors = Colors()
+    flagged = [False]
     for w in stf.perf_warnings():
         printer(f"WARNING: {w}")
 
@@ -417,15 +512,21 @@ def print_scope_perf(
         return f"{v:,.0f}" if abs(v) >= 1e4 else f"{v:.3g}"
 
     def perf_text(level, counts, depth):
-        labels = {}
-        metrics = stf.metrics_for(level, counts, labels=labels)
-        text = f" [{stf.perf[level].set_name}] " + " ".join(
-            f"{k}={fmt(v, labels.get(k))}" for k, v in metrics.items()
+        labels, hints = {}, {}
+        metrics = stf.metrics_for(level, counts, labels=labels, hints=hints)
+        flagged[0] = flagged[0] or bool(hints)
+        perf_level = stf.perf[level]
+        kernel = " +kernel" if perf_level.kernel else ""
+        text = f" [{perf_level.set_name}{kernel}] " + " ".join(
+            colors(f"{k}={fmt(v, labels.get(k))}", WARN if k in hints else OK)
+            for k, v in metrics.items()
         )
         if verbose:
             text += f"\n{'  ' * depth}  counts: " + " ".join(
                 f"{k}={v:,}" for k, v in counts.items()
             )
+            for k, hint in hints.items():
+                text += f"\n{'  ' * depth}  {k}: {hint}"
         return text
 
     def show_node(n, depth):
@@ -457,6 +558,9 @@ def print_scope_perf(
     else:
         for root in stf.roots:
             show_node(root, 0)
+    if flagged[0]:
+        why = "" if verbose else ", -v for why"
+        printer(colors("flagged", WARN) + f": metrics the event set flags{why}")
 
 
 def write_variance_across(scope_timer_file_glob, outfile):
@@ -499,83 +603,213 @@ def make_consistent(scope_timer_files):
     return scope_timer_files
 
 
-def print_variance_across(scope_timer_file_glob, root_id=None, dedupe=True):
-    scope_timer_files = [file_parser(f) for f in Path.cwd().glob(scope_timer_file_glob)]
-    if not scope_timer_files:
-        return
+def _spread(vals):
+    """(max - min) / median, relative so long and short scopes compare"""
+    median = float(np.median(vals))
+    return (max(vals) - min(vals)) / median if median else 0.0
 
-    scope_timer_files = make_consistent(scope_timer_files)
 
-    stacks = [[] for _ in range(len(scope_timer_files))]
+def _load_across(scope_timer_file_glob, printer):
+    """(file names, ScopeTimerFiles made consistent), None if under 2 files"""
+    files = sorted(glob.glob(scope_timer_file_glob))
+    if len(files) < 2:
+        if files:
+            printer(f"1 file matches {scope_timer_file_glob}, need 2 or more")
+        return None
+    return files, make_consistent([file_parser(f) for f in files])
 
-    def map_graph(stf, n, k, t=0):
-        stacks[k].append((n.k, t, n.s, n.t))
-        if not n.c:
-            return
-        if dedupe:
+
+def _aligned_scopes(stfs, root_id=None, dedupe=True):
+    """[(key, depth, [node per file])], the consistent trees walked in step"""
+    by_index = {}  # preorder position -> row
+
+    def walk(stf, n, i, depth):
+        by_index.setdefault(i[0], (n.k, depth, []))[2].append(n)
+        i[0] += 1
+        if dedupe and n.c:
             n.c = dedupe_leafs(stf, n)
-        for i in range(len(n.c)):
-            map_graph(stf, n.c[i], k, t + 1)
+        for c in n.c:
+            walk(stf, c, i, depth + 1)
 
-    for i, stf in enumerate(scope_timer_files):
+    for stf in stfs:
+        i = [0]
         for root in stf.roots:
-            if root_id and not stf(root.k).startswith(root_id):
-                continue
-            map_graph(stf, root, i)
+            if not root_id or stf(root.k).startswith(root_id):
+                walk(stf, root, i, 0)
+    rows = list(by_index.values())
+    if any(len(nodes) != len(stfs) for _, _, nodes in rows):
+        raise RuntimeError("Incompatible scope timer files, scope trees differ")
+    return rows
 
-    if not stacks[0]:  # nothing to do
+
+def _pct(v):
+    return f"{v * 100:.1f}%"
+
+
+def _ms(v):
+    return f"{v / 1e6:,.3f}ms"
+
+
+def print_variance_across(
+    scope_timer_file_glob,
+    root_id=None,
+    dedupe=True,
+    warn=0.05,
+    bad=0.2,
+    min_ns=10_000,
+    printer=print,
+):
+    """Per scope, how much runs or MPI ranks differ. Runtime spread is
+    (max - min) / median across the files, colored at warn and bad. Scopes
+    under min_ns median runtime are not colored, too short to time reliably.
+
+    Starts are relative to each file's first root, as steady clock values
+    differ between runs and hosts. Their spread is colored against the median
+    run length.
+
+    With the same perf counts in every file, the runtime spread splits in two:
+    work, the spread of instructions, and speed, the spread of cycles per
+    instruction. Ranks doing different work is load imbalance, the same work
+    at different speed is the machine: memory contention, noisy neighbours,
+    frequency. See print_mem_variance_across for memory"""
+    loaded = _load_across(scope_timer_file_glob, printer)
+    if not loaded:
+        return
+    files, stfs = loaded
+    rows = _aligned_scopes(stfs, root_id, dedupe)
+    if not rows:
+        return
+    colors = Colors()
+    with_perf = all(stf.perf == stfs[0].perf for stf in stfs)
+    t0s = [min(r.s for r in stf.roots) for stf in stfs]
+    run_length = float(
+        np.median(
+            [max(r.s + r.t for r in stf.roots) - t0 for stf, t0 in zip(stfs, t0s)]
+        )
+    )
+
+    printer(
+        f"{len(files)} files, spread = (max - min) / median. "
+        + colors.legend(f">= {_pct(warn)}", f">= {_pct(bad)}")
+    )
+    for key, depth, nodes in rows:
+        times = [n.t for n in nodes]
+        starts = [n.s - t0 for n, t0 in zip(nodes, t0s)]
+        median = float(np.median(times))
+        spread = _spread(times)
+        timed = median >= min_ns
+        line = f"{'  ' * depth}{stfs[0](key)} {_ms(median)} spread "
+        line += colors(_pct(spread), level(spread, warn, bad) if timed else OK)
+        start_spread = max(starts) - min(starts)
+        line += f", start +{_ms(float(np.median(starts)))} spread "
+        rel = start_spread / run_length if run_length else 0.0
+        line += colors(_ms(start_spread), level(rel, warn, bad))
+        counts = [
+            stf.perf_counts(n) if with_perf else {} for stf, n in zip(stfs, nodes)
+        ]
+        if all(c.get("instructions") and c.get("cycles") for c in counts):
+            work = _spread([c["instructions"] for c in counts])
+            speed = _spread([c["cycles"] / c["instructions"] for c in counts])
+            line += ", work " + colors(
+                _pct(work), level(work, warn, bad) if timed else OK
+            )
+            line += ", speed " + colors(
+                _pct(speed), level(speed, warn, bad) if timed else OK
+            )
+        printer(line)
+
+
+def _per_scope_peaks(stf):
+    """True if the file's mem scopes reset the peak on entry, PHLOP_SCOPE_MEM
+    =peak: their peak on entry is then their rss on entry. Undeduped nodes,
+    merging sums and maxes the fields"""
+    nodes = [n for n in _walk(stf.roots) if n.has_mem]
+    return bool(nodes) and all(n.p - n.dp == n.r for n in nodes)
+
+
+def _walk(nodes):
+    for n in nodes:
+        yield n
+        yield from _walk(n.c)
+
+
+def print_mem_variance_across(
+    scope_timer_file_glob,
+    root_id=None,
+    dedupe=True,
+    warn=0.2,
+    bad=0.5,
+    printer=print,
+):
+    """Per mem scope, PHLOP_SCOPE("key", time, mem), how memory differs
+    between runs or MPI ranks. The rank that runs out of memory is the
+    highest one, not the average, so each value names the file with the max.
+
+    peak: with PHLOP_SCOPE_MEM=peak the scope's own peak, else the process
+    high water mark at scope exit. Its imbalance, max / median - 1, is
+    colored at warn and bad.
+    spike: the most the peak rose above the scope's entry, colored as a share
+    of the median peak. Without PHLOP_SCOPE_MEM=peak only scopes setting a new
+    process high show one, the header says which the files hold.
+    kept: resident growth over the scope, exit - entry, median and max."""
+    loaded = _load_across(scope_timer_file_glob, printer)
+    if not loaded:
+        return
+    files, stfs = loaded
+    per_scope = all(_per_scope_peaks(stf) for stf in stfs)  # before dedupe merges
+    rows = _aligned_scopes(stfs, root_id, dedupe)
+    colors = Colors()
+    names = [os.path.basename(f) for f in files]
+
+    def worst(values):
+        i = int(np.argmax(values))
+        return values[i], names[i]
+
+    # mem scopes and their ancestors, preorder rows walked backwards: a scope
+    # is shown if it has memory or a scope shown below it, before its sibling
+    has_mem = [all(n.has_mem for n in nodes) for _, _, nodes in rows]
+    show, below = [False] * len(rows), {}  # depth -> anything shown there
+    for i in reversed(range(len(rows))):
+        depth = rows[i][1]
+        show[i] = has_mem[i] or any(v for d, v in below.items() if d > depth)
+        below = {d: v for d, v in below.items() if d < depth}
+        below[depth] = below.get(depth, False) or show[i]
+    if not any(has_mem):
+        printer('no mem scopes in these files, see PHLOP_SCOPE("key", time, mem)')
         return
 
-    numerics = []
-    for data in stacks[0]:
-        numerics.append((data, [], []))
-
-    for stack in stacks:
-        for i, data in enumerate(stack):
-            numerics[i][1].append(data[2])
-            numerics[i][2].append(data[3])
-
-    def metric(vals, stddev=False):
-        if stddev:
-            return int(np.std(vals))
-        return max(vals) - min(vals)
-
-    savg = 0
-    ravg = 0
-    for num in numerics:
-        data, starts, times = num
-        savg += metric(starts)
-        ravg += metric(times)
-    savg /= len(numerics)
-    ravg /= len(numerics)
-
-    colorize = TERM_COLORS and sys.stdout.isatty()
-    red = "\033[91m" if colorize else ""
-    white = "\033[0m" if colorize else ""
-    orange = "\033[93m" if colorize else ""
-
-    def color(v, avg):
-        d = str(v / 1e6) + "ms"
-        if v >= avg * 2:
-            return red + d
-        if v > avg:
-            return orange + d
-        return white + d
-
-    stf = scope_timer_files[0]
-    for num in numerics:
-        data, starts, times = num
-        key, tabs, _, __ = data
-        o = " " * tabs
-        start_sdev = color(metric(starts), savg)
-        times_sdev = color(metric(times), ravg)
-        print(
-            white
-            + o
-            + f"{stf(key)} start: {start_sdev}"
-            + white
-            + f", runtime: {times_sdev}"
-        )
+    printer(
+        f"{len(files)} files, peak imbalance = max / median - 1. "
+        + colors.legend(f">= {_pct(warn)}", f">= {_pct(bad)}")
+    )
+    printer(
+        "peaks per scope, PHLOP_SCOPE_MEM=peak"
+        if per_scope
+        else "peaks are the process high water mark: spikes only where a scope"
+        " sets a new high, PHLOP_SCOPE_MEM=peak for every scope's"
+    )
+    for (key, depth, nodes), shown, mem in zip(rows, show, has_mem):
+        line = f"{'  ' * depth}{stfs[0](key)}"
+        if not shown:
+            continue
+        if not mem:
+            printer(line)  # an ancestor of mem scopes, for the tree's shape
+            continue
+        peak = float(np.median([n.p for n in nodes]))
+        top, top_file = worst([n.p for n in nodes])
+        imbalance = top / peak - 1 if peak else 0.0
+        line += f" peak {format_bytes(peak)} max {format_bytes(top)} "
+        line += colors(f"+{_pct(imbalance)}", level(imbalance, warn, bad))
+        line += f" {top_file}"
+        spike, spike_file = worst([n.dp for n in nodes])
+        if spike > 0:
+            share = spike / peak if peak else 0.0
+            line += ", spike " + colors(format_bytes(spike), level(share, warn, bad))
+            line += f" {spike_file}"
+        kept = [n.dr for n in nodes]
+        line += f", kept {format_bytes(float(np.median(kept)), sign=True)}"
+        line += f" max {format_bytes(max(kept), sign=True)}"
+        printer(line)
 
 
 def cli_args_parser(description="scope timer files"):
@@ -584,8 +818,17 @@ def cli_args_parser(description="scope timer files"):
     parser = argparse.ArgumentParser(
         description=description, formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    parser.add_argument("tool", choices=["perf", "times"], help="what to print")
-    parser.add_argument("file", help="scope timer file")
+    parser.add_argument(
+        "tool",
+        choices=["perf", "times", "variance", "memvariance"],
+        help="what to print. variance, memvariance: time and memory across files,"
+        " eg runs or MPI ranks",
+    )
+    parser.add_argument(
+        "file",
+        help="scope timer file, for variance and memvariance a quoted glob,"
+        " eg 'times.*.txt'",
+    )
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="perf: raw event counts too"
     )
@@ -600,6 +843,20 @@ def cli_args_parser(description="scope timer files"):
         action="store_false",
         help="one line per scope, not same named siblings merged",
     )
+    parser.add_argument(
+        "--warn",
+        type=float,
+        default=None,
+        help="variance: spread percent colored as a warning, default 5."
+        " memvariance: peak imbalance percent, default 20",
+    )
+    parser.add_argument(
+        "--bad",
+        type=float,
+        default=None,
+        help="variance: spread percent colored as bad, default 20."
+        " memvariance: peak imbalance percent, default 50",
+    )
     return parser
 
 
@@ -610,6 +867,14 @@ def main(argv=None):
         if cli_args.tool == "perf":
             print_scope_perf(
                 cli_args.file, cli_args.own, cli_args.dedupe, cli_args.verbose
+            )
+        elif cli_args.tool in ("variance", "memvariance"):
+            mem = cli_args.tool == "memvariance"
+            warn = cli_args.warn if cli_args.warn is not None else 20 if mem else 5
+            bad = cli_args.bad if cli_args.bad is not None else 50 if mem else 20
+            printer = print_mem_variance_across if mem else print_variance_across
+            printer(
+                cli_args.file, dedupe=cli_args.dedupe, warn=warn / 100, bad=bad / 100
             )
         else:
             print_scope_timings(cli_args.file, dedupe=cli_args.dedupe)

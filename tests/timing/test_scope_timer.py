@@ -30,6 +30,49 @@ def _no_counts(stf, name):
     return True
 
 
+_FN_PEAK_SCOPES = {"fn_peak", "fn_peak_big", "fn_peak_small"}
+
+
+def _check_fn_mem(stf, name, other_mem=()):
+    """fn3 is a time only root scope with one child, fn_mem, a mem scope that
+    touches 64MiB. Memory is enabled in code, PHLOP_SCOPE_MEM=0 turns it off.
+    other_mem names any other mem scopes in the file. Returns True if memory
+    was recorded"""
+    fn3 = [r for r in stf.roots if stf(r.k) == "fn3"]
+    np.testing.assert_equal(len(fn3), 1)
+    np.testing.assert_equal(len(fn3[0].c), 1)
+    fn_mem = fn3[0].c[0]
+    np.testing.assert_equal(stf(fn_mem.k), "fn_mem")
+
+    def walk(nodes):
+        for n in nodes:
+            yield n
+            yield from walk(n.c)
+
+    # fn_mem and other_mem are the only mem scopes, none other at any depth
+    others = [
+        stf(n.k)
+        for n in walk(stf.roots)
+        if n.has_mem and n is not fn_mem and stf(n.k) not in other_mem
+    ]
+    assert not others, f"{name}: memory recorded on time only scopes {others}"
+
+    if os.environ.get("PHLOP_SCOPE_MEM") == "0":  # forced off, overrides memory()
+        np.testing.assert_equal(fn_mem.has_mem, False)
+        print(f"{name}: PHLOP_SCOPE_MEM=0, no memory recorded")
+        return False
+
+    np.testing.assert_equal(fn_mem.has_mem, True)
+    if not sys.platform.startswith("netbsd"):  # current rss unsupported there, 0
+        np.testing.assert_array_less(0, fn_mem.r)
+    np.testing.assert_array_less(
+        32 * 1024 * 1024, fn_mem.dp, err_msg=f"r={fn_mem.r} dr={fn_mem.dr} p={fn_mem.p}"
+    )
+    np.testing.assert_array_less(fn_mem.dp, fn_mem.p)  # p is absolute, above baseline
+    print(f"{name}: memory ok, peak +{scope_timer.format_bytes(fn_mem.dp)}")
+    return True
+
+
 def test_scope_timer(scope_timer_filepath=None):
     if scope_timer_filepath is None:  # assume cli
         parser = argparse.ArgumentParser()
@@ -42,26 +85,163 @@ def test_scope_timer(scope_timer_filepath=None):
     scope_timer_file = scope_timer.file_parser(scope_timer_filepath)
     np.testing.assert_equal(scope_timer_file(scope_timer_file.roots[0].k), "fn1")
 
-    # time only scopes have no memory fields
-    assert not any(root.has_mem for root in scope_timer_file.roots)
+    _check_io(scope_timer_file)
 
-    if os.environ.get("PHLOP_SCOPE_MEM") == "0":  # forced off, nothing to check
-        print("test_scope_timer: PHLOP_SCOPE_MEM=0, memory checks skipped")
-        return
+    # fn_peak and its children are the only mem scopes besides fn_mem
+    if _check_fn_mem(scope_timer_file, "test_scope_timer", _FN_PEAK_SCOPES):
+        _check_fn_peak(scope_timer_file)
 
-    # fn3 is time only, its child fn_mem uses the mem flag and touches 64MiB
-    fn3 = [r for r in scope_timer_file.roots if scope_timer_file(r.k) == "fn3"]
-    np.testing.assert_equal(len(fn3), 1)
-    np.testing.assert_equal(len(fn3[0].c), 1)
-    fn_mem = fn3[0].c[0]
-    np.testing.assert_equal(scope_timer_file(fn_mem.k), "fn_mem")
-    np.testing.assert_equal(fn_mem.has_mem, True)
-    if not sys.platform.startswith("netbsd"):  # current rss unsupported there, 0
-        np.testing.assert_array_less(0, fn_mem.r)
-    np.testing.assert_array_less(
-        32 * 1024 * 1024, fn_mem.dp, err_msg=f"r={fn_mem.r} dr={fn_mem.dr} p={fn_mem.p}"
+
+def test_threaded_scope_timer(scope_timer_filepath=None):
+    """bin/threaded_scope_timer.txt from tests/timing/test_threaded_scope_timer.cpp,
+    its mem scope runs on a worker thread"""
+    if scope_timer_filepath is None:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("-f", "--file", default="bin/threaded_scope_timer.txt")
+        scope_timer_filepath = parser.parse_args().file
+
+    _check_fn_mem(
+        scope_timer.file_parser(scope_timer_filepath), "test_threaded_scope_timer"
     )
-    np.testing.assert_array_less(fn_mem.dp, fn_mem.p)  # p is absolute, above baseline
+
+
+def _check_fn_peak(stf):
+    """fn_peak: fn_peak_big touches 256MiB then fn_peak_small 32MiB, below that high.
+    With PHLOP_SCOPE_MEM=peak on linux the peak resets per scope, so fn_peak_small
+    sees its own 32MiB and fn_peak still sees fn_peak_big's 256MiB carried up"""
+    MiB = 1024 * 1024
+    roots = [r for r in stf.roots if stf(r.k) == "fn_peak"]
+    np.testing.assert_equal(len(roots), 1)
+    fn_peak = roots[0]
+    big, small = fn_peak.c
+    np.testing.assert_equal(
+        [stf(big.k), stf(small.k)], ["fn_peak_big", "fn_peak_small"]
+    )
+    np.testing.assert_equal([n.has_mem for n in (fn_peak, big, small)], [True] * 3)
+
+    msg = "\n".join(
+        f"{stf(n.k)}: r={n.r} dr={n.dr} p={n.p} dp={n.dp}"
+        for n in (fn_peak, big, small)
+    )
+    np.testing.assert_array_less(128 * MiB, big.dp, err_msg=msg)
+    np.testing.assert_array_less(128 * MiB, fn_peak.dp, err_msg=msg)
+
+    if os.environ.get("PHLOP_SCOPE_MEM") == "peak" and sys.platform.startswith("linux"):
+        np.testing.assert_array_less(16 * MiB, small.dp, err_msg=msg)
+        np.testing.assert_array_less(small.dp, 64 * MiB, err_msg=msg)
+        print("test_scope_timer: peak reset per scope ok")
+    elif sys.platform.startswith("linux"):  # no reset, below the earlier high
+        np.testing.assert_array_less(small.dp, 16 * MiB, err_msg=msg)
+
+
+def test_shared_libs(scope_timer_filepath=None):
+    """from sh/test_shared_libs.sh: a module scope called inside a core library
+    scope nests under it, so both libraries share phlop's per thread state.
+    If the core library has counters, the module's scopes have them too"""
+    if scope_timer_filepath is None:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("-f", "--file", default="bin/shared_libs/times.txt")
+        scope_timer_filepath = parser.parse_args().file
+
+    stf = scope_timer.file_parser(scope_timer_filepath)
+    names = sorted(stf(r.k) for r in stf.roots)
+    np.testing.assert_equal(names, ["core_outer", "module_scope"])
+    outer = next(r for r in stf.roots if stf(r.k) == "core_outer")
+    np.testing.assert_equal([stf(c.k) for c in outer.c], ["module_scope"])
+
+    module_scopes = [r for r in stf.roots if stf(r.k) == "module_scope"] + outer.c
+    assert all(n.has_mem for n in module_scopes), "PHLOP_SCOPE_MEM=1 set"
+    if 1 in stf.perf:  # the core library opened counters, the module must use them
+        assert all(n.level == 1 and n.counts for n in module_scopes), module_scopes
+    print(
+        f"test_shared_libs: ok, perf counts {'yes' if 1 in stf.perf else 'unavailable'}"
+    )
+
+
+def _check_io(stf):
+    """fn_io: 4 writes of 1MiB and one read of 1MiB, exactly, the scope's own
+    samples and counter reads excluded. Linux only, PHLOP_SCOPE_IO=0 skips"""
+    if not sys.platform.startswith("linux") or os.environ.get("PHLOP_SCOPE_IO") == "0":
+        print("test_scope_timer: io checks skipped")
+        return
+    MiB = 1024 * 1024
+    (fn_io,) = [r for r in stf.roots if stf(r.k) == "fn_io"]
+    assert fn_io.has_io, "fn_io has no io: token"
+    io = fn_io.io
+    expected = {"wchar": 4 * MiB, "syscw": 4, "rchar": MiB, "syscr": 1}
+    np.testing.assert_equal({k: io[k] for k in expected}, expected, err_msg=str(io))
+    assert not any(r.has_io for r in stf.roots if stf(r.k) != "fn_io")
+    print("test_scope_timer: io ok", scope_timer.io_str(io))
+
+
+def _nvtx_pairs(sqlite_path):
+    """Counter of (range, innermost enclosing range or None) for the "phlop"
+    domain's push/pop ranges in an nsys sqlite export, per thread"""
+    import sqlite3
+    from collections import Counter, defaultdict
+
+    db = sqlite3.connect(sqlite_path)
+    try:
+        has_nvtx = db.execute(
+            "select 1 from sqlite_master where type = 'table' and name = 'NVTX_EVENTS'"
+        ).fetchone()
+        row = (
+            has_nvtx
+            and db.execute(
+                "select domainId from NVTX_EVENTS where eventType = 75 and text = 'phlop'"
+            ).fetchone()
+        )
+        assert (
+            row
+        ), f"{sqlite_path}: no NVTX domain 'phlop', built without -DPHLOP_NVTX?"
+        (domain,) = row
+        rows = db.execute(
+            "select e.start, e.end, e.globalTid, coalesce(e.text, s.value)"
+            " from NVTX_EVENTS e left join StringIds s on s.id = e.textId"
+            " where e.eventType = 59 and e.domainId = ? order by e.start, e.end desc",
+            (domain,),
+        ).fetchall()
+    finally:
+        db.close()
+    by_thread = defaultdict(list)
+    for start, end, tid, name in rows:
+        by_thread[tid].append((start, end, name))
+    pairs = Counter()
+    for ranges in by_thread.values():
+        stack = []  # open ranges, sorted by start: a stack per thread
+        for start, end, name in ranges:
+            while stack and stack[-1][1] <= start:
+                stack.pop()
+            pairs[(name, stack[-1][2] if stack else None)] += 1
+            stack.append((start, end, name))
+    return pairs
+
+
+def test_nvtx(scope_timer_filepath=None, sqlite_path=None):
+    """from sh/test_nvtx.sh: a -DPHLOP_NVTX build run under nsys. Every scope
+    is an NVTX range in domain "phlop": the same (scope, parent) pairs, with
+    the same counts, as the timer file of the same run"""
+    from collections import Counter
+
+    if scope_timer_filepath is None:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("-f", "--file", required=True, help="timer file")
+        parser.add_argument("-s", "--sqlite", required=True, help="nsys export")
+        args = parser.parse_args()
+        scope_timer_filepath, sqlite_path = args.file, args.sqlite
+
+    stf = scope_timer.file_parser(scope_timer_filepath)
+    expect = Counter()
+
+    def walk(nodes, parent):
+        for n in nodes:
+            expect[(stf(n.k), parent)] += 1
+            walk(n.c, stf(n.k))
+
+    walk(stf.roots, None)
+    got = _nvtx_pairs(sqlite_path)
+    np.testing.assert_equal(dict(got), dict(expect))
+    print(f"test_nvtx: {sum(got.values())} ranges match the timer file")
 
 
 def test_mem_parse():
@@ -139,6 +319,16 @@ def test_threaded_scope(scope_timer_filepath=None):
     works = [r for r in stf.roots if stf(r.k) == "work"]
     mains = [r for r in stf.roots if stf(r.k) == "main"]
     np.testing.assert_equal((len(works), len(mains)), (4, 1))
+    if sys.platform.startswith("linux") and os.environ.get("PHLOP_SCOPE_IO") != "0":
+        # thread t writes t + 1 times 64KiB, the main thread nothing itself
+        # and no reads: phlop's own (io samples, counter reads, a thread's first
+        # counter open) are subtracted
+        writes = sorted(
+            (w.io["syscw"], w.io["wchar"], w.io["syscr"], w.io["rchar"]) for w in works
+        )
+        np.testing.assert_equal(writes, [(k, k * 64 * 1024, 0, 0) for k in range(1, 5)])
+        np.testing.assert_equal((mains[0].io["syscw"], mains[0].io["wchar"]), (0, 0))
+        print("test_threaded_scope: per thread io ok")
     if _no_counts(stf, "test_threaded_scope"):
         return
     instructions = []
