@@ -113,5 +113,102 @@ class ScopeCompareTest(unittest.TestCase):
             self.assertEqual(main([str(base), str(base), "-t", "x"]), 2)
 
 
+def text(solve, leafs, solve_ns=5_000_000):
+    body = f"0 0 0:9000000\n1 1 0:{solve_ns} 1:" + ",".join(map(str, solve)) + "\n"
+    for leaf in leafs:
+        body += "2 2 0:1000000 1:" + ",".join(map(str, leaf)) + "\n"
+    return HEADER + body
+
+
+def stf_ns(solve_ns):
+    return lines_parser(
+        text([3_000_000, 9_000_000, 900], [LEAF] * 2, solve_ns).splitlines()
+    )
+
+
+LEAF = [1_000_000, 2_000_000, 100]
+
+
+class ScopeCompareRunsTest(unittest.TestCase):
+    """sides of runs x ranks, see as_runs and load"""
+
+    def test_ranks_sum_counts_max_time(self):
+        rank0, slow = stf_ns(5_000_000), stf_ns(7_000_000)
+        c = compare(
+            [rank0, slow], [rank0, slow], {"instructions": 1, "time": 1}, min_count=0
+        )
+        by = {(ch.path, ch.name): ch.base for ch in c.changes}
+        self.assertEqual(by[(("main", "solve"), "instructions")], 2 * 5_000_000)
+        self.assertEqual(by[(("main", "solve"), "time")], 7_000_000 - 2 * 1_000_000)
+        self.assertEqual(c.calls_changed, [])
+        self.assertEqual(c.ranks, 2)
+
+    def test_rank_counts_must_match(self):
+        one = stf_ns(5_000_000)
+        with self.assertRaisesRegex(IncompatibleFiles, "rank counts"):
+            compare([one, one], [one, one, one, one])  # between sides
+        with self.assertRaisesRegex(IncompatibleFiles, "rank counts"):
+            compare([[one, one], [one]], [[one, one]])  # between runs of a side
+
+    def test_noise_widens_the_limit(self):
+        # base runs' own solve time 3ms and 3.3ms: 10% noise, min 3ms
+        fast, slow, new = stf_ns(5_000_000), stf_ns(5_300_000), stf_ns(5_240_000)
+        gate = {"time": 5}
+        one = compare([[fast]], [[new]], gate, min_count=0)  # +8%, no noise
+        self.assertEqual([r.path for r in one.regressions], [("main", "solve")])
+        both = compare([[fast], [slow]], [[new]], gate, min_count=0)
+        solve = next(ch for ch in both.changes if ch.path == ("main", "solve"))
+        self.assertAlmostEqual(solve.base_noise, 10.0)
+        self.assertFalse(both.regressions)
+        self.assertEqual(both.runs, (2, 1))
+
+    def test_unstable_counts_warn(self):
+        a = stf([3_000_000, 9_000_000, 900], [LEAF] * 2)
+        b = stf([3_000_000, 9_500_000, 900], [LEAF] * 2)
+        c = compare([[a], [b]], [[a]])
+        self.assertTrue(any("varies" in w for w in c.warnings))
+
+    def test_scopes_not_in_every_run(self):
+        a = stf([3_000_000, 9_000_000, 900], [LEAF] * 2)
+        b = stf([3_000_000, 9_000_000, 900], [])
+        c = compare([[a], [b]], [[a]])
+        self.assertTrue(any("not in every run" in w for w in c.warnings))
+        self.assertNotIn(("main", "solve", "leaf"), {ch.path for ch in c.changes})
+
+    def test_load_dir_and_tar(self):
+        import tarfile
+        import tempfile
+        from pathlib import Path
+
+        from phlop.timing.scope_compare import load
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "base"
+            for run in ("r0", "r1"):
+                timings = root / run / ".phare" / "timings"
+                timings.mkdir(parents=True)
+                for rank in range(3):
+                    (timings / f"rank.{rank}.txt").write_text(
+                        text([3_000_000, 9_000_000, 900], [LEAF] * 2)
+                    )
+                (root / run / ".phare" / "summary.txt").write_text("not a timer file")
+            runs = load(root, "rank.*.txt")
+            self.assertEqual([len(r) for r in runs], [3, 3])
+
+            tar = Path(d) / "base.tar.gz"
+            with tarfile.open(tar, "w:gz") as t:
+                t.add(root, arcname="base")
+            self.assertEqual([len(r) for r in load(tar, "rank.*.txt")], [3, 3])
+
+            self.assertEqual(main([str(root), str(tar), "-p", "rank.*.txt"]), 0)
+            self.assertEqual(
+                main([str(root), str(Path(d) / "nope"), "-p", "rank.*.txt"]), 2
+            )
+            with self.assertRaisesRegex(
+                ValueError, "summary.txt: not a scope timer file"
+            ):
+                load(root)  # default *.txt also finds summary.txt
+
+
 if __name__ == "__main__":
     unittest.main()
