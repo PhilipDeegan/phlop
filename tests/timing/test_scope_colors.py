@@ -106,6 +106,23 @@ class VarianceTest(unittest.TestCase):
             ):
                 self.variance(synced, other + scope_file(10**9, 10**6, 10**12))
 
+    def test_files_without_scopes_skipped(self):
+        # a rank with syncs but no scopes: named, the others still compared
+        sync = "#clock sync=100,1000000100\n"
+        empty = sync + "\n"
+        lines = self.variance(
+            sync + scope_file(10**9, 10**6, 200),
+            empty,
+            sync + scope_file(10**9, 10**6, 200),
+        )
+        self.assertIn("1 files without scopes skipped:", lines[0])
+        self.assertIn("t.1.txt", lines[0])
+        self.assertIn("2 files, spread", lines[1])
+        self.assertIn("starts from the clock sync", lines[1])
+        only_empty = self.variance(empty, empty)
+        self.assertIn("2 files without scopes skipped", only_empty[0])
+        self.assertEqual(len(only_empty), 1)
+
     def test_no_clock_syncs_starts_per_file(self):
         lines = self.variance(
             scope_file(10**9, 10**6, 5), scope_file(10**9, 10**6, 10**12)

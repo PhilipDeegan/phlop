@@ -623,13 +623,22 @@ def _spread(vals):
 
 
 def _load_across(scope_timer_file_glob, printer):
-    """(file names, ScopeTimerFiles made consistent), None if under 2 files"""
+    """(file names, ScopeTimerFiles made consistent), None if under 2 files.
+    Files without scopes, eg a rank with only phlop::mpi::sync_clock(), are
+    skipped and named"""
     files = sorted(glob.glob(scope_timer_file_glob))
+    stfs = [file_parser(f) for f in files]
+    if empty := [f for f, stf in zip(files, stfs) if not stf.roots]:
+        printer(f"{len(empty)} files without scopes skipped: {', '.join(empty)}")
+        kept = [(f, stf) for f, stf in zip(files, stfs) if stf.roots]
+        files, stfs = [f for f, _ in kept], [stf for _, stf in kept]
     if len(files) < 2:
         if files:
-            printer(f"1 file matches {scope_timer_file_glob}, need 2 or more")
+            printer(
+                f"1 file with scopes matches {scope_timer_file_glob}, need 2 or more"
+            )
         return None
-    return files, make_consistent([file_parser(f) for f in files])
+    return files, make_consistent(stfs)
 
 
 def _aligned_scopes(stfs, root_id=None, dedupe=True):

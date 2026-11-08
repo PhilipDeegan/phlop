@@ -329,10 +329,13 @@ namespace detail
             pt->traces.clear();
         }
 
-        if (all_traces.size())
+        // no scopes but clock syncs: still written, so a rank without scopes is
+        //  in the file set, and reported as such, rather than silently missing
+        auto clock_headers = man.clock_headers();
+        if (all_traces.size() || clock_headers.size())
         {
             auto file_headers = perf::Config::INSTANCE().file_headers();
-            for (auto& line : man.clock_headers())
+            for (auto& line : clock_headers)
                 file_headers.emplace_back(std::move(line));
             phlop::BinaryTimerFile{all_traces}.write(man.timer_file, man._force_strings,
                                                      man._headers, file_headers);
