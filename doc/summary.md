@@ -172,7 +172,9 @@ shared helpers for each file.
   tree. Pick one variant per binary: `scope_timer.hpp` (single thread),
   `threaded_scope_timer.hpp` (per-thread storage, merged at shutdown) or
   `mpi_scope_timer.hpp` (MPI_Wtime clock, per-rank file names).
-- `phlop::mpi::sync_clock()`: collective, a barrier then `Clock::now()`,
+- `phlop::mpi::sync_clock()`: collective over `MPI_COMM_WORLD` only (files
+  don't record a communicator, so sub-communicator syncs couldn't be told
+  apart), a barrier then `Clock::now()`,
   kept as a `#clock sync=<t>,... global=<0|1>` header line (global is
   `MPI_WTIME_IS_GLOBAL`). Call once after `MPI_Init` and once before
   `MPI_Finalize`. `MPI_Wtime` may have a per process origin (OpenMPI's

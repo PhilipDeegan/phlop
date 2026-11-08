@@ -59,16 +59,18 @@ struct Clock
     static std::uint64_t now() { return static_cast<std::uint64_t>(MPI_Wtime() * 1e9); }
 };
 
-// Collective over comm: a barrier, then this rank's clock, kept as a reference point
-//  written into the timer file ("#clock sync=..."). MPI_Wtime may have a per process
-//  origin and node clocks drift, so starts compare across ranks only once aligned:
-//  print_variance_across subtracts each rank's first sync, and with two or more
-//  (call once after MPI_Init and once before shutdown) scales out the drift too.
-//  Barrier exit skew is ~log2(ranks) latencies. Raw timestamps are unchanged.
-//  Also records MPI_WTIME_IS_GLOBAL. Call before MPI_Finalize, on every rank of comm
-inline void sync_clock(MPI_Comm const comm = MPI_COMM_WORLD)
+// Collective over MPI_COMM_WORLD: a barrier, then this rank's clock, kept as a
+//  reference point written into the timer file ("#clock sync=..."). MPI_Wtime may
+//  have a per process origin and node clocks drift, so starts compare across ranks
+//  only once aligned: print_variance_across subtracts each rank's first sync, and
+//  with two or more (call once after MPI_Init and once before shutdown) scales out
+//  the drift too. Barrier exit skew is ~log2(ranks) latencies. Raw timestamps are
+//  unchanged. Also records MPI_WTIME_IS_GLOBAL. Call before MPI_Finalize, on every
+//  rank. World only: the files don't say which communicator a sync was over, so
+//  syncs on disjoint sub-communicators would be aligned as if they were one barrier
+inline void sync_clock()
 {
-    MPI_Barrier(comm);
+    MPI_Barrier(MPI_COMM_WORLD);
     auto const t = Clock::now();
 
     int global = -1;
