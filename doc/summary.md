@@ -211,9 +211,10 @@ shared helpers for each file.
 - `print_scope_timings(path)` prints one file with % of root and "loss" (time
   not covered by children). `print_variance_across(glob)` compares many
   files, e.g. MPI ranks, and is the only function that globs.
-- `align_clocks(stfs)`, used by `print_variance_across` only when every file
-  has `#clock` syncs, the same number in each (else the points differ): starts
-  become time since the sync. Each file uses its
+- `align_clocks(stfs)`, used by `print_variance_across` when files have
+  `#clock` syncs: starts become time since the sync. All or nothing: files
+  with and without syncs, or with different counts, raise (sync_clock() is
+  collective, so they aren't one run). Each file uses its
   own first sync as the origin. With two or more syncs its rate is scaled to
   the median sync span (two point drift correction, 10ppm over 1h is
   ~36ms). With a global clock everywhere there is one common origin and no

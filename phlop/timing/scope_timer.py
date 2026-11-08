@@ -658,19 +658,22 @@ def _aligned_scopes(stfs, root_id=None, dedupe=True):
 def align_clocks(stfs):
     """Rewrites every start as time since the files' common clock sync point,
     from their "#clock sync=" values, phlop::mpi::sync_clock(). Returns False,
-    changing nothing, unless every file has them, and the same number of them:
-    sync_clock() is collective, so differing counts mean the points don't
-    correspond, eg syncs over different communicators.
+    changing nothing, if no file has any. All or nothing: sync_clock() is
+    collective, so files with and without syncs, or with different numbers of
+    them, aren't one consistent run and raise RuntimeError.
 
     A global clock (MPI_WTIME_IS_GLOBAL in every file) is shifted by one common
     origin, the earliest first sync. Otherwise each file's first sync is its
     own origin, and with two or more syncs its clock rate is scaled to the
     median sync span: a two point drift correction. Durations are unchanged,
     drift is ppm"""
-    if not stfs or not all(stf.clock_syncs for stf in stfs):
+    counts = [len(stf.clock_syncs) for stf in stfs]
+    if not any(counts):
         return False
-    if len({len(stf.clock_syncs) for stf in stfs}) > 1:
-        return False
+    if len(set(counts)) > 1:
+        raise RuntimeError(
+            f"Incompatible scope timer files, clock sync counts differ: {counts}"
+        )
     spans = [stf.clock_syncs[-1] - stf.clock_syncs[0] for stf in stfs]
     common = all(stf.clock_global for stf in stfs)
     origin = min(stf.clock_syncs[0] for stf in stfs)

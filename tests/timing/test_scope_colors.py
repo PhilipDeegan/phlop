@@ -96,19 +96,21 @@ class VarianceTest(unittest.TestCase):
         self.assertIn("starts from the clock sync", lines[0])
         self.assertIn("spread 2.000ms", self.line(lines, "leaf"))
 
-    def test_clock_sync_only_if_every_file_has_one(self):
-        a = "#clock sync=100\n" + scope_file(10**9, 10**6, 200)
-        lines = self.variance(a, scope_file(10**9, 10**6, 10**12))
-        self.assertIn("starts from each file's first scope", lines[0])
-        self.assertIn("start +0.000ms spread 0.000ms", self.line(lines, "leaf"))
+    def test_clock_sync_all_or_nothing(self):
+        # some files with syncs, some without, or different counts: not one run
+        synced = "#clock sync=100,1000000100\n" + scope_file(10**9, 10**6, 200)
+        for other in ("", "#clock sync=10000\n"):
+            with (
+                self.subTest(other=other),
+                self.assertRaisesRegex(RuntimeError, "clock sync counts"),
+            ):
+                self.variance(synced, other + scope_file(10**9, 10**6, 10**12))
 
-    def test_clock_sync_counts_must_match(self):
-        # 2 syncs vs 1: not the same points, starts stay per file
-        a = "#clock sync=100,1000000100\n" + scope_file(10**9, 10**6, 200)
-        b = "#clock sync=10000\n" + scope_file(10**9, 10**6, 10**12)
-        lines = self.variance(a, b)
+    def test_no_clock_syncs_starts_per_file(self):
+        lines = self.variance(
+            scope_file(10**9, 10**6, 5), scope_file(10**9, 10**6, 10**12)
+        )
         self.assertIn("starts from each file's first scope", lines[0])
-        self.assertIn("start +0.000ms spread 0.000ms", self.line(lines, "leaf"))
 
     def test_clock_drift_two_point(self):
         # rank 1's clock runs 10ppm fast: its span between syncs is longer
