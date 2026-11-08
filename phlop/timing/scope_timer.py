@@ -658,7 +658,9 @@ def _aligned_scopes(stfs, root_id=None, dedupe=True):
 def align_clocks(stfs):
     """Rewrites every start as time since the files' common clock sync point,
     from their "#clock sync=" values, phlop::mpi::sync_clock(). Returns False,
-    changing nothing, unless every file has one.
+    changing nothing, unless every file has them, and the same number of them:
+    sync_clock() is collective, so differing counts mean the points don't
+    correspond, eg syncs over different communicators.
 
     A global clock (MPI_WTIME_IS_GLOBAL in every file) is shifted by one common
     origin, the earliest first sync. Otherwise each file's first sync is its
@@ -666,6 +668,8 @@ def align_clocks(stfs):
     median sync span: a two point drift correction. Durations are unchanged,
     drift is ppm"""
     if not stfs or not all(stf.clock_syncs for stf in stfs):
+        return False
+    if len({len(stf.clock_syncs) for stf in stfs}) > 1:
         return False
     spans = [stf.clock_syncs[-1] - stf.clock_syncs[0] for stf in stfs]
     common = all(stf.clock_global for stf in stfs)

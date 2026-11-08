@@ -102,6 +102,14 @@ class VarianceTest(unittest.TestCase):
         self.assertIn("starts from each file's first scope", lines[0])
         self.assertIn("start +0.000ms spread 0.000ms", self.line(lines, "leaf"))
 
+    def test_clock_sync_counts_must_match(self):
+        # 2 syncs vs 1: not the same points, starts stay per file
+        a = "#clock sync=100,1000000100\n" + scope_file(10**9, 10**6, 200)
+        b = "#clock sync=10000\n" + scope_file(10**9, 10**6, 10**12)
+        lines = self.variance(a, b)
+        self.assertIn("starts from each file's first scope", lines[0])
+        self.assertIn("start +0.000ms spread 0.000ms", self.line(lines, "leaf"))
+
     def test_clock_drift_two_point(self):
         # rank 1's clock runs 10ppm fast: its span between syncs is longer
         a = lines_parser(
