@@ -1,0 +1,52 @@
+name: MPI on linux
+
+# mpi_scope_timer.hpp with OpenMPI and MPICH: per rank timer files, the
+# phlop::mpi::sync_clock() "#clock" header, and variance across ranks aligned
+# on it. The implementations differ in MPI_Wtime's origin and
+# MPI_WTIME_IS_GLOBAL, printed by the "Clock headers" step
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  mpi:
+    name: ${{ matrix.mpi }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { mpi: openmpi, packages: openmpi-bin libopenmpi-dev }
+        - { mpi: mpich, packages: mpich libmpich-dev }
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.13'
+
+    - name: Install ${{ matrix.mpi }}
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -yq ${{ matrix.packages }}
+        mpicxx --version | head -1
+        mpirun --version | head -2
+
+    - run: python3 -m pip install -r requirements.txt
+
+    - name: Scope timers across ranks
+      env:
+        PHLOP_MPI_RANKS: 4
+      run: ./sh/test_mpi.sh
+
+    - name: Clock headers
+      if: ${{ !cancelled() }}
+      run: grep -H "^#clock" bin/phlop_scope_timers.*.bin || true

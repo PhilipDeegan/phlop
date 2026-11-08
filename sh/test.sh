@@ -28,18 +28,7 @@ mkn_test threaded_scope_timer
 py tests/timing/test_scope_timer.py test_threaded_scope_timer -f "bin/threaded_scope_timer.txt"
 PHLOP_SCOPE_MEM=0 mkn test -p threaded_scope_timer
 PHLOP_SCOPE_MEM=0 py tests/timing/test_scope_timer.py test_threaded_scope_timer -f "bin/threaded_scope_timer.txt"
-if command -v mpicxx >/dev/null && command -v mpirun >/dev/null; then # not in CI
-    mpicxx -std=c++20 -O2 -Iinc tests/timing/test_mpi_scope_timer.cpp \
-        src/phlop/timing/common_threaded_timer.cpp -o bin/mpi_scope_timer_test
-    rm -f bin/phlop_scope_timers.*.bin
-    OMPI_MCA_rmaps_base_oversubscribe=1 mpirun -n 2 bin/mpi_scope_timer_test
-    [ "$(ls bin/phlop_scope_timers.*.bin | wc -l)" = 2 ]
-    for f in bin/phlop_scope_timers.*.bin; do
-        py tests/timing/test_scope_timer.py test_threaded_scope_timer -f "$f"
-    done
-else
-    echo "mpicxx/mpirun not found, mpi scope timer skipped"
-fi
+./sh/test_mpi.sh # skipped without mpicxx/mpirun
 ./sh/test_shared_libs.sh
 ./sh/test_nvtx.sh # skipped without nsys and the nvtx3 headers
 mkn_test scope

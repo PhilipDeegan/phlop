@@ -78,6 +78,7 @@ int main(int argc, char** argv)
     MPI_Init(&argc, &argv);
 
     phlop::scope_timer().file_name("bin/" + phlop::mpi::scope_timer_file_namer()).memory().init();
+    phlop::mpi::sync_clock(); // reference points for cross rank starts, see sh/test.sh
 
     std::thread{[&]() {
         for (std::size_t i = 0; i < 2; ++i)
@@ -97,5 +98,6 @@ int main(int argc, char** argv)
 
     std::thread{[&]() { fn3(); }}.join(); // mem scope off the main thread
 
+    phlop::mpi::sync_clock(); // collective, so before MPI_Finalize: drift correction
     MPI_Finalize();
 }

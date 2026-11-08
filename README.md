@@ -114,6 +114,16 @@ PHLOP_SCOPE("io");                      // PHLOP_SCOPE_DEFAULT, time
 PHLOP_SCOPE("h5_write", time, io);
 ```
 
+```cpp
+// mpi_scope_timer.hpp: MPI_Wtime may differ per rank, a barrier gives a common point
+MPI_Init(&argc, &argv);
+phlop::mpi::sync_clock();  // collective, after MPI_Init
+// ... run ...
+phlop::mpi::sync_clock();  // before MPI_Finalize: corrects drift between the two
+// variance across ranks then compares starts from the sync, not each rank's first scope:
+// python3 -m phlop.timing.scope_timer variance 'phlop_scope_timers.*.bin'
+```
+
 ```shell
 # -DPHLOP_NVTX: every PHLOP_SCOPE / PHLOP_SCOPE_TIMER is also an NVTX range in domain
 #  "phlop", so scopes show on the Nsight Systems timeline next to their kernels

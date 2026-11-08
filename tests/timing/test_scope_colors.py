@@ -8,6 +8,7 @@ from pathlib import Path
 
 from phlop.timing import severity
 from phlop.timing.scope_timer import (
+    align_clocks,
     dedupe_leafs,
     lines_parser,
     print_scope_perf,
@@ -84,6 +85,78 @@ class VarianceTest(unittest.TestCase):
         )
         # absolute starts would spread ~1e12ns
         self.assertIn("start +0.000ms spread 0.000ms", self.line(lines, "leaf"))
+
+    def test_clock_sync_aligns_starts(self):
+        # rank 1's clock is 1e12 ahead and starts 2ms later after the barrier:
+        #  per file origins hide it, the sync shows it
+        a = "#clock sync=100,1000000100 global=0\n" + scope_file(10**9, 10**6, 200)
+        b = "#clock sync=1000000000100,1001000000100 global=0\n"
+        b += scope_file(10**9, 10**6, 10**12 + 2_000_200)
+        lines = self.variance(a, b)
+        self.assertIn("starts from the clock sync", lines[0])
+        self.assertIn("spread 2.000ms", self.line(lines, "leaf"))
+
+    def test_clock_sync_all_or_nothing(self):
+        # some files with syncs, some without, or different counts: not one run
+        synced = "#clock sync=100,1000000100\n" + scope_file(10**9, 10**6, 200)
+        for other in ("", "#clock sync=10000\n"):
+            with (
+                self.subTest(other=other),
+                self.assertRaisesRegex(RuntimeError, "clock sync counts"),
+            ):
+                self.variance(synced, other + scope_file(10**9, 10**6, 10**12))
+
+    def test_files_without_scopes_skipped(self):
+        # a rank with syncs but no scopes: named, the others still compared
+        sync = "#clock sync=100,1000000100\n"
+        empty = sync + "\n"
+        lines = self.variance(
+            sync + scope_file(10**9, 10**6, 200),
+            empty,
+            sync + scope_file(10**9, 10**6, 200),
+        )
+        self.assertIn("1 files without scopes skipped:", lines[0])
+        self.assertIn("t.1.txt", lines[0])
+        self.assertIn("2 files, spread", lines[1])
+        self.assertIn("starts from the clock sync", lines[1])
+        only_empty = self.variance(empty, empty)
+        self.assertIn("2 files without scopes skipped", only_empty[0])
+        self.assertEqual(len(only_empty), 1)
+
+    def test_no_clock_syncs_starts_per_file(self):
+        lines = self.variance(
+            scope_file(10**9, 10**6, 5), scope_file(10**9, 10**6, 10**12)
+        )
+        self.assertIn("starts from each file's first scope", lines[0])
+
+    def test_clock_drift_two_point(self):
+        # rank 1's clock runs 10ppm fast: its span between syncs is longer
+        a = lines_parser(
+            ("#clock sync=0,1000000000\n" + scope_file(10, 1, 500_000_000)).split("\n")
+        )
+        b = lines_parser(
+            ("#clock sync=7,1000020007\n" + scope_file(10, 1, 500_010_007)).split("\n")
+        )
+        c = lines_parser(
+            ("#clock sync=0,1000010000\n" + scope_file(10, 1, 500_005_000)).split("\n")
+        )
+        self.assertEqual(b.clock_syncs, [7, 1000020007])
+        self.assertFalse(b.clock_global)
+        self.assertTrue(align_clocks([a, b, c]))
+        # median span 1000010000: every root lands on the same instant
+        starts = {f.roots[0].s for f in (a, b, c)}
+        self.assertEqual(starts, {500_005_000})
+
+    def test_clock_global_common_origin(self):
+        # MPI_WTIME_IS_GLOBAL: one origin, the 2ms between syncs is barrier skew
+        a = lines_parser(
+            ("#clock sync=1000 global=1\n" + scope_file(10, 1, 5000)).split("\n")
+        )
+        b = lines_parser(
+            ("#clock sync=3000 global=1\n" + scope_file(10, 1, 5000)).split("\n")
+        )
+        self.assertTrue(align_clocks([a, b]))
+        self.assertEqual([a.roots[0].s, b.roots[0].s], [4000, 4000])
 
     def test_short_scopes_not_colored(self):
         lines = self.variance(scope_file(10**9, 100), scope_file(10**9, 900))
