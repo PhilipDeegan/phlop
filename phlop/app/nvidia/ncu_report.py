@@ -147,6 +147,7 @@ def _row(k):
 def _name(k):
     s = _short(k.name, 50)
     s += f" x{k.launches}" if k.launches > 1 else ""
+    s += f" smem {k.shared}B" if k.shared_split and k.shared is not None else ""
     return s + (f" [{k.nvtx}]" if k.nvtx else "")
 
 
@@ -251,7 +252,7 @@ def compare(a, b, names=("A", "B"), top=10):
 # ------------------------------------------------------------------- markdown
 
 
-def markdown(reports, top=10, compare_to=None, names=("A", "B")):
+def markdown(reports, top=10, compare_to=None, names=("A", "B"), all=False):
     if compare_to is not None:
         return "```\n" + compare(reports, compare_to, names, top) + "\n```"
     reports = ncu.by_rank(reports)
@@ -259,11 +260,17 @@ def markdown(reports, top=10, compare_to=None, names=("A", "B")):
     if len(reports) > 1:
         out += [f"### ncu: {len(reports)} processes", "", "```"]
         out += [s[2:] for s in ranks_lines(reports, top)] + ["```", ""]
-        reports = [_worst(reports)]
-    r = reports[0]
-    out += [f"### ncu {label(r)}: {headline(r)}", ""]
+        if not all:
+            reports = [_worst(reports)]
+    for r in reports:
+        out += _md_detail(r, top)
+    return "\n".join(out).rstrip()
+
+
+def _md_detail(r, top):
+    out = [f"### ncu {label(r)}: {headline(r)}", ""]
     if not r.kernels:
-        return "\n".join(out).rstrip()
+        return out
     out += _md_table(
         (*COLUMNS, "kernel [NVTX]"),
         [(*_row(k), f"`{_name(k)}`") for k in r.kernels[:top]],
@@ -286,5 +293,5 @@ def markdown(reports, top=10, compare_to=None, names=("A", "B")):
         "",
     ]
     if h := hints(r, top):
-        out += ["**hints**", ""] + [f"- {s}" for s in h]
-    return "\n".join(out).rstrip()
+        out += ["**hints**", ""] + [f"- {s}" for s in h] + [""]
+    return out

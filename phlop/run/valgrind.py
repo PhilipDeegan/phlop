@@ -85,8 +85,9 @@ def run(cli_args):
     if cli_args.show is not None:
         specs = cli_args.show or [None]
         files = [f for s in specs for f in vg.resolve(s, cli_args.outdir)]
-        outputs(cli_args, [vg.load(f) for f in files])
-        return 0
+        res = [vg.load(f) for f in files]
+        outputs(cli_args, res)
+        return 1 if any(not getattr(r, "complete", True) for r in res) else 0
 
     if not cli_args.remaining:
         raise ValueError("nothing to run")
@@ -102,10 +103,14 @@ def report_run(cli_args, run_id, rc):
     files = (
         vg.resolve(run_id, cli_args.outdir) if _has_results(cli_args, run_id) else []
     )
-    print(f"\n== phlop valgrind {cli_args.tool}, exit code {rc} ==")
+    status = sys.stderr if cli_args.md == "-" else sys.stdout  # stdout: markdown only
+    print(f"\n== phlop valgrind {cli_args.tool}, exit code {rc} ==", file=status)
     if files:
         outputs(cli_args, [vg.load(f) for f in files])
-    print(f"files: {cli_args.outdir}/{cli_args.tool}.{run_id}.*  (--show {run_id})")
+    print(
+        f"files: {cli_args.outdir}/{cli_args.tool}.{run_id}.*  (--show {run_id})",
+        file=status,
+    )
 
 
 def _has_results(cli_args, run_id):

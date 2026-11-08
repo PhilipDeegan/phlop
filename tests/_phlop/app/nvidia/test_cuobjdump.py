@@ -102,7 +102,9 @@ class RealBinaryTest(unittest.TestCase):
                 f.write(SOURCE)
             subprocess.run(["nvcc", "-o", exe, src], check=True)
             ks = cu.kernels(exe)
-            self.assertIn("light(float*)", {k.name for k in ks})
+            demangled = shutil.which("llvm-cxxfilt") or shutil.which("c++filt")
+            light = "light(float*)" if demangled else "_Z5lightPf"  # else mangled
+            self.assertIn(light, {k.name for k in ks})
             self.assertTrue(all(k.reg > 0 for k in ks))
             res = subprocess.run(
                 [sys.executable, "-m", "phlop.app.nvidia.cuobjdump", sys.executable],

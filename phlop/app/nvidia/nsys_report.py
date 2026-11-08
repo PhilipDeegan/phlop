@@ -102,7 +102,9 @@ def straggler(profiles):
         return None, 1.0
     med = statistics.median(p.compute for p in profiles)
     slow = max(profiles, key=lambda p: p.compute)
-    ratio = slow.compute / med if med else 1.0
+    if not med:  # ratio undefined: any compute at all is a straggler
+        return (slow, float("inf")) if slow.compute else (None, 1.0)
+    ratio = slow.compute / med
     return (slow if ratio > STRAGGLER else None), ratio
 
 
@@ -115,7 +117,7 @@ def headline(p):
     s = f"GPU busy {_pct(p.busy, p.span)} of {fmt_ns(p.span)}"
     if p.kernels:
         k = p.kernels[0]
-        s += f", top kernel {_short(k.name, 40)} {_pct(k.total, p.busy)}"
+        s += f", top kernel {_short(k.name, 40)} {_pct(k.busy, p.busy)}"
     if p.wait:
         s += f", comm {fmt_ns(p.wait)}"
     return s
@@ -141,7 +143,7 @@ def detail(p, top=10):
         for k in p.kernels[:top]:
             lines += [
                 (
-                    f"    {fmt_ns(k.total):>8} {_pct(k.total, p.busy):>6} {k.count:>7}"
+                    f"    {fmt_ns(k.total):>8} {_pct(k.busy, p.busy):>6} {k.count:>7}"
                     f" {fmt_ns(k.avg):>8} {fmt_ns(k.max):>8}  {_short(k.name)}"
                     f"  [grid {_dims(k.grid)} block {_dims(k.block)} regs {k.regs}]"
                 )
@@ -208,9 +210,10 @@ def balance(profiles):
     wait = statistics.mean(p.wait for p in others)
     fastest = min(p.compute for p in profiles)
     vs_fast = f", {slow.compute / fastest:.2f}x the fastest" if fastest else ""
+    times = f"{ratio:.2f}x" if ratio != float("inf") else "?x (median 0)"
     return [
         (
-            f"  straggler: {label(slow)}, kernels {ratio:.2f}x the median rank's{vs_fast};"
+            f"  straggler: {label(slow)}, kernels {times} the median rank's{vs_fast};"
             f" the others average {fmt_ns(wait)} in MPI/NCCL vs its {fmt_ns(slow.wait)}"
         )
     ]
@@ -284,7 +287,7 @@ def _md_label(s):  # mermaid labels: no quotes or angle brackets
     return "".join(c for c in s if c not in "\"'<>`")
 
 
-def markdown(profiles, top=10, compare_to=None, names=("A", "B")):
+def markdown(profiles, top=10, compare_to=None, names=("A", "B"), all=False):
     if compare_to is not None:
         return "```\n" + compare(profiles, compare_to, names, top) + "\n```"
     profiles = nsys.by_rank(profiles)
@@ -312,15 +315,21 @@ def markdown(profiles, top=10, compare_to=None, names=("A", "B")):
             "```",
             "",
         ]
-        slow, _ = straggler(profiles)
-        profiles = [slow or max(profiles, key=lambda p: p.duration)]
-    p = profiles[0]
-    out += [f"### nsys {label(p)}: {headline(p)}", ""]
+        if not all:
+            slow, _ = straggler(profiles)
+            profiles = [slow or max(profiles, key=lambda p: p.duration)]
+    for p in profiles:
+        out += _md_detail(p, top)
+    return "\n".join(out).rstrip()
+
+
+def _md_detail(p, top):
+    out = [f"### nsys {label(p)}: {headline(p)}", ""]
     if p.kernels:
         out += _md_table(
             ("time", "% busy", "count", "avg", "kernel"),
             [
-                (fmt_ns(k.total), _pct(k.total, p.busy), k.count, fmt_ns(k.avg),
+                (fmt_ns(k.total), _pct(k.busy, p.busy), k.count, fmt_ns(k.avg),
                  f"`{_short(k.name)}`")
                 for k in p.kernels[:top]
             ],
@@ -342,5 +351,5 @@ def markdown(profiles, top=10, compare_to=None, names=("A", "B")):
             ],
         ) + [""]
     if h := hints(p):
-        out += ["**hints**", ""] + [f"- {s}" for s in h]
-    return "\n".join(out).rstrip()
+        out += ["**hints**", ""] + [f"- {s}" for s in h] + [""]
+    return out

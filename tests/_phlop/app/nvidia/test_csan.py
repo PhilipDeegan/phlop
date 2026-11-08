@@ -164,8 +164,8 @@ class RanksHandshakeTest(unittest.TestCase):
                     str(r),
                     3,
                     rc,
-                    lambda: reported.append(len(out)),
-                    timeout=30,
+                    lambda worst: reported.append((len(out), worst)),
+                    wait=30,
                 )
 
             threads = [
@@ -177,7 +177,7 @@ class RanksHandshakeTest(unittest.TestCase):
             for t in threads:
                 t.join(60)
             self.assertEqual(out, {0: 99, 1: 99, 2: 0})  # rank 0: the worst
-            self.assertEqual(reported, [0])  # once, before any rank exited
+            self.assertEqual(reported, [(0, 99)])  # once, before any exited, worst
         finally:
             shutil.rmtree(tmp)
 
@@ -195,6 +195,8 @@ class RanksHandshakeTest(unittest.TestCase):
 
 def _gpu():
     if not (shutil.which("nvcc") and shutil.which("compute-sanitizer")):
+        return False
+    if not shutil.which("nvidia-smi"):
         return False
     return (
         subprocess.run(

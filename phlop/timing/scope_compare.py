@@ -44,6 +44,7 @@
 
 from __future__ import annotations
 
+import math
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -76,7 +77,9 @@ class Change:
 
     @property
     def pct(self):
-        return (self.new - self.base) / self.base * 100.0 if self.base else 0.0
+        if self.base:
+            return (self.new - self.base) / self.base * 100.0
+        return math.copysign(math.inf, self.new) if self.new else 0.0  # from zero
 
     @property
     def noise(self):
@@ -104,6 +107,7 @@ class Comparison:
     warnings: list
     runs: tuple = (1, 1)  # runs per side
     ranks: int = 1  # files per run, the same for every run
+    unchecked: list = field(default_factory=list)  # gated names in no compared scope
 
     @property
     def regressions(self):
@@ -173,7 +177,7 @@ def merge_ranks(run, own, warnings):
     """{path: ScopeValues} of one run, a value per name: calls and counts
     summed over ranks, time and memory the worst rank's. Memory is never own,
     a peak is a level, not a sum over children"""
-    merged = {}
+    merged, partial = {}, set()
     for stf in run:
         for path, (g, t) in flatten(group_scopes(stf, stf.roots, own), own).items():
             sv = merged.setdefault(path, ScopeValues(0, g.level, False, {"time": 0}))
@@ -183,6 +187,12 @@ def merge_ranks(run, own, warnings):
                 sv.values[name] = max(sv.values.get(name, value), value)
             if not g.counts:
                 continue
+            if g.n_counted != g.n:  # a read failed, the sum is partial
+                warnings.append(
+                    f"{'/'.join(path)}: {g.n_counted}/{g.n} calls counted, counts skipped"
+                )
+                partial.add(path)
+                continue
             if sv.counted and g.level != sv.level:
                 warnings.append(
                     f"{'/'.join(path)}: perf level {sv.level} vs {g.level} across ranks"
@@ -191,6 +201,10 @@ def merge_ranks(run, own, warnings):
             sv.level, sv.counted = g.level, True
             for name, value in g.counts.items():
                 sv.values[name] = sv.values.get(name, 0) + value
+    for path in partial:  # other ranks' counts alone would be partial too
+        sv = merged[path]
+        sv.counted = False
+        sv.values = {k: v for k, v in sv.values.items() if k in ("time", *MEM_VALUES)}
     return merged
 
 
@@ -254,7 +268,7 @@ def compare(
     a = merge_runs(base_runs, own, "base", warnings)
     b = merge_runs(new_runs, own, "new", warnings)
 
-    changes, calls_changed = [], []
+    changes, calls_changed, seen = [], [], set()
     for path in (p for p in a if p in b):
         sa, sb = a[path], b[path]
         if sa.n != sb.n:
@@ -268,6 +282,7 @@ def compare(
         for name in values_a:
             if name not in values_b:
                 continue
+            seen.add(name)  # present on both sides, even if under min_count
             if name not in thresholds and not all_events:
                 continue
             va, noise_a = merged_value(name, values_a[name])
@@ -287,6 +302,9 @@ def compare(
                 )
             changes.append(change)
 
+    unchecked = [name for name in thresholds if name not in seen]
+    for name in unchecked:
+        warnings.append(f"{name} gated but in no scope of both sides, not checked")
     return Comparison(
         changes,
         [p for p in a if p not in b],
@@ -295,6 +313,7 @@ def compare(
         warnings,
         (len(base_runs), len(new_runs)),
         ranks.pop(),
+        unchecked,
     )
 
 
@@ -393,6 +412,8 @@ def parse_thresholds(items):
         if not name or not eq:
             raise ValueError(f"threshold not name=percent: {item!r}")
         thresholds[name] = float(pct)
+        if not math.isfinite(thresholds[name]):
+            raise ValueError(f"threshold not finite: {item!r}")
     return thresholds
 
 
@@ -459,6 +480,9 @@ def main(argv=None):
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
     report(comparison, top=cli_args.top)
+    if comparison.unchecked and cli_args.threshold:  # explicitly asked for
+        print(f"ERROR: not checked: {', '.join(comparison.unchecked)}", file=sys.stderr)
+        return 2
     return 1 if comparison.regressions else 0
 
 

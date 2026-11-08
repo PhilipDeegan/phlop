@@ -15,7 +15,9 @@
 // peak_in is that scope's own spike above its entry rss, see mem_begin.
 // io adds the calling thread's I/O over the scope, /proc/thread-self/io (linux),
 // when ScopeTimerMan::io() or PHLOP_SCOPE_IO=1: bytes and calls through read/
-// write like syscalls, bytes to/from the block layer, see phlop/os/io.hpp
+// write like syscalls, bytes to/from the block layer, see phlop/os/io.hpp.
+// The scope's own samples and counter reads are excluded, those of mem or io
+// scopes nested in it are not: a few /proc reads each, small next to real I/O
 
 #include "phlop/timing/common_timer.hpp"
 #include "phlop/timing/perf_counters.hpp"

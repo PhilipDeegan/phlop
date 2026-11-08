@@ -16,7 +16,7 @@ import shlex
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from phlop.app.valgrind import new_run_id
@@ -99,6 +99,7 @@ class Issue:
     bytes: int = 0  # leaks
     example: str = ""  # a thread that hit it
     ranks: set = field(default_factory=set)
+    severe: bool = False  # a note at error level, see issue()
 
     def key(self):
         return (self.kind, self.what, self.where, self.other, self.caller)
@@ -174,6 +175,11 @@ def _what(rec, kind):
 def issue(rec):
     kind = _KIND.get(rec.findtext("kind"), "error")
     i = Issue(kind, _what(rec, kind), count=1, example=_who(rec))
+    # a Sanitizer record at error level: a failure of its own, or after others
+    i.severe = kind == "note" and (rec.findtext("level") or "").lower() in (
+        "error",
+        "fatal",
+    )
     if kind == "race":
         i.where = _frame(rec.find("what/source/where"))
         i.other = _frame(rec.find("what/destination/where"))
@@ -193,8 +199,8 @@ def group(issues):
     out = {}
     for i in issues:
         g = out.get(i.key())
-        if g is None:
-            out[i.key()] = i
+        if g is None:  # a copy: the input issues may be grouped again
+            out[i.key()] = replace(i, ranks=set(i.ranks))
             continue
         g.count += i.count
         g.bytes += i.bytes
@@ -266,6 +272,8 @@ def resolve(spec=None, outdir=OUTDIR):
     elif os.path.isdir(spec):
         files = _latest(spec)
     elif os.path.isfile(spec):
+        if not is_result(spec):
+            raise ValueError(f"{spec}: not a compute-sanitizer xml result")
         files = [spec]
     elif glob.has_magic(spec):
         files = sorted(f for f in glob.glob(spec) if is_result(f))

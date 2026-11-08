@@ -50,7 +50,12 @@ class RunTimerNode:
         for token in extra:
             tag, _, values = token.partition(":")
             if tag == "io":  # "io:<rchar>,<wchar>,...", IO_FIELDS order
-                node.io = dict(zip(IO_FIELDS, (int(v) for v in values.split(","))))
+                io = [int(v) for v in values.split(",")]
+                if len(io) != len(IO_FIELDS):
+                    raise ValueError(
+                        f"io token has {len(io)} values, not {len(IO_FIELDS)}"
+                    )
+                node.io = dict(zip(IO_FIELDS, io))
             elif tag == "m":  # "m:<rss_in>,<rss_out>,<peak_in>,<peak_out>"
                 rss_in, rss_out, peak_in, peak_out = (int(v) for v in values.split(","))
                 node.r, node.dr = rss_in, rss_out - rss_in
@@ -583,34 +588,31 @@ def write_variance_across(scope_timer_file_glob, outfile):
         print_variance_across(scope_timer_file_glob)
 
 
-def are_consistent_trees(nodes):
-    ref_node = nodes[0]
-    for i in range(1, len(nodes)):
-        cmp_node = nodes[i]
-        if len(ref_node.c) != len(cmp_node.c):
-            return 0
-        for j in range(len(ref_node.c)):
-            if ref_node.c[j].k != cmp_node.c[j].k:
-                return 0
-    return 1  # are consistent
+def are_consistent_trees(stfs, nodes):
+    """same children names in the same order, by name: key ids are per file"""
+    ref = [stfs[0](c.k) for c in nodes[0].c]
+    return all([stf(c.k) for c in node.c] == ref for stf, node in zip(stfs, nodes))
 
 
 def make_consistent(scope_timer_files):
     def traverse(nodes):
-        if not are_consistent_trees(nodes):
+        if not are_consistent_trees(scope_timer_files, nodes):
             for node in nodes:
                 node.c = []  # drop!
         for i in range(len(nodes[0].c)):
             traverse([node.c[i] for node in nodes])
 
-    n_roots = len(scope_timer_files[0].roots)
-    for i in range(1, len(scope_timer_files)):
-        if n_roots != len(scope_timer_files[i].roots):
+    ref = scope_timer_files[0]
+    root_names = [ref(r.k) for r in ref.roots]
+    for stf in scope_timer_files[1:]:
+        if len(root_names) != len(stf.roots):
             raise RuntimeError(
                 "Incompatible scope timer files, different root node count"
             )
+        if [stf(r.k) for r in stf.roots] != root_names:
+            raise RuntimeError("Incompatible scope timer files, root scopes differ")
 
-    for i in range(n_roots):
+    for i in range(len(root_names)):
         traverse([stf.roots[i] for stf in scope_timer_files])
 
     return scope_timer_files
@@ -646,7 +648,12 @@ def _aligned_scopes(stfs, root_id=None, dedupe=True):
     by_index = {}  # preorder position -> row
 
     def walk(stf, n, i, depth):
-        by_index.setdefault(i[0], (n.k, depth, []))[2].append(n)
+        row = by_index.setdefault(i[0], (n.k, depth, [], stf(n.k)))
+        if row[3] != stf(n.k):
+            raise RuntimeError(
+                f"Incompatible scope timer files, {row[3]} vs {stf(n.k)}"
+            )
+        row[2].append(n)
         i[0] += 1
         if dedupe and n.c:
             n.c = dedupe_leafs(stf, n)
@@ -658,7 +665,7 @@ def _aligned_scopes(stfs, root_id=None, dedupe=True):
         for root in stf.roots:
             if not root_id or stf(root.k).startswith(root_id):
                 walk(stf, root, i, 0)
-    rows = list(by_index.values())
+    rows = [row[:3] for row in by_index.values()]
     if any(len(nodes) != len(stfs) for _, _, nodes in rows):
         raise RuntimeError("Incompatible scope timer files, scope trees differ")
     return rows
@@ -829,7 +836,7 @@ def print_mem_variance_across(
     for i in reversed(range(len(rows))):
         depth = rows[i][1]
         show[i] = has_mem[i] or any(v for d, v in below.items() if d > depth)
-        below = {d: v for d, v in below.items() if d < depth}
+        below = {d: v for d, v in below.items() if d <= depth}
         below[depth] = below.get(depth, False) or show[i]
     if not any(has_mem):
         printer('no mem scopes in these files, see PHLOP_SCOPE("key", time, mem)')

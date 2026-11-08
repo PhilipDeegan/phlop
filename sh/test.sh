@@ -5,7 +5,7 @@ CWD="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )" && cd "$CWD"/..
 set -ex
 
 py(){
-    PYTHONPATH=$PWD python3 $@
+    PYTHONPATH=$PWD python3 "$@"
 }
 
 py -Om phlop.run.test_cases -i tests -p
@@ -50,7 +50,8 @@ if command -v nsys > /dev/null && nvidia-smi -L > /dev/null 2>&1; then
     py -Om phlop.run.nsys --show --md - > /dev/null
 fi
 if command -v compute-sanitizer > /dev/null && nvidia-smi -L > /dev/null 2>&1; then
-    py -Om phlop.run.csan -q sh -c "exit 0" && exit 1 # 255: no CUDA calls, no results
+    RC=0 && py -Om phlop.run.csan -q sh -c "exit 0" || RC=$?
+    [ "$RC" -eq 255 ] || exit 1 # no CUDA calls, no results
 fi
 # no kernels, so nothing replayed: real profiles via PHLOP_NCU_TEST=1, see test_ncu.py
 if command -v ncu > /dev/null && nvidia-smi -L > /dev/null 2>&1; then

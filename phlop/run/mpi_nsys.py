@@ -19,6 +19,7 @@ def main():
     parser = rn.cli_args_parser("each MPI rank under nsys, one report")
     cli_args = parser.parse_args()
     rank, size = mpi_ranks.rank_size()
+    mpi_ranks.show_saved(cli_args, rank, rn.main)
     if rank is None:
         print(
             "phlop mpi_nsys: no MPI rank in the environment, use mpirun",
@@ -33,6 +34,7 @@ def main():
         trace += ",mpi"
 
     rid = mpi_ranks.run_id()
+    mpi_ranks.begin(cli_args.outdir, rid, rank)
     rc, _ = nsys.run(
         cli_args.remaining,
         rn.shlex.split(cli_args.extra),
@@ -42,7 +44,7 @@ def main():
         label=f"rank{rank}",
         trace=trace,
     )
-    report = lambda: rn.report_run(cli_args, rid, rc)
+    report = lambda worst: rn.report_run(cli_args, rid, worst)
     sys.exit(mpi_ranks.finish(cli_args.outdir, rid, rank, size, rc, report))
 
 

@@ -21,8 +21,8 @@
 
 #if !defined(PHLOP_SCOPE_TIMER)
 #define PHLOP_SCOPE_TIMER(key)                                                                     \
-    PHLOP_NVTX_RANGE(key)                                                                          \
     static phlop::RunTimerReport PHLOP_STR_CAT(ridx_, __LINE__){key, __FILE__, __LINE__};          \
+    PHLOP_NVTX_RANGE(PHLOP_STR_CAT(ridx_, __LINE__).k)                                             \
     phlop::ScopeTimer<> PHLOP_STR_CAT(_ScopeTimer_, __LINE__){PHLOP_STR_CAT(ridx_, __LINE__)};     \
     phlop::ScopeTimerMan::INSTANCE().report_stack_ptr = &PHLOP_STR_CAT(ridx_, __LINE__);
 #endif
@@ -30,8 +30,8 @@
 // PHLOP_SCOPE("key", time, perf_light), see scope.hpp
 #if !defined(PHLOP_SCOPE)
 #define PHLOP_SCOPE(key, ...)                                                                      \
-    PHLOP_NVTX_RANGE(key)                                                                          \
     static phlop::RunTimerReport PHLOP_STR_CAT(ridx_, __LINE__){key, __FILE__, __LINE__};          \
+    PHLOP_NVTX_RANGE(PHLOP_STR_CAT(ridx_, __LINE__).k)                                             \
     phlop::Scope<PHLOP_SCOPE_FLAGS(__VA_ARGS__)> PHLOP_STR_CAT(_Scope_, __LINE__){                 \
         PHLOP_STR_CAT(ridx_, __LINE__)};                                                           \
     phlop::ScopeTimerMan::INSTANCE().report_stack_ptr = &PHLOP_STR_CAT(ridx_, __LINE__);

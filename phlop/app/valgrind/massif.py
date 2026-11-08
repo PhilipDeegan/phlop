@@ -166,16 +166,28 @@ def sites(tree):
         walk(tree)
     out = sorted(found.values(), key=lambda s: -s.bytes)
     for s in out:  # merge callers reached through different runtime paths
-        merged = {}
-        for c in s.callers:
-            if c.frame in merged:
-                merged[c.frame].bytes += c.bytes
-            else:
-                merged[c.frame] = Node(c.bytes, c.frame, c.below, list(c.children))
-        s.callers = sorted(merged.values(), key=lambda n: -n.bytes)
+        s.callers = _merge_nodes(s.callers)
     if below.bytes:
         out.append(below)
     return out
+
+
+def _merge_nodes(nodes):
+    """nodes of the same frame as one: bytes and below summed, their caller
+    trees merged the same way, largest first"""
+    by = {}
+    for c in nodes:
+        by.setdefault(c.frame, []).append(c)
+    merged = [
+        Node(
+            sum(c.bytes for c in same),
+            frame,
+            sum(c.below for c in same),
+            _merge_nodes([g for c in same for g in c.children]),
+        )
+        for frame, same in by.items()
+    ]
+    return sorted(merged, key=lambda n: -n.bytes)
 
 
 def chain(node, depth=8):

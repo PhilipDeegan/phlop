@@ -158,7 +158,7 @@ class _Sampler:
             if not self.gpu_failed:
                 logger.warning(f"phlop stats_man: nvidia-smi failed: {e}")
             self.gpu_failed = True
-            return [smi.Sample(g.index) for g in self.gpus]
+            return [smi.Sample.failed(g.index) for g in self.gpus]
 
     def __call__(self):
         p = self.proc
@@ -198,7 +198,7 @@ def _sample_until_gone(pid, interval, on_sample, stop, gpus=()):
 def _gpu_values(samples):
     out = []
     for s in samples:
-        slow = "+".join(s.slowdowns) or "-"
+        slow = ("+".join(s.slowdowns) or "-") if s.ok else ""
         vals = (s.util, s.mem_mb, s.proc_mem_mb, s.power_w, s.sm_mhz, s.temp_c, slow)
         out += ["" if v is None else str(v) for v in vals]
     return out
@@ -390,11 +390,12 @@ def gpu_summary(by_gpu):
                 f"GPU {index}: no kernel running {100 - util:.0f}% of the time,"
                 " nsys shows where the gaps are"
             )
+        ok = [s for s in samples if s.ok]  # failed queries: unknown, not unslowed
         for reason in smi.SLOWDOWNS:
-            n = sum(reason in s.slowdowns for s in samples)
-            if 100 * n / len(samples) > SLOWDOWN_PCT:
+            n = sum(reason in s.slowdowns for s in ok)
+            if ok and 100 * n / len(ok) > SLOWDOWN_PCT:
                 lines.append(
                     f"GPU {index}: clocks slowed by {reason} in {n} of"
-                    f" {len(samples)} samples ({100 * n / len(samples):.0f}%)"
+                    f" {len(ok)} samples ({100 * n / len(ok):.0f}%)"
                 )
     return lines

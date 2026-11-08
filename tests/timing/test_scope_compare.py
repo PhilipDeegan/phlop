@@ -97,6 +97,17 @@ class ScopeCompareTest(unittest.TestCase):
         self.assertEqual(parse_thresholds(["cycles=5"]), {"cycles": 5.0})
         with self.assertRaises(ValueError):
             parse_thresholds(["cycles"])
+        with self.assertRaises(ValueError):
+            parse_thresholds(["instructions=nan"])
+
+    def test_zero_baseline_and_unchecked(self):
+        from phlop.timing.scope_compare import Change
+
+        self.assertTrue(Change((), "instructions", 0, 100_000, 1.0).regressed)
+        self.assertEqual(Change((), "instructions", 0, 0, 1.0).pct, 0.0)
+        c = compare(BASE, BASE, {"instructons": 1.0})  # misspelt
+        self.assertEqual(c.unchecked, ["instructons"])
+        self.assertTrue(any("instructons" in w for w in c.warnings))
 
     def test_main_exit_codes(self):
         import tempfile

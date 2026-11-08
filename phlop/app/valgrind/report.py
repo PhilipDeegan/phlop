@@ -71,6 +71,8 @@ def massif_headline(m):
     sites = ms.sites(tree.tree) if tree else []
     if sites and sites[0].frame:
         s += f", {_pct(sites[0].bytes, tree.heap)} from {sites[0].frame}"
+        if tree is not peak:  # massif's marked peak, below a later total
+            s += f" (sites {_when(m, tree)})"
     return s
 
 
@@ -83,7 +85,7 @@ def massif_detail(m, top=5):
     lines += ["  " + ", ".join(parts)]
     if not tree:
         return lines + ["  no detailed snapshot, nothing allocated?"]
-    if tree.kind != "peak" and tree is not peak:
+    if tree is not peak:
         lines += [f"  allocation sites from the snapshot {_when(m, tree)}"]
     lines += ["  at the peak, by allocation site (C++ runtime frames collapsed):"]
     for site in ms.sites(tree.tree)[:top] + [
@@ -186,6 +188,11 @@ def memcheck_headline(m):
         for k in LEAK_KINDS
         if m.leaked(k) and k != "Leak_StillReachable"
     ]
+    if not m.complete:
+        recovered = f"{n} error{'s' if n != 1 else ''}" + (
+            ", " + ", ".join(leaks) if leaks else ""
+        )
+        return f"incomplete, the xml was cut short: {recovered} recovered"
     if not n and not leaks:
         return "clean: no errors, no leaks"
     if not n:
@@ -322,17 +329,20 @@ def massif_markdown(results, top=5, compare=None, names=("A", "B")):
         md += ["```", ""]
 
     m = worst[0]
-    unit = TIME_UNITS.get(m.time_unit, m.time_unit)
-    t0, t1 = _start(sets), max(w.snapshots[-1].time for w in worst)
-    md += ["```mermaid", _palette(), "xychart-beta"]
-    title = "worst process" if len(results) > 1 or compare else label(m.path)
-    md += [
-        f'  title "Memory over time, {_md_label(title)}, MiB{_legend(compare, names)}"'
-    ]
-    md += [f'  x-axis "{unit}" {t0:.0f} --> {t1:.0f}', '  y-axis "MiB"']
-    for w in worst:
-        md += ["  line [" + ", ".join(_mib(v) for v in _resample(w, t0, t1)) + "]"]
-    md += ["```", ""]
+    if units := _mixed_units(sets):
+        md += [f"no memory over time chart: mixed time units {units}", ""]
+    else:
+        unit = TIME_UNITS.get(m.time_unit, m.time_unit)
+        t0, t1 = _start(sets), max(w.snapshots[-1].time for w in worst)
+        md += ["```mermaid", _palette(), "xychart-beta"]
+        title = "worst process" if len(results) > 1 or compare else label(m.path)
+        md += [
+            f'  title "Memory over time, {_md_label(title)}, MiB{_legend(compare, names)}"'
+        ]
+        md += [f'  x-axis "{unit}" {t0:.0f} --> {t1:.0f}', '  y-axis "MiB"']
+        for w in worst:
+            md += ["  line [" + ", ".join(_mib(v) for v in _resample(w, t0, t1)) + "]"]
+        md += ["```", ""]
 
     for name, w in zip(names, worst):
         tree = w.peak_tree
@@ -340,8 +350,9 @@ def massif_markdown(results, top=5, compare=None, names=("A", "B")):
             continue
         sites = ms.sites(tree.tree)
         title = f"{name}: " if compare else ""
+        at = "the peak" if tree is w.peak else f"the snapshot {_when(w, tree)}"
         md += [
-            f"{title}at the peak of {label(w.path)}, {format_bytes(tree.heap)} heap",
+            f"{title}at {at} of {label(w.path)}, {format_bytes(tree.heap)} heap",
             "",
         ]
         md += ["| bytes | % | allocation site | called from |", "|---:|---:|---|---|"]
@@ -353,10 +364,12 @@ def massif_markdown(results, top=5, compare=None, names=("A", "B")):
                 ]
                 continue
             callers = "<br>".join(
-                f"{format_bytes(n)} {c}" for n, c in _caller_lines(s, depth=2)
+                f"{format_bytes(n)} {_cell(c)}" for n, c in _caller_lines(s, depth=2)
             )
             pct = _pct(s.bytes, tree.heap)
-            md += [f"| {format_bytes(s.bytes)} | {pct} | `{s.frame}` | {callers} |"]
+            md += [
+                f"| {format_bytes(s.bytes)} | {pct} | `{_cell(s.frame)}` | {callers} |"
+            ]
         top_site = next((s for s in sites if s.frame), None)
         if top_site and top_site.callers:
             path = [top_site.frame, top_site.callers[0].frame]
@@ -380,6 +393,17 @@ def massif_markdown(results, top=5, compare=None, names=("A", "B")):
     return "\n".join(md)
 
 
+def _cell(s):
+    """a markdown table cell: a | (operator|) would split it, in code too"""
+    return str(s).replace("|", "\\|")
+
+
+def _mixed_units(sets):
+    """the time units if they differ: one time axis would mix measurements"""
+    units = sorted({m.time_unit for x in sets for m in x})
+    return ", ".join(units) if len(units) > 1 else ""
+
+
 def memcheck_markdown(results, top=10, compare=None, names=("A", "B")):
     if compare:
         return "```\n" + memcheck_compare(results, compare, *names, top) + "\n```"
@@ -391,8 +415,8 @@ def memcheck_markdown(results, top=10, compare=None, names=("A", "B")):
             md += ["| count / bytes | what | where |", "|---:|---|---|"]
             for e in errs:
                 n = format_bytes(e.bytes) if e.leak else f"{e.count}x"
-                what = LEAK_KINDS.get(e.kind, e.what)
-                md += [f"| {n} | {what} | `{_site_chain(e.stack)}` |"]
+                what = _cell(LEAK_KINDS.get(e.kind, e.what))
+                md += [f"| {n} | {what} | `{_cell(_site_chain(e.stack))}` |"]
             md += [""]
     return "\n".join(md)
 
@@ -434,6 +458,8 @@ def massif_plot(path, results, top=5, compare=None, names=("A", "B")):
         raise RuntimeError("--plot needs matplotlib: pip install matplotlib") from None
 
     sets = [results] + ([compare] if compare else [])
+    if units := _mixed_units(sets):
+        raise ValueError(f"--plot: mixed massif time units {units}, one time axis")
     fig, (ax, bx) = plt.subplots(
         1, 2, figsize=(13, 4.5), gridspec_kw={"width_ratios": [3, 2]}
     )
@@ -499,15 +525,15 @@ def massif_plot(path, results, top=5, compare=None, names=("A", "B")):
 # --------------------------------------------------------------------- entry
 
 
-def kind(results):
-    kinds = {type(r) for r in results}
+def kind(results, compare=None):
+    kinds = {type(r) for r in [*results, *(compare or [])]}
     if len(kinds) > 1:
         raise ValueError("mixed massif and memcheck files, report them separately")
     return "memcheck" if kinds == {Memcheck} else "massif"
 
 
 def text(results, top=None, all=False, compare=None, names=("A", "B")):
-    if kind(results) == "massif":
+    if kind(results, compare) == "massif":
         top = top or 5
         if compare:
             return massif_compare(results, compare, *names, top)
@@ -519,12 +545,12 @@ def text(results, top=None, all=False, compare=None, names=("A", "B")):
 
 
 def markdown(results, top=None, compare=None, names=("A", "B")):
-    if kind(results) == "massif":
+    if kind(results, compare) == "massif":
         return massif_markdown(results, top or 5, compare, names)
     return memcheck_markdown(results, top or 10, compare, names)
 
 
 def plot(path, results, top=None, compare=None, names=("A", "B")):
-    if kind(results) != "massif":
+    if kind(results, compare) != "massif":
         raise ValueError("--plot is for massif results")
     return massif_plot(path, results, top or 5, compare, names)

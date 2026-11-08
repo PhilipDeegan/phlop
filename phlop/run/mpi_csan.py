@@ -17,6 +17,7 @@ def main():
     parser = rc_.cli_args_parser("each MPI rank under compute-sanitizer, one report")
     cli_args = parser.parse_args()
     rank, size = mpi_ranks.rank_size()
+    mpi_ranks.show_saved(cli_args, rank, rc_.main)
     if rank is None:
         print(
             "phlop mpi_csan: no MPI rank in the environment, use mpirun",
@@ -28,6 +29,7 @@ def main():
         sys.exit(1)
 
     rid = mpi_ranks.run_id()
+    mpi_ranks.begin(cli_args.outdir, rid, rank)
     rc, _ = csan.run(
         cli_args.tool,
         cli_args.remaining,
@@ -37,7 +39,7 @@ def main():
         run_id=rid,
         label=f"rank{rank}",
     )
-    report = lambda: rc_.report_run(cli_args, rid, rc)
+    report = lambda worst: rc_.report_run(cli_args, rid, worst)
     sys.exit(mpi_ranks.finish(cli_args.outdir, rid, rank, size, rc, report))
 
 

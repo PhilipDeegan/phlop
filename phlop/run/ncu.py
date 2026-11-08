@@ -71,7 +71,7 @@ def outputs(cli_args, res, compare=None, names=("A", "B")):
         else:
             print(report.text(res, cli_args.top, cli_args.all))
     if cli_args.md:
-        md = report.markdown(res, cli_args.top, compare, names)
+        md = report.markdown(res, cli_args.top, compare, names, cli_args.all)
         if cli_args.md == "-":
             print(md)
         else:

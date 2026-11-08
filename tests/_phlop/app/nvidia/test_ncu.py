@@ -210,6 +210,12 @@ def _gpu():
         return False
     if not (shutil.which("nvcc") and shutil.which("ncu")):
         return False
+    if not shutil.which("nvidia-smi"):
+        return False
+    # bench_gpu.cu includes nvtx3, nvcc's own include directory has it
+    nvcc_inc = Path(shutil.which("nvcc")).resolve().parent.parent / "include"
+    if not (nvcc_inc / "nvtx3" / "nvToolsExt.h").is_file():
+        return False
     return (
         subprocess.run(
             ["nvidia-smi", "-L"], capture_output=True, check=False

@@ -105,9 +105,12 @@ def headline(results, issues):
     n = sum(i.count for i in errors)
     limited = any(r.limited for r in results)
     s = f"compute-sanitizer {tools}: "
-    if not errors and not leaks:
-        return s + "clean"
+    severe = [i for i in issues if i.severe]
+    if not errors and not leaks and not severe:
+        return s + ("clean" if all(r.complete for r in results) else "incomplete")
     parts = []
+    if severe and not errors:
+        parts += [f"{len(severe)} sanitizer errors"]
     if errors:
         where = "1 place" if len(errors) == 1 else f"{len(errors)} places"
         parts += [f"{_count(n, limited)} errors in {where}"]
@@ -124,7 +127,9 @@ def text(results, top=10):
     lines = [headline(results, issues)]
     if len(results) > 1:
         ranks = sorted(r.rank for r in results if r.rank is not None)
-        bad = sorted({k for i in issues if i.kind != "note" for k in i.ranks})
+        bad = sorted(
+            {k for i in issues if i.kind != "note" or i.severe for k in i.ranks}
+        )
         lines += [
             f"  {len(results)} processes"
             + (f", issues on ranks {_ranks(bad)}" if ranks and bad else "")
@@ -132,8 +137,8 @@ def text(results, top=10):
     else:
         lines += [f"  ({results[0].path})"]
     for kind in csan.KINDS:
-        of = [i for i in issues if i.kind == kind]
-        if not of or kind == "note":
+        of = [i for i in issues if i.kind == kind and (kind != "note" or i.severe)]
+        if not of:
             continue
         lines += [f"  {TITLES[kind]}:"]
         for i in of[:top]:
@@ -149,7 +154,7 @@ def markdown(results, top=10):
     issues = csan.group(i for r in results for i in r.issues)
     limited = any(r.limited for r in results)
     out = [f"### {headline(results, issues)}", ""]
-    rows = [i for i in issues if i.kind != "note"][: top * 2]
+    rows = [i for i in issues if i.kind != "note" or i.severe][: top * 2]
     if rows:
         multi = len(results) > 1
         head = "| kind | count | what | where | from |" + (" ranks |" if multi else "")

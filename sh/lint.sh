@@ -8,7 +8,7 @@ CWD="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
   set -e
 
-  PY_FILES=$(find . -name "*.py")
+  PY_FILES=$(find phlop tests sh setup.py -name "*.py")
 
   # locally the formatters fix files; in CI (GitHub sets CI=true) they would
   #  fix the runner's copy and pass, so check instead and fail on changes

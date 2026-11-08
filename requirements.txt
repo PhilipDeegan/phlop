@@ -1,7 +1,7 @@
 numpy
 black
 ruff
-autoflake
+autoflake>=2.0 # --check-diff
 isort
 pylint
 pydantic

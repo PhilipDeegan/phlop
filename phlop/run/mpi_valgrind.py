@@ -17,6 +17,7 @@ def main():
     parser = rv.cli_args_parser("each MPI rank under valgrind, one report")
     cli_args = parser.parse_args()
     rank, size = mpi_ranks.rank_size()
+    mpi_ranks.show_saved(cli_args, rank, rv.main)
     if rank is None:
         print(
             "phlop mpi_valgrind: no MPI rank in the environment, use mpirun",
@@ -28,6 +29,7 @@ def main():
         sys.exit(1)
 
     rid = mpi_ranks.run_id()
+    mpi_ranks.begin(cli_args.outdir, rid, rank)
     rc, _ = vg.run(
         cli_args.tool,
         cli_args.remaining,
@@ -38,9 +40,9 @@ def main():
         label=f"rank{rank}",
     )
 
-    def report():
+    def report(worst):
         if cli_args.tool in ("memcheck", "massif"):
-            rv.report_run(cli_args, rid, rc)
+            rv.report_run(cli_args, rid, worst)
 
     sys.exit(mpi_ranks.finish(cli_args.outdir, rid, rank, size, rc, report))
 

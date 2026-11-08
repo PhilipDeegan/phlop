@@ -3,6 +3,7 @@
 # memcheck --xml=yes files: errors (invalid reads, uninitialised values, ...)
 # and leaks, with their stacks
 
+import os
 import re
 import shlex
 import xml.etree.ElementTree as ET
@@ -44,6 +45,7 @@ class Memcheck:
     cmd: str = ""
     pid: int = 0
     errors: list = field(default_factory=list)
+    complete: bool = True  # the xml parsed whole: else cut short or broken
 
     @property
     def problems(self):
@@ -61,10 +63,11 @@ class Memcheck:
 def _frames(stack):
     out = []
     for f in stack.iter("frame") if stack is not None else []:
+        file, d = f.findtext("file", ""), f.findtext("dir", "")
         out.append(
             Frame(
                 f.findtext("fn", "???"),
-                f.findtext("file", ""),
+                os.path.join(d, file) if file and d else file,  # dir: identity
                 int(f.findtext("line", "0")),
                 f.findtext("obj", ""),
             )
@@ -95,17 +98,18 @@ def _complete_children(text):
 
 
 def _root(path):
+    """(root, complete)"""
     with open(path, errors="replace") as f:
         text = _LEAK_SUMMARY.sub("", f.read())
     try:
-        return ET.fromstring(text)
+        return ET.fromstring(text), True
     except ET.ParseError:
-        return _complete_children(text)
+        return _complete_children(text), False
 
 
 def parse(path):
-    root = _root(path)
-    out = Memcheck(path, pid=int(root.findtext("pid", "0")))
+    root, complete = _root(path)
+    out = Memcheck(path, pid=int(root.findtext("pid", "0")), complete=complete)
     args = root.find("args/argv")
     if args is not None:
         out.cmd = shlex.join(

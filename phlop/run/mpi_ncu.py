@@ -21,6 +21,7 @@ def main():
     parser = rn.cli_args_parser("each MPI rank's kernels under ncu, one report")
     cli_args = parser.parse_args()
     rank, size = mpi_ranks.rank_size()
+    mpi_ranks.show_saved(cli_args, rank, rn.main)
     if rank is None:
         print(
             "phlop mpi_ncu: no MPI rank in the environment, use mpirun",
@@ -32,6 +33,7 @@ def main():
         sys.exit(1)
 
     rid = mpi_ranks.run_id()
+    mpi_ranks.begin(cli_args.outdir, rid, rank)
     rc, _ = ncu.run(
         cli_args.remaining,
         rn.extra_args(cli_args),
@@ -41,7 +43,7 @@ def main():
         label=f"rank{rank}",
         count=cli_args.count,
     )
-    report = lambda: rn.report_run(cli_args, rid, rc)
+    report = lambda worst: rn.report_run(cli_args, rid, worst)
     sys.exit(mpi_ranks.finish(cli_args.outdir, rid, rank, size, rc, report))
 
 

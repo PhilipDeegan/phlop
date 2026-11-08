@@ -59,6 +59,11 @@ class Sample:
     sm_mhz: float = None
     temp_c: float = None
     slowdowns: list = field(default_factory=list)
+    ok: bool = True  # False: nvidia-smi failed, every value unknown
+
+    @staticmethod
+    def failed(index):
+        return Sample(index, proc_mem_mb=None, ok=False)
 
 
 def available():

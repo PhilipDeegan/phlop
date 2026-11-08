@@ -146,6 +146,8 @@ class Kernel:
     block: str
     nvtx: str = ""  # innermost push/pop range at launch
     launches: int = 1  # profiled launches merged into this row
+    shared: int = None  # bytes per block, static + dynamic, None if unknown
+    shared_split: bool = False  # other rows have this name, grid and block
     m: dict = field(default_factory=dict)  # METRICS keys, averaged
     limiter: str = ""  # occupancy limited by
     stalls: list = field(default_factory=list)  # [(reason, cycles per issue)]
@@ -248,6 +250,7 @@ def _merge(rows):
         first["block"],
         first["nvtx"],
         len(rows),
+        first["shared"],
     )
     for key in METRICS:
         vals = [r["m"][key] for r in rows if r["m"].get(key) is not None]
@@ -264,6 +267,15 @@ def _merge(rows):
     if limits:
         k.limiter = min(limits, key=limits.get)
     return k
+
+
+def _shared(get):
+    """shared memory per block, static + dynamic bytes, None if not in the page"""
+    vals = [
+        number(get(f"launch__shared_mem_per_block_{s}")) for s in ("static", "dynamic")
+    ]
+    vals = [v for v in vals if v is not None]
+    return int(sum(vals)) if vals else None
 
 
 def parse_raw(path):
@@ -293,6 +305,7 @@ def parse_raw(path):
             "grid": get("Grid Size"),
             "block": get("Block Size"),
             "nvtx": _nvtx(get(nvtx_col)) if nvtx_col else "",
+            "shared": _shared(get),
             "m": {k: number(get(c)) for k, c in METRICS.items() if c in col},
             "stalls": {
                 s: v
@@ -331,7 +344,12 @@ def parse(report, raw, rules):
     groups = defaultdict(list)
     for i, r in rows.items():
         r["rules"] = by_rule.get(i, [])
-        groups[(r["name"], r["grid"], r["block"])].append(r)
+        # a config, as profiled per launch config: launches in different
+        #  NVTX ranges stay separate rows, each attributed to its own range
+        groups[(r["name"], r["grid"], r["block"], r["shared"], r["nvtx"])].append(r)
+    configs = defaultdict(set)  # (name, grid, block) -> shared sizes
+    for name, grid, block, shared, _ in groups:
+        configs[(name, grid, block)].add(shared)
     kernels = []
     for g in groups.values():
         k = _merge(g)
@@ -341,6 +359,7 @@ def parse(report, raw, rules):
                 if rule.name not in seen or rule.speedup > seen[rule.name].speedup:
                     seen[rule.name] = rule
         k.rules = sorted(seen.values(), key=lambda x: -x.speedup)
+        k.shared_split = len(configs[(g[0]["name"], k.grid, k.block)]) > 1
         kernels.append(k)
     kernels.sort(key=lambda k: -((k.time or 0) * k.launches))
     return Report(report, device, process, _rank(report), kernels)

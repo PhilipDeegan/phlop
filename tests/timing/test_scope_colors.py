@@ -15,6 +15,16 @@ from phlop.timing.scope_timer import (
     print_variance_across,
 )
 
+
+def setUpModule():  # marks, not ANSI colors, even when run from a terminal
+    global _colors
+    _colors, severity.TERM_COLORS = severity.TERM_COLORS, False
+
+
+def tearDownModule():
+    severity.TERM_COLORS = _colors
+
+
 PERF = "#perf 1 amd64_fam1ah_zen5/light cycles,instructions,fetches\n"
 
 
@@ -252,6 +262,18 @@ class MemVarianceTest(unittest.TestCase):
         self.assertEqual(
             self.variance(scope_file(9, 1), scope_file(9, 1))[0][:13], "no mem scopes"
         )
+
+    def test_time_only_sibling_before_mem_keeps_the_parent(self):
+        text = "0 a\n1 b\n2 c\n\n0 0 0:9\n1 1 0:1\n1 2 0:1 m:1,1,1,1\n"
+        lines = self.variance(text, text)
+        self.assertEqual([line.split(" peak")[0] for line in lines[2:]], ["a", "  c"])
+
+    def test_root_names_must_match(self):
+        swapped = "0 b\n1 a\n\n0 1 0:9\n0 0 0:9 m:1,1,1,1\n"  # a, b: other ids
+        text = "0 a\n1 b\n\n0 0 0:9\n0 1 0:9 m:1,1,1,1\n"
+        self.variance(text, swapped)  # same names, own ids: fine
+        with self.assertRaises(RuntimeError):
+            self.variance(text, "0 b\n1 a\n\n0 0 0:9 m:1,1,1,1\n0 1 0:9\n")
 
     def test_main_memvariance(self):
         from phlop.timing.scope_timer import main

@@ -6,7 +6,7 @@
 // --trace=nvtx) next to the kernels and copies they launch, and ncu can filter
 // kernels by them (--nvtx --nvtx-include "phlop@key/"). Push/pop is per
 // thread, as scopes are. The range encloses the timer, so it covers the
-// timed region. Names are registered once per call site, as keys are.
+// timed region. Names are registered once per call site and thread, as keys are.
 //
 // NVTX v3 is header only: CUDA's include directory, or github.com/NVIDIA/NVTX.
 // Link -ldl. Without a tool attached each range costs a few ns.
@@ -54,8 +54,10 @@ struct Range
 
 } // namespace phlop::nvtx
 
+// key: the scope's report's key, already evaluated, so the expression runs once.
+//  thread_local: threaded scopes evaluate their key per thread
 #define PHLOP_NVTX_RANGE(key)                                                                      \
-    static nvtxStringHandle_t const PHLOP_STR_CAT(_phlop_nvtx_name_, __LINE__)                     \
+    static thread_local nvtxStringHandle_t const PHLOP_STR_CAT(_phlop_nvtx_name_, __LINE__)        \
         = phlop::nvtx::name(key);                                                                  \
     phlop::nvtx::Range const PHLOP_STR_CAT(_phlop_nvtx_, __LINE__){                                \
         PHLOP_STR_CAT(_phlop_nvtx_name_, __LINE__)};

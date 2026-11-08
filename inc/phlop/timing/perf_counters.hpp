@@ -123,7 +123,7 @@ struct Config
         return lines;
     }
 
-    // generic events or a forced PMU: printed once, after a successful init
+    // generic events, a forced PMU or kernel counting: printed once, after a successful init
     void accuracy_notices();
 
     // printed once per process, the first thread to fail says why
@@ -418,8 +418,11 @@ inline void Config::accuracy_notices()
     bool generic = false;
     for (auto const& level : levels)
         generic = generic or level.label.starts_with("generic/");
+    bool kernel       = false;
+    for (auto const& event : configs)
+        kernel = kernel or event.kernel;
     bool const forced = pmu_forced;
-    if (!(generic or forced) or printed.exchange(true))
+    if (!(generic or forced or kernel) or printed.exchange(true))
         return;
     if (generic)
         std::fprintf(stderr,
@@ -434,6 +437,12 @@ inline void Config::accuracy_notices()
                      " via LIBPFM_FORCE_PMU, not this CPU's. Counts are potentially wrong:"
                      " events may count something else or nothing. Resolve: regenerate"
                      " PHLOP_PERF_* without LIBPFM_FORCE_PMU\n");
+    if (kernel)
+        std::fprintf(stderr,
+                     "phlop perf counters: WARNING: kernel space counted, including the"
+                     " kernel side of phlop's own counter reads, ~2k instructions per scope."
+                     " Counts of tiny scopes are potentially dominated by it. Resolve:"
+                     " regenerate PHLOP_PERF_* without --kernel for user space only\n");
 }
 
 

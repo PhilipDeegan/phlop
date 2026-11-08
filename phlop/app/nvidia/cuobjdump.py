@@ -21,6 +21,7 @@
 # https://docs.nvidia.com/cuda/cuda-binary-utilities/index.html
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
@@ -100,7 +101,7 @@ def kernels(binary):
             text=True,
             check=False,
         )
-    except FileNotFoundError:
+    except (FileNotFoundError, PermissionError):
         raise RuntimeError(
             "cuobjdump not found on PATH or in /usr/local/cuda"
         ) from None
@@ -161,8 +162,10 @@ def report(cli_args):
     flt = re.compile(cli_args.filter) if cli_args.filter else None
     lines, summary = [], []
     for spec in cli_args.binaries:
-        label, _, path = spec.rpartition("=")
-        label = label or path
+        # label=path, the label up to the first "=": a path may hold one too
+        label, eq, path = spec.partition("=")
+        if not eq or os.path.exists(spec):
+            label = path = spec
         ks = kernels(path)
         if flt:
             ks = [k for k in ks if flt.search(k.name)]
@@ -199,11 +202,19 @@ def report(cli_args):
 
 
 def main():
-    cli_args = cli_args_parser().parse_args()
+    parser = cli_args_parser()
+    cli_args = parser.parse_args()
+    if cli_args.top < 0:
+        parser.error("-n/--top: 0 or more")
+    if cli_args.threads is not None and cli_args.threads <= 0:
+        parser.error("-t/--threads: 1 or more")
     try:
         print(report(cli_args))
-    except RuntimeError as e:
+    except (RuntimeError, OSError) as e:
         print(f"phlop cuobjdump: {e}", file=sys.stderr)
+        sys.exit(1)
+    except re.error as e:
+        print(f"phlop cuobjdump: --filter: {e}", file=sys.stderr)
         sys.exit(1)
 
 

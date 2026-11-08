@@ -15,6 +15,7 @@
 #include <cstdint>
 
 #if defined(__linux__)
+#include <cerrno>
 #include <fcntl.h>
 #include <unistd.h>
 #endif
@@ -63,11 +64,21 @@ public:
     bool read(IoCounts& out, std::uint64_t& self_bytes)
     {
 #if defined(__linux__)
+        if (fd >= 0 and pid != ::getpid()) // forked: the fd is the parent's thread
+        {
+            ::close(fd);
+            fd = -1;
+        }
         if (fd == -1)
-            fd = ::open("/proc/thread-self/io", O_RDONLY | O_CLOEXEC);
+        {
+            fd  = ::open("/proc/thread-self/io", O_RDONLY | O_CLOEXEC);
+            pid = ::getpid();
+        }
         if (fd < 0)
         {
-            fd = -2; // don't retry
+            bool const transient = errno == EMFILE or errno == ENFILE or errno == EINTR
+                                   or errno == ENOMEM or errno == EAGAIN;
+            fd = transient ? -1 : -2; // retry later, or don't
             return false;
         }
         std::array<char, 512> buf;
@@ -105,7 +116,8 @@ public:
 
 #if defined(__linux__) // only read there, an unused private field elsewhere
 private:
-    int fd = -1; // -1 not opened yet, -2 unsupported
+    int fd    = -1; // -1 not opened yet, -2 unsupported
+    pid_t pid = 0;  // the process fd was opened in
 #endif
 };
 

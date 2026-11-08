@@ -126,7 +126,11 @@ def _check_fn_peak(stf):
     np.testing.assert_array_less(128 * MiB, big.dp, err_msg=msg)
     np.testing.assert_array_less(128 * MiB, fn_peak.dp, err_msg=msg)
 
-    if os.environ.get("PHLOP_SCOPE_MEM") == "peak" and sys.platform.startswith("linux"):
+    peak_mode = os.environ.get("PHLOP_SCOPE_MEM") == "peak"
+    reset = small.p - small.dp == small.r  # peak on entry is rss on entry
+    if peak_mode and sys.platform.startswith("linux") and not reset:
+        print("test_scope_timer: peak reset denied or unsupported, checks skipped")
+    elif peak_mode and sys.platform.startswith("linux"):
         np.testing.assert_array_less(16 * MiB, small.dp, err_msg=msg)
         np.testing.assert_array_less(small.dp, 64 * MiB, err_msg=msg)
         print("test_scope_timer: peak reset per scope ok")
@@ -161,7 +165,11 @@ def test_shared_libs(scope_timer_filepath=None):
 def _check_io(stf):
     """fn_io: 4 writes of 1MiB and one read of 1MiB, exactly, the scope's own
     samples and counter reads excluded. Linux only, PHLOP_SCOPE_IO=0 skips"""
-    if not sys.platform.startswith("linux") or os.environ.get("PHLOP_SCOPE_IO") == "0":
+    if (
+        not sys.platform.startswith("linux")
+        or os.environ.get("PHLOP_SCOPE_IO") == "0"
+        or not os.access("/proc/thread-self/io", os.R_OK)
+    ):
         print("test_scope_timer: io checks skipped")
         return
     MiB = 1024 * 1024

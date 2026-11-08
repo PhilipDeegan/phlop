@@ -8,10 +8,15 @@
 # rank writes its exit code to <outdir>/<run id>.rank<N>.rc, rank 0 waits for
 # them all, reports, writes <run id>.done and exits with the worst code; the
 # others exit, with their own codes, once they see .done
+#
+# --outdir must be on storage every rank sees, eg not node local /tmp: rank 0
+# reads the other ranks' files. Waits time out after PHLOP_MPI_TIMEOUT seconds,
+# default 600, for the other ranks to finish after rank 0
 
 import glob
 import os
 import re
+import sys
 import time
 from pathlib import Path
 
@@ -45,6 +50,28 @@ def run_id():
     return f"mpi-{'-'.join(digits) if digits else os.getppid()}"
 
 
+def timeout():
+    return float(os.environ.get("PHLOP_MPI_TIMEOUT", "600"))
+
+
+def show_saved(cli_args, rank, main):
+    """--show/--compare: saved results, no MPI run. Rank 0, or a plain launch,
+    runs the non MPI runner's main (the same arguments), the others exit"""
+    if cli_args.show is None and not getattr(cli_args, "compare", None):
+        return
+    if rank in (None, "0"):
+        main()
+    sys.exit(0)
+
+
+def begin(outdir, rid, rank):
+    """before the run: files of an earlier invocation with the same run id, eg
+    a second wrapper call in one srun step, must not count for this one"""
+    (Path(outdir) / f"{rid}.rank{rank}.rc").unlink(missing_ok=True)
+    if rank == "0":
+        (Path(outdir) / f"{rid}.done").unlink(missing_ok=True)
+
+
 def _rc_files(outdir, rid):
     return glob.glob(str(Path(outdir) / f"{rid}.rank*.rc"))
 
@@ -57,9 +84,9 @@ def finished(outdir, rid, rank, rc):
     tmp.rename(Path(outdir) / f"{rid}.rank{rank}.rc")  # atomic: never half written
 
 
-def gather(outdir, rid, size, timeout=600):
+def gather(outdir, rid, size, wait=600):
     """rank 0: the worst exit code once every rank finished, None on timeout"""
-    deadline = time.time() + timeout
+    deadline = time.time() + wait
     while time.time() < deadline:
         files = _rc_files(outdir, rid)
         if len(files) >= size:
@@ -74,26 +101,31 @@ def release(outdir, rid):
     (Path(outdir) / f"{rid}.done").touch()
 
 
-def wait_released(outdir, rid, timeout=900):
+def wait_released(outdir, rid, wait=900):
     done = Path(outdir) / f"{rid}.done"
-    deadline = time.time() + timeout
+    deadline = time.time() + wait
     while time.time() < deadline and not done.exists():
         time.sleep(0.5)
 
 
-def finish(outdir, rid, rank, size, rc, report, timeout=600):
+def finish(outdir, rid, rank, size, rc, report, wait=None):
     """the end of every mpi_* runner: rank 0 reports once all ranks are done,
-    returns the exit code to use"""
+    returns the exit code to use. report(worst exit code over the ranks)"""
+    wait = timeout() if wait is None else wait
     finished(outdir, rid, rank, rc)
     if rank != "0":
-        wait_released(outdir, rid, timeout + 300)
+        wait_released(outdir, rid, wait + 300)
         return rc
-    worst = gather(outdir, rid, size, timeout)
+    worst = gather(outdir, rid, size, wait)
     if worst is None:
-        print("phlop mpi: timed out waiting for the other ranks", flush=True)
+        print(
+            f"phlop mpi: timed out waiting for the other ranks, {wait:g}s"
+            " (PHLOP_MPI_TIMEOUT): is --outdir on storage every rank sees?",
+            flush=True,
+        )
         worst = rc or 1
     try:
-        report()
+        report(worst)
     finally:
         release(outdir, rid)
     return worst

@@ -151,6 +151,7 @@ class Kernel:
     block: tuple = ()
     regs: int = 0
     shared: int = 0  # bytes, static + dynamic
+    busy: int = 0  # ns, union of its launches: overlapping ones counted once
 
     @property
     def avg(self):
@@ -246,7 +247,7 @@ def _kernels(db, strings):
         " blockY, blockZ, registersPerThread, staticSharedMemory + dynamicSharedMemory"
         " from CUPTI_ACTIVITY_KIND_KERNEL"
     ).fetchall()
-    by, nccl, compute = {}, [], []
+    by, nccl, compute, spans = {}, [], [], defaultdict(list)
     for s, e, dn, sn, gx, gy, gz, bx, by_, bz, regs, shm in rows:
         name = strings.get(dn) or strings.get(sn) or "?"
         k = by.get(name)
@@ -263,6 +264,9 @@ def _kernels(db, strings):
             )
         k.count, k.total, k.max = k.count + 1, k.total + e - s, max(k.max, e - s)
         (nccl if k.nccl else compute).append((s, e))
+        spans[name].append((s, e))
+    for name, k in by.items():
+        k.busy = length(merge(spans[name]))
     return sorted(by.values(), key=lambda k: -k.total), merge(compute), merge(nccl)
 
 
@@ -343,7 +347,8 @@ def _meta(db, tables):
 
 def parse(path):
     """a Profile from an nsys sqlite export"""
-    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    # as_uri percent encodes, a "#" or "?" in the path stays in the file name
+    db = sqlite3.connect(Path(path).absolute().as_uri() + "?mode=ro", uri=True)
     try:
         tables, strings = _tables(db), _strings(db)
         p = Profile(path)
@@ -412,6 +417,7 @@ def _run_id(path):
 
 def _latest(directory):
     files = glob.glob(str(Path(directory) / "nsys.*.sqlite"))
+    files += glob.glob(str(Path(directory) / "nsys.*.nsys-rep"))
     if not files:
         return []
     run_id = _run_id(max(files, key=os.path.getmtime))
@@ -419,13 +425,17 @@ def _latest(directory):
 
 
 def _dedup(files):
-    """a .nsys-rep and its .sqlite are one result"""
-    sqlite = {f[: -len(".sqlite")] for f in files if f.endswith(".sqlite")}
-    return [
-        f
-        for f in files
-        if not (f.endswith(".nsys-rep") and f[: -len(".nsys-rep")] in sqlite)
-    ]
+    """a .nsys-rep and its .sqlite are one result: the .nsys-rep, so load()
+    re-exports a stale .sqlite"""
+    out = []
+    for f in files:
+        if f.endswith(".sqlite") and os.path.isfile(
+            rep := f[: -len(".sqlite")] + ".nsys-rep"
+        ):
+            f = rep
+        if f not in out:
+            out.append(f)
+    return out
 
 
 def resolve(spec=None, outdir=OUTDIR):
