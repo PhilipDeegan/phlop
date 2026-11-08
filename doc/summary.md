@@ -172,6 +172,15 @@ shared helpers for each file.
   tree. Pick one variant per binary: `scope_timer.hpp` (single thread),
   `threaded_scope_timer.hpp` (per-thread storage, merged at shutdown) or
   `mpi_scope_timer.hpp` (MPI_Wtime clock, per-rank file names).
+- `phlop::mpi::sync_clock()`: collective, a barrier then `Clock::now()`,
+  kept as a `#clock sync=<t>,... global=<0|1>` header line (global is
+  `MPI_WTIME_IS_GLOBAL`). Call once after `MPI_Init` and once before
+  `MPI_Finalize`. `MPI_Wtime` may have a per process origin (OpenMPI's
+  starts at init) and node clocks drift, so raw starts don't compare across
+  ranks. Raw timestamps stay as they are: the hot path is unchanged and old
+  files read the same. Syncs are cleared by shutdown/reset.
+- `sh/test_mpi.sh` (`PHLOP_MPI_RANKS`, default 2) runs the MPI test, skipped
+  without mpicxx/mpirun. CI: `mpi_linux.yml`, OpenMPI and MPICH, 4 ranks.
 - Hot path: one `make_unique` snapshot per scope exit, and child vectors
   grow geometrically. Don't `reserve(size()+1)`: that reallocates for every
   child, quadratic for loops.
@@ -202,6 +211,12 @@ shared helpers for each file.
 - `print_scope_timings(path)` prints one file with % of root and "loss" (time
   not covered by children). `print_variance_across(glob)` compares many
   files, e.g. MPI ranks, and is the only function that globs.
+- `align_clocks(stfs)`, used by `print_variance_across` only when every file
+  has `#clock` syncs: starts become time since the sync. Each file uses its
+  own first sync as the origin. With two or more syncs its rate is scaled to
+  the median sync span (two point drift correction, 10ppm over 1h is
+  ~36ms). With a global clock everywhere there is one common origin and no
+  scaling. Barrier exit skew is ~log2(ranks) latencies, tens of us.
 
 ## Repo
 - `sh/test.sh`: full test run (CLI modes, concurrency, timers, valgrind,

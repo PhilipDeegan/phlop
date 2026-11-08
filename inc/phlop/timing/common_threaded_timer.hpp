@@ -82,6 +82,8 @@ struct ScopeTimerMan
         perf::Config::INSTANCE().close();
 
         _headers.clear();
+        _clock_syncs.clear();
+        _clock_global = -1;
         thread_storage.clear();
         thread_reports.clear();
         active = false;
@@ -128,6 +130,32 @@ struct ScopeTimerMan
         _headers.clear();
         (_headers.emplace_back(args), ...);
         return *this;
+    }
+
+    // a clock value taken at a point every process passed together, eg just after a
+    //  barrier, see phlop::mpi::sync_clock(). Written as "#clock sync=<t>,..." so
+    //  starts in different files can be aligned in post-processing. global: whether
+    //  the clock is already the same everywhere, 1/0, -1 unknown
+    void clock_sync(std::uint64_t const t, int const global = -1)
+    {
+        std::unique_lock<std::mutex> lk(work_);
+        _clock_syncs.emplace_back(t);
+        if (global >= 0)
+            _clock_global = global;
+    }
+
+    // "#clock sync=<t>,... global=<0|1>" or none, see clock_sync
+    std::vector<std::string> clock_headers()
+    {
+        std::unique_lock<std::mutex> lk(work_);
+        if (_clock_syncs.empty())
+            return {};
+        std::string line = "#clock sync=";
+        for (std::size_t i = 0; i < _clock_syncs.size(); ++i)
+            line += (i ? "," : "") + std::to_string(_clock_syncs[i]);
+        if (_clock_global >= 0)
+            line += " global=" + std::to_string(_clock_global);
+        return {line};
     }
 
     static void reset(bool const active = true)
@@ -210,6 +238,8 @@ struct ScopeTimerMan
     std::atomic<bool> _io{false};     // read by every thread entering an io scope
     std::string timer_file = "";
     std::vector<std::string> _headers;
+    std::vector<std::uint64_t> _clock_syncs; // see clock_sync
+    int _clock_global = -1;
 
     std::mutex work_;
     std::vector<std::pair<std::vector<RunTimerReport*>, std::vector<RunTimerReportSnapshot*>>>
@@ -300,9 +330,13 @@ namespace detail
         }
 
         if (all_traces.size())
+        {
+            auto file_headers = perf::Config::INSTANCE().file_headers();
+            for (auto& line : man.clock_headers())
+                file_headers.emplace_back(std::move(line));
             phlop::BinaryTimerFile{all_traces}.write(man.timer_file, man._force_strings,
-                                                     man._headers,
-                                                     perf::Config::INSTANCE().file_headers());
+                                                     man._headers, file_headers);
+        }
     }
 
 } // namespace detail

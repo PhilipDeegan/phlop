@@ -106,6 +106,10 @@ class ScopeTimerFile:
     roots: list
     perf: dict = field(default_factory=dict)  # level -> PerfLevel
     ctx: dict | None = None  # measuring host's "#ctx", eg {"slots": 5}
+    # "#clock": clock values at points every process passed together, eg after an
+    #  MPI barrier, phlop::mpi::sync_clock(), and whether the clock is global
+    clock_syncs: list = field(default_factory=list)
+    clock_global: bool | None = None
 
     def fn_for(self, id):
         return self.id_keys[id]
@@ -191,6 +195,7 @@ def lines_parser(lines):
     roots = []
     perf = {}
     ctx = None
+    clock_syncs, clock_global = [], None
 
     idx = 0
     for idx, line in enumerate(lines):
@@ -211,6 +216,14 @@ def lines_parser(lines):
                 except ValueError:
                     pass
             continue
+        if bits[0] == "#clock":  # "#clock sync=<t>,... global=<0|1>"
+            for kv in bits[1:]:
+                key, _, value = kv.partition("=")
+                if key == "sync" and value:
+                    clock_syncs = [int(v) for v in value.split(",")]
+                elif key == "global" and value in ("0", "1"):
+                    clock_global = value == "1"
+            continue
         id_keys[int(bits[0])] = bits[1]
 
     path = []  # path[d] is the latest node at depth d, no depth limit
@@ -227,7 +240,7 @@ def lines_parser(lines):
             raise ValueError(f"scope timer line nested without a parent: {line!r}")
         del path[depth:]
         path.append(node)
-    return ScopeTimerFile(id_keys, roots, perf, ctx)
+    return ScopeTimerFile(id_keys, roots, perf, ctx, clock_syncs, clock_global)
 
 
 def file_parser(times_filepath):
@@ -642,6 +655,31 @@ def _aligned_scopes(stfs, root_id=None, dedupe=True):
     return rows
 
 
+def align_clocks(stfs):
+    """Rewrites every start as time since the files' common clock sync point,
+    from their "#clock sync=" values, phlop::mpi::sync_clock(). Returns False,
+    changing nothing, unless every file has one.
+
+    A global clock (MPI_WTIME_IS_GLOBAL in every file) is shifted by one common
+    origin, the earliest first sync. Otherwise each file's first sync is its
+    own origin, and with two or more syncs its clock rate is scaled to the
+    median sync span: a two point drift correction. Durations are unchanged,
+    drift is ppm"""
+    if not stfs or not all(stf.clock_syncs for stf in stfs):
+        return False
+    spans = [stf.clock_syncs[-1] - stf.clock_syncs[0] for stf in stfs]
+    common = all(stf.clock_global for stf in stfs)
+    origin = min(stf.clock_syncs[0] for stf in stfs)
+    ref = float(np.median(spans))
+    for stf, span in zip(stfs, spans):
+        t0, scale = (origin, 1.0) if common else (stf.clock_syncs[0], 1.0)
+        if not common and span > 0 and ref > 0:
+            scale = ref / span
+        for n in _walk(stf.roots):
+            n.s = round((n.s - t0) * scale)
+    return True
+
+
 def _pct(v):
     return f"{v * 100:.1f}%"
 
@@ -664,8 +702,9 @@ def print_variance_across(
     under min_ns median runtime are not colored, too short to time reliably.
 
     Starts are relative to each file's first root, as steady clock values
-    differ between runs and hosts. Their spread is colored against the median
-    run length.
+    differ between runs and hosts, or, if every file has "#clock" syncs
+    (phlop::mpi::sync_clock()), to the common sync point, see align_clocks.
+    Their spread is colored against the median run length.
 
     With the same perf counts in every file, the runtime spread splits in two:
     work, the spread of instructions, and speed, the spread of cycles per
@@ -676,12 +715,13 @@ def print_variance_across(
     if not loaded:
         return
     files, stfs = loaded
+    aligned = align_clocks(stfs)  # before dedupe averages starts
     rows = _aligned_scopes(stfs, root_id, dedupe)
     if not rows:
         return
     colors = Colors()
     with_perf = all(stf.perf == stfs[0].perf for stf in stfs)
-    t0s = [min(r.s for r in stf.roots) for stf in stfs]
+    t0s = [0 if aligned else min(r.s for r in stf.roots) for stf in stfs]
     run_length = float(
         np.median(
             [max(r.s + r.t for r in stf.roots) - t0 for stf, t0 in zip(stfs, t0s)]
@@ -689,7 +729,8 @@ def print_variance_across(
     )
 
     printer(
-        f"{len(files)} files, spread = (max - min) / median. "
+        f"{len(files)} files, spread = (max - min) / median, starts from "
+        + ("the clock sync. " if aligned else "each file's first scope. ")
         + colors.legend(f">= {_pct(warn)}", f">= {_pct(bad)}")
     )
     for key, depth, nodes in rows:
