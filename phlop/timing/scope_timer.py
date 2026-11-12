@@ -38,6 +38,9 @@ class RunTimerNode:
     dr: int | None = None  # resident set size change, exit - entry
     p: int | None = None  # process peak resident set size at scope exit
     dp: int | None = None  # process peak growth during scope, exit - entry
+    # calls the memory is from: more than 1 once deduped siblings merge, dr is
+    # then their sum and p, dp their max, see _merge_mem
+    mem_n: int = 0
     # the thread's I/O over the scope, None unless PHLOP_SCOPE("key", time, io):
     # {name: exit - entry} for IO_FIELDS, see phlop/os/io.hpp
     io: dict | None = None
@@ -60,6 +63,7 @@ class RunTimerNode:
                 rss_in, rss_out, peak_in, peak_out = (int(v) for v in values.split(","))
                 node.r, node.dr = rss_in, rss_out - rss_in
                 node.p, node.dp = peak_out, peak_out - peak_in
+                node.mem_n = 1
             else:  # "<level>:<c0>,<c1>,..."
                 node.level = int(tag)
                 node.counts = [int(c) for c in values.split(",")]
@@ -290,9 +294,7 @@ class LossLine:
             return f"100% loss({LossLine.loss(self.n)}) {self.key} {self.n.t}"
 
     def mem_str(self):
-        if not self.n.has_mem:
-            return ""
-        return f"  rss {format_bytes(self.n.dr, sign=True)} peak {format_bytes(self.n.dp, sign=True)}"
+        return mem_str(self.n)
 
     def io_str(self):
         return io_str(self.n.io) if self.n.has_io else ""
@@ -310,6 +312,17 @@ class LossLine:
         return "-" if lss < 1e-2 else float(f"{lss / n.t * 100:.2f}")
 
 
+def mem_str(n):
+    """ "  rss +1.00MiB peak +2.00MiB", merged calls say what each is: the rss
+    deltas' sum and the largest peak, not comparable, see _merge_mem"""
+    if not n.has_mem:
+        return ""
+    dr, dp = format_bytes(n.dr, sign=True), format_bytes(n.dp, sign=True)
+    if n.mem_n > 1:
+        return f"  x{n.mem_n} rss sum {dr} peak max {dp}"
+    return f"  rss {dr} peak {dp}"
+
+
 def _merge_mem(base, other):
     """fold other's memory into base: rss deltas sum, peaks max. Leaves
     without memory (eg memory off for that call) neither add nor erase it"""
@@ -317,10 +330,12 @@ def _merge_mem(base, other):
         return
     if not base.has_mem:
         base.r, base.dr, base.p, base.dp = other.r, other.dr, other.p, other.dp
+        base.mem_n = max(other.mem_n, 1)
         return
     base.dr += other.dr
     base.dp = max(base.dp, other.dp)
     base.p = max(base.p, other.p)
+    base.mem_n = max(base.mem_n, 1) + max(other.mem_n, 1)  # 0: built by hand
 
 
 def _merge_counts(base, other):
@@ -815,7 +830,8 @@ def print_mem_variance_across(
     spike: the most the peak rose above the scope's entry, colored as a share
     of the median peak. Without PHLOP_SCOPE_MEM=peak only scopes setting a new
     process high show one, the header says which the files hold.
-    kept: resident growth over the scope, exit - entry, median and max."""
+    kept: resident growth over the scope, exit - entry, median and max.
+    Deduped siblings, xN: peak and spike the largest of the N, kept their sum"""
     loaded = _load_across(scope_timer_file_glob, printer)
     if not loaded:
         return
@@ -859,6 +875,9 @@ def print_mem_variance_across(
         if not mem:
             printer(line)  # an ancestor of mem scopes, for the tree's shape
             continue
+        merged = max(n.mem_n for n in nodes)
+        if merged > 1:  # peaks max, kept summed, see _merge_mem
+            line += f" x{merged}"
         peak = float(np.median([n.p for n in nodes]))
         top, top_file = worst([n.p for n in nodes])
         imbalance = top / peak - 1 if peak else 0.0
@@ -871,7 +890,8 @@ def print_mem_variance_across(
             line += ", spike " + colors(format_bytes(spike), level(share, warn, bad))
             line += f" {spike_file}"
         kept = [n.dr for n in nodes]
-        line += f", kept {format_bytes(float(np.median(kept)), sign=True)}"
+        line += ", kept sum " if merged > 1 else ", kept "
+        line += format_bytes(float(np.median(kept)), sign=True)
         line += f" max {format_bytes(max(kept), sign=True)}"
         printer(line)
 

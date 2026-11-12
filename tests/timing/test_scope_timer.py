@@ -290,6 +290,11 @@ def test_mem_parse():
         for n in order:
             scope_timer._merge_mem(base, n)
         np.testing.assert_equal((base.dr, base.p, base.dp), (3, 60, 20))
+        np.testing.assert_equal(base.mem_n, 2)  # b and c, a has no memory
+        np.testing.assert_equal(
+            scope_timer.mem_str(base), "  x2 rss sum +3B peak max +20B"
+        )
+    np.testing.assert_equal(scope_timer.mem_str(b), "  rss +5B peak +20B")
 
     np.testing.assert_equal(
         scope_timer.format_bytes(-10 * 1024 * 1024, sign=True), "-10.00MiB"

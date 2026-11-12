@@ -208,6 +208,30 @@ def mem_file(peak_in, peak_out, rss_in=10 * MIB, rss_out=10 * MIB):
     return f"0 root\n1 io\n\n0 0 0:1000\n1 1 0:100 {mem}\n"
 
 
+class TimesMemTest(unittest.TestCase):
+    def test_merged_line_labels_sum_and_max(self):
+        from phlop.timing.scope_timer import print_scope_timings
+
+        text = (
+            "0 root\n1 io\n\n0 0 0:1000\n"
+            + f"1 1 0:100 m:{10 * MIB},{12 * MIB},{10 * MIB},{15 * MIB}\n"
+            + f"1 1 0:100 m:{10 * MIB},{11 * MIB},{10 * MIB},{11 * MIB}\n"
+        )
+        import contextlib
+        import io as io_module
+
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "times.txt"
+            path.write_text(text)
+            out = io_module.StringIO()
+            with contextlib.redirect_stdout(out):
+                print_scope_timings(str(path))
+        lines = out.getvalue().splitlines()
+        self.assertTrue(
+            lines[1].endswith("x2 rss sum +3.00MiB peak max +5.00MiB"), lines
+        )
+
+
 class MemVarianceTest(unittest.TestCase):
     def variance(self, *files, **kwargs):
         from phlop.timing.scope_timer import print_mem_variance_across
@@ -252,6 +276,18 @@ class MemVarianceTest(unittest.TestCase):
         lines = self.variance(per_scope, per_scope)
         self.assertEqual(lines[1], "peaks per scope, PHLOP_SCOPE_MEM=peak")
         self.assertIn("spike 20.00MiB (!!)", lines[3])  # 20 of a 30MiB peak
+
+    def test_merged_siblings_say_max_and_sum(self):
+        # io x3 per file, as PHARE's HybridLevelInitializer::initialize_level:
+        #  rss deltas sum past the largest peak, labelled so it isn't read as a bug
+        call = "1 1 0:100 m:{},{},{},{}\n"
+        calls = [(718, 969, 718, 1027), (718, 769, 718, 800), (718, 779, 718, 790)]
+        text = "0 root\n1 io\n\n0 0 0:1000\n" + "".join(
+            call.format(*(v * MIB for v in c)) for c in calls
+        )
+        io = self.variance(text, text)[3]
+        self.assertTrue(io.startswith("  io x3 peak 1.00GiB"), io)
+        self.assertIn("kept sum +363.00MiB", io)  # 251 + 51 + 61
 
     def test_only_mem_scopes_and_ancestors(self):
         text = (
