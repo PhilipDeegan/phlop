@@ -16,7 +16,7 @@ OUT=bin/shared_libs
 mkdir -p $OUT
 FLAGS="-std=c++20 -O1 -g -fsanitize=address -fno-omit-frame-pointer -pthread -Iinc"
 
-$CXX $FLAGS -fPIC -shared $SRC/core.cpp src/phlop/timing/common_threaded_timer.cpp -o $OUT/libcore.so
+$CXX $FLAGS -fPIC -shared $SRC/core.cpp src/phlop/timing/scope_timer.cpp -o $OUT/libcore.so
 $CXX $FLAGS -fPIC -shared -fvisibility=hidden -fvisibility-inlines-hidden $SRC/module.cpp \
     -o $OUT/module.so -L$OUT -lcore -Wl,-rpath,"\$ORIGIN"
 $CXX $FLAGS $SRC/main.cpp -o $OUT/main -ldl

@@ -2,17 +2,17 @@
 // like a project's core shared library: phlop's .cpp is linked in here and
 // the timer is initialised from here, see sh/test_shared_libs.sh
 
-#include "phlop/timing/threaded_scope_timer.hpp"
+#include "phlop/timing/para_scope_timer.hpp"
 
 #include <cstdlib>
 
 extern "C" void core_init()
 {
-    phlop::scope_timer().file_name(std::getenv("PHLOP_SHARED_LIBS_OUT")).init();
+    phlop::para::scope_timer().file_name(std::getenv("PHLOP_SHARED_LIBS_OUT")).init();
 }
 extern "C" void core_shutdown()
 {
-    phlop::scope_timer().shutdown();
+    phlop::para::scope_timer().shutdown();
 }
 extern "C" void const* core_config()
 {
@@ -20,7 +20,7 @@ extern "C" void const* core_config()
 }
 extern "C" void const* core_man_local()
 {
-    return &phlop::threaded::ScopeTimerMan::local();
+    return &phlop::para::ScopeTimerMan::local();
 }
 extern "C" void core_outer(void (*inner)())
 {

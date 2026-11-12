@@ -162,6 +162,19 @@ def test_shared_libs(scope_timer_filepath=None):
     )
 
 
+def test_mixed():
+    """from tests/timing/mixed: the serial and para timers in one program, each
+    only its own scopes, para's thread scope a root of its own"""
+    serial = scope_timer.file_parser("bin/mixed_serial.txt")
+    para = scope_timer.file_parser("bin/mixed_para.txt")
+    np.testing.assert_equal([serial(r.k) for r in serial.roots], ["serial_outer"])
+    np.testing.assert_equal(serial.roots[0].c, [])
+    np.testing.assert_equal(
+        sorted(para(r.k) for r in para.roots), ["para_outer", "para_thread"]
+    )
+    print("test_mixed: ok")
+
+
 def _check_io(stf):
     """fn_io: 4 writes of 1MiB and one read of 1MiB, exactly, the scope's own
     samples and counter reads excluded. Linux only, PHLOP_SCOPE_IO=0 skips"""

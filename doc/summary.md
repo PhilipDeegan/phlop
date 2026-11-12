@@ -169,9 +169,22 @@ shared helpers for each file.
 
 ### C++ (`inc/phlop/timing`, `src/phlop/timing`)
 - `PHLOP_SCOPE_TIMER("key")` records start and duration per scope into a
-  tree. Pick one variant per binary: `scope_timer.hpp` (single thread),
-  `threaded_scope_timer.hpp` (per-thread storage, merged at shutdown) or
-  `mpi_scope_timer.hpp` (MPI_Wtime clock, per-rank file names).
+  tree. Four timers, each its own instance, scope stack and file, all from
+  one source, `src/phlop/timing/scope_timer.cpp` (no MPI needed to build it):
+  `phlop::` serial, `phlop::para::` multithread capable (per-thread storage,
+  merged at shutdown), `phlop::mpi::` and `phlop::mpi::para::` the same two
+  with `MPI_Wtime`, per-rank file names and `sync_clock()`. Implementations:
+  `serial_timer.hpp` / `para_timer.hpp`, templates over the clock, their
+  instances explicit specializations defined in the .cpp; `mpi_timer.hpp`
+  defines `mpi::Clock` (forward declared in common_timer.hpp so the .cpp
+  needs no `mpi.h`). The header picks which timer the macros record into,
+  one per translation unit: `scope_timer.hpp`, `para_scope_timer.hpp`,
+  `mpi_scope_timer.hpp`, `mpi_para_scope_timer.hpp`. Other timers' APIs are
+  still usable alongside (`tests/timing/mixed`). Serial is the default, para
+  is opt in: serial scopes are cheaper and `PHLOP_SCOPE_MEM=peak` resets per
+  scope, which para can't (a reset erases other threads' peaks), there it is
+  `=1`. Timers in one program share `perf::Config`: shutting one down closes
+  counters for all. `ClockSyncs` (common_timer.hpp) is the `#clock` header.
 - `phlop::mpi::sync_clock()`: collective over `MPI_COMM_WORLD` only (files
   don't record a communicator, so sub-communicator syncs couldn't be told
   apart), a barrier then `Clock::now()`,
@@ -181,7 +194,9 @@ shared helpers for each file.
   starts at init) and node clocks drift, so raw starts don't compare across
   ranks. Raw timestamps stay as they are: the hot path is unchanged and old
   files read the same. Syncs are cleared by shutdown/reset.
-- `sh/test_mpi.sh` (`PHLOP_MPI_RANKS`, default 2) runs the MPI test, skipped
+- `sh/test_mpi.sh` (`PHLOP_MPI_RANKS`, default 2) runs both MPI tests, the
+  serial one also with `PHLOP_SCOPE_MEM=peak` (the same scopes as
+  `test_scope_timer.cpp`, `tests/timing/scope_timer_fns.hpp`), skipped
   without mpicxx/mpirun. CI: `mpi_linux.yml`, OpenMPI and MPICH, 4 ranks.
 - Hot path: one `make_unique` snapshot per scope exit, and child vectors
   grow geometrically. Don't `reserve(size()+1)`: that reallocates for every
@@ -202,7 +217,7 @@ shared helpers for each file.
   starts with `PHLOP_NVTX_RANGE(key)`, a push/pop in NVTX domain "phlop",
   declared before the timer so it encloses it. Names are registered once per
   call site (a static, as the key's report is). Nothing without the define.
-  `sh/test_nvtx.sh` builds the scope and threaded tests with it, runs them
+  `sh/test_nvtx.sh` builds the scope and para tests with it, runs them
   under `nsys --trace=nvtx` and checks the ranges against the timer file:
   same (scope, parent) pairs and counts, nesting per thread. Skipped without
   nsys and the nvtx3 headers (CI).

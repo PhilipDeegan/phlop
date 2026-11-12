@@ -30,6 +30,11 @@ PHLOP_SCOPE_MEM=0 mkn test -p threaded_scope_timer
 PHLOP_SCOPE_MEM=0 py tests/timing/test_scope_timer.py test_threaded_scope_timer -f "bin/threaded_scope_timer.txt"
 ./sh/test_mpi.sh # skipped without mpicxx/mpirun
 ./sh/test_shared_libs.sh
+# serial and para timers in one program, one source
+${CXX:-g++} -std=c++20 -Wall -Wextra -Werror -pthread -Iinc tests/timing/mixed/*.cpp \
+    src/phlop/timing/scope_timer.cpp -o bin/mixed
+./bin/mixed
+py tests/timing/test_scope_timer.py test_mixed
 ./sh/test_nvtx.sh # skipped without nsys and the nvtx3 headers
 mkn_test scope
 py tests/timing/test_scope_timer.py test_scope -f "bin/scope.txt" # no -O: asserts

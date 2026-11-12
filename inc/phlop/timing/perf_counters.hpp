@@ -81,7 +81,7 @@ struct Level
 
 struct Config
 {
-    // defined in src/phlop/timing/{scope_timer,common_threaded_timer}.cpp, not inline:
+    // defined in src/phlop/timing/scope_timer.cpp, not inline:
     // one instance per process even across shared libraries built with -fvisibility=hidden
     static Config& INSTANCE();
 

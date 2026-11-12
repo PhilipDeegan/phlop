@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# mpi_scope_timer.hpp: one timer file per rank, each with the two
-# phlop::mpi::sync_clock() points, and variance across ranks aligned on them.
-# PHLOP_MPI_RANKS ranks, default 2. Needs mpicxx and mpirun, else skipped
+# mpi_scope_timer.hpp (serial ranks) and mpi_para_scope_timer.hpp: one timer
+# file per rank, each with the two phlop::mpi::sync_clock() points, and variance
+# across ranks aligned on them. Serial runs again with PHLOP_SCOPE_MEM=peak, per
+# scope peaks. PHLOP_MPI_RANKS ranks, default 2. Needs mpicxx and mpirun, else skipped
 
 CWD="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )" && cd "$CWD"/..
 set -e
@@ -19,14 +20,25 @@ export OMPI_MCA_rmaps_base_oversubscribe=1
 export PRTE_MCA_rmaps_default_mapping_policy=:oversubscribe
 
 mkdir -p bin
-mpicxx -std=c++20 -O2 -Wall -Wextra -Werror -pthread -Iinc tests/timing/test_mpi_scope_timer.cpp \
-    src/phlop/timing/common_threaded_timer.cpp -o bin/mpi_scope_timer_test
-rm -f bin/phlop_scope_timers.*.bin
-mpirun -n "$N" bin/mpi_scope_timer_test
-[ "$(ls bin/phlop_scope_timers.*.bin | wc -l)" = "$N" ]
-for f in bin/phlop_scope_timers.*.bin; do
-    python3 tests/timing/test_scope_timer.py test_threaded_scope_timer -f "$f"
-    grep -E "^#clock sync=[0-9]+,[0-9]+( global=[01])?$" "$f" # two sync_clock() calls
-done
-python3 -m phlop.timing.scope_timer variance "bin/phlop_scope_timers.*.bin" | tee bin/mpi_variance.txt
-grep -q "starts from the clock sync" bin/mpi_variance.txt
+FLAGS="-std=c++20 -O2 -Wall -Wextra -Werror -pthread -Iinc"
+mpicxx $FLAGS tests/timing/test_mpi_scope_timer.cpp src/phlop/timing/scope_timer.cpp \
+    -o bin/mpi_scope_timer_test
+mpicxx $FLAGS tests/timing/test_mpi_para_scope_timer.cpp \
+    src/phlop/timing/scope_timer.cpp -o bin/mpi_para_scope_timer_test
+
+# $1 binary, $2 test_scope_timer.py function
+run(){
+    rm -f bin/phlop_scope_timers.*.bin
+    mpirun -n "$N" "bin/$1"
+    [ "$(ls bin/phlop_scope_timers.*.bin | wc -l)" = "$N" ]
+    for f in bin/phlop_scope_timers.*.bin; do
+        python3 tests/timing/test_scope_timer.py "$2" -f "$f"
+        grep -E "^#clock sync=[0-9]+,[0-9]+( global=[01])?$" "$f" # two sync_clock() calls
+    done
+    python3 -m phlop.timing.scope_timer variance "bin/phlop_scope_timers.*.bin" | tee bin/mpi_variance.txt
+    grep -q "starts from the clock sync" bin/mpi_variance.txt
+}
+
+run mpi_para_scope_timer_test test_threaded_scope_timer
+PHLOP_SCOPE_MEM=peak run mpi_scope_timer_test test_scope_timer
+run mpi_scope_timer_test test_scope_timer # last: CI prints these files' clock headers

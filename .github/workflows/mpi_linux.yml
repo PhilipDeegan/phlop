@@ -1,6 +1,6 @@
 name: MPI on linux
 
-# mpi_scope_timer.hpp with OpenMPI and MPICH: per rank timer files, the
+# mpi_scope_timer.hpp and mpi_para_scope_timer.hpp with OpenMPI and MPICH: per rank timer files, the
 # phlop::mpi::sync_clock() "#clock" header, and variance across ranks aligned
 # on it. The implementations differ in MPI_Wtime's origin and
 # MPI_WTIME_IS_GLOBAL, printed by the "Clock headers" step

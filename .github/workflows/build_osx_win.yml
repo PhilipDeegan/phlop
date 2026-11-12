@@ -46,9 +46,9 @@ jobs:
         clang++ --version | head -1
         CXX="clang++ -std=c++20 -O2 -Wall -Wextra -Werror -pthread -Iinc"
         $CXX tests/timing/test_scope_timer.cpp src/phlop/timing/scope_timer.cpp -o bin/scope_timer_test
-        $CXX tests/timing/test_threaded_scope_timer.cpp src/phlop/timing/common_threaded_timer.cpp -o bin/threaded_scope_timer_test
+        $CXX tests/timing/test_threaded_scope_timer.cpp src/phlop/timing/scope_timer.cpp -o bin/threaded_scope_timer_test
         $CXX tests/timing/test_scope.cpp src/phlop/timing/scope_timer.cpp -o bin/scope_test
-        $CXX tests/timing/test_threaded_scope.cpp src/phlop/timing/common_threaded_timer.cpp -o bin/threaded_scope_test
+        $CXX tests/timing/test_threaded_scope.cpp src/phlop/timing/scope_timer.cpp -o bin/threaded_scope_test
 
     - uses: ilammy/msvc-dev-cmd@v1
       if: runner.os == 'Windows'
@@ -60,9 +60,9 @@ jobs:
         mkdir bin
         set CXX=cl /nologo /std:c++20 /permissive- /Zc:preprocessor /EHsc /O2 /W3 /WX /wd4996 /Iinc /Fobin\
         %CXX% tests\timing\test_scope_timer.cpp src\phlop\timing\scope_timer.cpp /Febin\scope_timer_test.exe || exit /b 1
-        %CXX% tests\timing\test_threaded_scope_timer.cpp src\phlop\timing\common_threaded_timer.cpp /Febin\threaded_scope_timer_test.exe || exit /b 1
+        %CXX% tests\timing\test_threaded_scope_timer.cpp src\phlop\timing\scope_timer.cpp /Febin\threaded_scope_timer_test.exe || exit /b 1
         %CXX% tests\timing\test_scope.cpp src\phlop\timing\scope_timer.cpp /Febin\scope_test.exe || exit /b 1
-        %CXX% tests\timing\test_threaded_scope.cpp src\phlop\timing\common_threaded_timer.cpp /Febin\threaded_scope_test.exe || exit /b 1
+        %CXX% tests\timing\test_threaded_scope.cpp src\phlop\timing\scope_timer.cpp /Febin\threaded_scope_test.exe || exit /b 1
 
     - name: Scope timers
       run: |

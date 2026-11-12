@@ -4,7 +4,7 @@
 //   ./bin/threaded_scope
 //   python3 tests/timing/test_scope_timer.py test_threaded_scope -f bin/threaded_scope.txt
 
-#include "phlop/timing/threaded_scope_timer.hpp"
+#include "phlop/timing/para_scope_timer.hpp"
 
 #include <ctime>
 #include <atomic>
@@ -45,7 +45,7 @@ double work(std::size_t const n, int const reps)
 
 int main()
 {
-    phlop::scope_timer().file_name("bin/threaded_scope.txt").io().init();
+    phlop::para::scope_timer().file_name("bin/threaded_scope.txt").io().init();
     std::vector<double> results(4);
     {
         PHLOP_SCOPE("main", time, perf_all, io); // counts the main thread only
@@ -56,7 +56,7 @@ int main()
         for (auto& t : threads)
             t.join();
     }
-    phlop::scope_timer().shutdown();
+    phlop::para::scope_timer().shutdown();
     std::cout << "results " << results[0] << " " << results[3] << " at " << (std::time(nullptr) > 0)
               << '\n';
 }

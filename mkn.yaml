@@ -15,15 +15,21 @@ profile:
 
 - name: threaded_scope_timer
   parent: base
-  src: src/phlop/timing/common_threaded_timer.cpp
+  src: src/phlop/timing/scope_timer.cpp
   mode: shared
   test: tests/timing/test_threaded_scope_timer.cpp
 
 - name: mpi_scope_timer
   parent: base
-  src: src/phlop/timing/common_threaded_timer.cpp
+  src: src/phlop/timing/scope_timer.cpp
   mode: shared
   test: tests/timing/test_mpi_scope_timer.cpp
+
+- name: mpi_para_scope_timer
+  parent: base
+  src: src/phlop/timing/scope_timer.cpp
+  mode: shared
+  test: tests/timing/test_mpi_para_scope_timer.cpp
 
 - name: stress_scope_timer
   parent: base
@@ -38,6 +44,6 @@ profile:
 
 - name: threaded_scope
   parent: base
-  src: src/phlop/timing/common_threaded_timer.cpp
+  src: src/phlop/timing/scope_timer.cpp
   mode: shared
   test: tests/timing/test_threaded_scope.cpp

@@ -66,6 +66,51 @@ struct SteadyClock
     }
 };
 
+namespace mpi
+{
+    struct Clock; // MPI_Wtime, defined in mpi_timer.hpp: the timers only name it here
+} // namespace mpi
+
+
+
+// clock values taken at points every process passed together, eg just after a
+//  barrier, see phlop::mpi::sync_clock(). Written as "#clock sync=<t>,..." so
+//  starts in different files can be aligned in post-processing. global: whether
+//  the clock is already the same everywhere, 1/0, -1 unknown
+struct ClockSyncs
+{
+    void add(std::uint64_t const t, int const g = -1)
+    {
+        syncs.emplace_back(t);
+        if (g >= 0)
+            global = g;
+    }
+
+    // "#clock sync=<t>,... global=<0|1>" or none
+    std::vector<std::string> headers() const
+    {
+        if (syncs.empty())
+            return {};
+        std::string line = "#clock sync=";
+        for (std::size_t i = 0; i < syncs.size(); ++i)
+            line += (i ? "," : "") + std::to_string(syncs[i]);
+        if (global >= 0)
+            line += " global=" + std::to_string(global);
+        return {line};
+    }
+
+    bool empty() const { return syncs.empty(); }
+
+    void clear()
+    {
+        syncs.clear();
+        global = -1;
+    }
+
+    std::vector<std::uint64_t> syncs;
+    int global = -1;
+};
+
 
 template<typename Report>
 struct RunTimerReportSnapshotT

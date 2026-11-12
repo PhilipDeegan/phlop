@@ -1,5 +1,5 @@
 
-#include "phlop/timing/threaded_scope_timer.hpp"
+#include "phlop/timing/para_scope_timer.hpp"
 
 #include <thread>
 #include <vector>
@@ -76,7 +76,7 @@ int main()
     std::cout << __FILE__ << std::endl;
 
     // PHLOP_SCOPE_MEM=0 overrides memory(), see test_scope_timer.py
-    phlop::scope_timer().file_name("bin/threaded_scope_timer.txt").memory().init();
+    phlop::para::scope_timer().file_name("bin/threaded_scope_timer.txt").memory().init();
 
     std::thread{[&]() {
         for (std::size_t i = 0; i < 2; ++i)

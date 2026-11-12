@@ -3,7 +3,7 @@
 // core library, scopes instantiated here: header inline statics would be its
 // own hidden copies, so phlop's singletons must come from the core library
 
-#include "phlop/timing/threaded_scope_timer.hpp"
+#include "phlop/timing/para_scope_timer.hpp"
 
 #define EXPORT extern "C" __attribute__((visibility("default")))
 
@@ -13,7 +13,7 @@ EXPORT void const* module_config()
 }
 EXPORT void const* module_man_local()
 {
-    return &phlop::threaded::ScopeTimerMan::local();
+    return &phlop::para::ScopeTimerMan::local();
 }
 EXPORT bool module_has_perf()
 {

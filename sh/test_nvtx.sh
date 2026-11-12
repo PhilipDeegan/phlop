@@ -32,4 +32,4 @@ nvtx_run(){ # name, timer file the program writes, sources...
 nvtx_run scope_timer bin/scope_timer.txt \
     tests/timing/test_scope_timer.cpp src/phlop/timing/scope_timer.cpp
 nvtx_run threaded_scope_timer bin/threaded_scope_timer.txt \
-    tests/timing/test_threaded_scope_timer.cpp src/phlop/timing/common_threaded_timer.cpp
+    tests/timing/test_threaded_scope_timer.cpp src/phlop/timing/scope_timer.cpp

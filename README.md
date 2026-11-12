@@ -103,8 +103,14 @@ python3 -m phlop.app.nvidia.cuobjdump dbg=bin/a rel=bin/b       # compare builds
 ```
 
 ```cpp
-// per scope hardware counters: scope_timer.hpp, threaded_scope_timer.hpp, mpi_scope_timer.hpp
-// threaded: each thread counts only itself, opening its counters on first use
+// four timers, one source to link: src/phlop/timing/scope_timer.cpp
+//   phlop::              serial                 scope_timer.hpp
+//   phlop::para::        multithread capable    para_scope_timer.hpp
+//   phlop::mpi::         serial, MPI_Wtime      mpi_scope_timer.hpp
+//   phlop::mpi::para::   multithread, MPI_Wtime mpi_para_scope_timer.hpp
+// the header picks which one PHLOP_SCOPE records into, eg phlop::para::scope_timer().init()
+// per scope hardware counters in all of them. para: each thread counts only itself,
+//  opening its counters on first use
 PHLOP_SCOPE("solve", time, perf_all);   // time + PHLOP_PERF_ALL events
 PHLOP_SCOPE("step", time, perf_light);  // time + PHLOP_PERF_LIGHT events
 PHLOP_SCOPE("io");                      // PHLOP_SCOPE_DEFAULT, time
@@ -115,7 +121,10 @@ PHLOP_SCOPE("h5_write", time, io);
 ```
 
 ```cpp
-// mpi_scope_timer.hpp: MPI_Wtime may differ per rank, a barrier gives a common point
+// mpi_scope_timer.hpp: scopes on one thread per rank, PHLOP_SCOPE_MEM=peak per scope
+// mpi_para_scope_timer.hpp: scopes on several threads per rank (opt in), phlop::mpi::para::
+//  sync_clock() and scope_timer(). No per scope peaks: PHLOP_SCOPE_MEM=peak is =1
+// MPI_Wtime may differ per rank, a barrier gives a common point
 MPI_Init(&argc, &argv);
 phlop::mpi::sync_clock();  // collective, after MPI_Init
 // ... run ...
@@ -137,7 +146,7 @@ ncu --nvtx --nvtx-include "phlop@step/" ./app         # only kernels inside scop
 eval "$(python3 -m phlop.app.pfm.stat --env perf_light=light --env perf_all=topdown)"
 ./app  # writes counts into the scope timer file, read with:
 python3 -m phlop.timing.scope_timer perf .phlop_scope_times.txt -v  # scope_timer.hpp
-python3 -m phlop.timing.scope_timer perf .phlop_scope_times.bin -v  # threaded, same format
+python3 -m phlop.timing.scope_timer perf .phlop_para_scope_times.txt -v  # para, same format
 # opt in: count kernel space too (eg I/O scopes), needs perf_event_paranoid <= 1
 eval "$(python3 -m phlop.app.pfm.stat --env perf_light=light --kernel)"
 ```
