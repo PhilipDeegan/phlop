@@ -89,6 +89,16 @@ struct Config
     // Without any env this is a no-op, perf scopes then only time
     bool init();
 
+    // the timer managers share this one config, serial and para may both be live:
+    //  the first acquire inits it, the last release closes it, so shutting one
+    //  timer down leaves the other's counters and "#perf" headers in place
+    bool acquire() { return users++ ? ok : init(); }
+    void release()
+    {
+        if (users > 0 and --users == 0)
+            close();
+    }
+
     void close()
     {
         ctx.clear();
@@ -142,6 +152,7 @@ struct Config
     std::atomic<std::uint64_t> generation{1};
     std::atomic<std::uint64_t> read_failures{0}, open_failures{0};
     std::atomic<bool> reported{false};
+    std::size_t users = 0; // timer managers between acquire and release, see acquire
 
 private:
     // "key=integer,...", sets pmu_forced. False, nothing set, if malformed

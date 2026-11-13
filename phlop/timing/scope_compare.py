@@ -77,8 +77,8 @@ class Change:
 
     @property
     def pct(self):
-        if self.base:
-            return (self.new - self.base) / self.base * 100.0
+        if self.base:  # abs: mem_kept can be negative, growth from it still regresses
+            return (self.new - self.base) / abs(self.base) * 100.0
         return math.copysign(math.inf, self.new) if self.new else 0.0  # from zero
 
     @property
@@ -233,7 +233,7 @@ def merge_runs(runs, own, which, warnings):
 def merged_value(name, values):
     """(value, noise percent): the fastest run's time, the median run's count"""
     value = float(min(values) if name == "time" else np.median(values))
-    noise = (max(values) - min(values)) / value * 100.0 if value else 0.0
+    noise = (max(values) - min(values)) / abs(value) * 100.0 if value else 0.0
     return value, noise
 
 
@@ -262,8 +262,25 @@ def compare(
 
     ref = base_runs[0][0]
     warnings = check_compatible(ref, new_runs[0][0])
-    for stf in [f for run in base_runs + new_runs for f in run][1:]:
-        check_compatible(ref, stf)  # raises, warnings once from the first pair
+    # every other file against the first base one: raises if incompatible. Its
+    #  warnings, named by side/run/rank, only if not already given by another file
+    #  (with many ranks, the same warning from each would bury the report)
+    ctxs = [("base", ref.ctx or {}), ("new", new_runs[0][0].ctx or {})]  # per side
+    texts = {w for f in (ref, new_runs[0][0]) for w in f.perf_warnings()}
+    for side, runs in (("base", base_runs), ("new", new_runs)):
+        for r, run in enumerate(runs):
+            for k, stf in enumerate(run):
+                if stf is ref or stf is new_runs[0][0]:
+                    continue
+                check_compatible(ref, stf)
+                name = f"{side} run {r} rank {k}"
+                if (ctx := stf.ctx or {}) != ctxs[0][1] and (side, ctx) not in ctxs:
+                    ctxs.append((side, ctx))
+                    warnings.append(f"#ctx differs: {name} {ctx} vs {ctxs[0][1]}")
+                for w in stf.perf_warnings():
+                    if w not in texts:
+                        texts.add(w)
+                        warnings.append(f"{name}: {w}")
 
     a = merge_runs(base_runs, own, "base", warnings)
     b = merge_runs(new_runs, own, "new", warnings)
@@ -286,7 +303,7 @@ def compare(
             if name not in thresholds and not all_events:
                 continue
             va, noise_a = merged_value(name, values_a[name])
-            if va < min_count:
+            if abs(va) < min_count:  # magnitude: mem_kept can be negative
                 continue
             vb, noise_b = merged_value(name, values_b[name])
             change = Change(path, name, va, vb, thresholds.get(name), noise_a, noise_b)

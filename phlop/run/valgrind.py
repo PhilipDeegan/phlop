@@ -79,8 +79,8 @@ def run(cli_args):
         a, b = cli_args.compare
         names = (_name(a, "A"), _name(b, "B"))
         ra, rb = vg.results(a, cli_args.outdir), vg.results(b, cli_args.outdir)
-        outputs(cli_args, ra, rb, names)
-        return 0
+        outputs(cli_args, ra, rb, names)  # says which are incomplete
+        return 1 if any(not getattr(r, "complete", True) for r in ra + rb) else 0
 
     if cli_args.show is not None:
         specs = cli_args.show or [None]

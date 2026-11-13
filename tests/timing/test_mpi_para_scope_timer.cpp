@@ -75,7 +75,15 @@ int main(int argc, char** argv)
 {
     std::cout << __FILE__ << std::endl;
 
-    MPI_Init(&argc, &argv);
+    // worker threads call MPI_Wtime (phlop::mpi::Clock), one at a time: the joins serialize
+    int provided = MPI_THREAD_SINGLE;
+    MPI_Init_thread(&argc, &argv, MPI_THREAD_SERIALIZED, &provided);
+    if (provided < MPI_THREAD_SERIALIZED)
+    {
+        std::cerr << "MPI_THREAD_SERIALIZED not provided, got " << provided << std::endl;
+        MPI_Finalize();
+        return 1;
+    }
 
     phlop::mpi::para::scope_timer().file_name("bin/" + phlop::mpi::scope_timer_file_namer()).memory().init();
     phlop::mpi::para::sync_clock(); // reference points for cross rank starts, see sh/test_mpi.sh

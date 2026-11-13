@@ -247,18 +247,36 @@ def memcheck_text(results, top=10, all=False):
 
 
 def memcheck_compare(a, b, a_name="A", b_name="B", top=10):
-    def keys(x):
-        return {(e.kind, e.site) for m in x for e in m.errors}
+    def totals(x):  # {(kind, site): [times reported, bytes leaked]}
+        out = {}
+        for m in x:
+            for e in m.errors:
+                t = out.setdefault((e.kind, e.site), [0, 0])
+                t[0] += e.count
+                t[1] += e.bytes
+        return out
 
-    ka, kb = keys(a), keys(b)
+    ta, tb = totals(a), totals(b)
+    ka, kb = set(ta), set(tb)
+    changed = sorted((k for k in ka & kb if ta[k] != tb[k]), key=str)
     lines = [
         f"memcheck compare: {len(ka)} kinds/sites in {a_name}, {len(kb)} in {b_name}"
     ]
+    for name, x in ((a_name, a), (b_name, b)):
+        if cut := [label(m.path) for m in x if not m.complete]:
+            lines += [f"  {name} incomplete, xml cut short: {', '.join(cut)}"]
     for name, only in ((a_name, ka - kb), (b_name, kb - ka)):
         if only:
             lines += [f"  only in {name}:"]
             lines += [f"    {k} at {s}" for k, s in sorted(only, key=str)[:top]]
-    if ka == kb:
+    if changed:
+        lines += ["  changed:"]
+        lines += [
+            f"    {k} at {s}: {ta[k, s][0]}x {ta[k, s][1]} B in {a_name},"
+            f" {tb[k, s][0]}x {tb[k, s][1]} B in {b_name}"
+            for k, s in changed[:top]
+        ]
+    if ka == kb and not changed:
         lines += ["  the same errors and leaks in both"]
     return "\n".join(lines)
 

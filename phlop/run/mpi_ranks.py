@@ -11,7 +11,8 @@
 #
 # --outdir must be on storage every rank sees, eg not node local /tmp: rank 0
 # reads the other ranks' files. Waits time out after PHLOP_MPI_TIMEOUT seconds,
-# default 600, for the other ranks to finish after rank 0
+# default 600, for the other ranks to finish after rank 0. The ranks agree on a
+# run id from the launcher's job id, see run_id, PHLOP_MPI_RUN_ID overrides it
 
 import glob
 import os
@@ -40,10 +41,27 @@ def rank_size():
     return env(RANK_ENVS), int(env(SIZE_ENVS) or 1)
 
 
+_warned_ppid = False
+
+
 def run_id():
-    """the same on every rank: from the launcher's job id, else its pid.
-    srun steps of one slurm job share SLURM_JOB_ID, the step id separates them"""
+    """the same on every rank: PHLOP_MPI_RUN_ID, else the launcher's job id, else
+    the parent pid. srun steps of one slurm job share SLURM_JOB_ID, the step id
+    separates them. The parent pid is only shared by ranks under one launcher
+    process, eg one node with mpich's hydra: ranks on other nodes would wait on
+    a different id, so that fallback warns once"""
+    global _warned_ppid
+    if rid := os.environ.get("PHLOP_MPI_RUN_ID"):
+        return f"mpi-{rid}"
     job = env(JOB_ENVS)  # eg prterun-host-234099@1: keep 234099-1
+    if not job and env(RANK_ENVS) is not None and not _warned_ppid:
+        _warned_ppid = True
+        print(
+            "phlop: no launcher job id in the env, run id from the parent pid:"
+            " ranks on other nodes would not match. Set PHLOP_MPI_RUN_ID on every"
+            " rank, eg mpirun -genv PHLOP_MPI_RUN_ID=$RANDOM",
+            file=sys.stderr,
+        )
     if job and job == os.environ.get("SLURM_JOB_ID") and "SLURM_STEP_ID" in os.environ:
         job += f"-{os.environ['SLURM_STEP_ID']}"
     digits = re.findall(r"\d+", job or "")

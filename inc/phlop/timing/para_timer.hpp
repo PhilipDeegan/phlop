@@ -13,6 +13,7 @@
 #include "phlop/timing/scope.hpp"
 
 #include <mutex>
+#include <utility>
 #include <atomic>
 #include <memory>
 #include <cstdlib>
@@ -28,8 +29,7 @@
     static thread_local ns::ThreadLifeWatcher PHLOP_STR_CAT(_watcher_, __LINE__){                  \
         PHLOP_STR_CAT(ridx_, __LINE__)};                                                           \
     PHLOP_NVTX_RANGE(PHLOP_STR_CAT(ridx_, __LINE__)->k)                                            \
-    ns::Scope<flags> PHLOP_STR_CAT(_Scope_, __LINE__){*PHLOP_STR_CAT(ridx_, __LINE__)};            \
-    ns::ScopeTimerMan::local().report_stack_ptr = PHLOP_STR_CAT(ridx_, __LINE__).get();
+    ns::Scope<flags> PHLOP_STR_CAT(_Scope_, __LINE__){*PHLOP_STR_CAT(ridx_, __LINE__)};
 
 
 namespace phlop::impl::para
@@ -79,9 +79,9 @@ struct ScopeTimerMan
     // opening its counters on its first counted scope
     void init()
     {
-        active          = true;
+        if (!std::exchange(active, true)) // a second init keeps the one acquire
+            perf::Config::INSTANCE().acquire();
         local().movable = true;
-        perf::Config::INSTANCE().init();
         memory(_memory.load(std::memory_order_relaxed));
         io(_io.load(std::memory_order_relaxed));
     }
@@ -95,13 +95,13 @@ struct ScopeTimerMan
 
         if (auto const s = perf::summary(); !s.empty())
             std::cerr << "phlop perf counters: " << s << '\n';
-        perf::Config::INSTANCE().close();
+        if (std::exchange(active, false))
+            perf::Config::INSTANCE().release();
 
         _headers.clear();
         _clock_syncs.clear();
         thread_storage.clear();
         thread_reports.clear();
-        active = false;
     }
 
     auto& file_name(std::string const fn)
@@ -342,8 +342,9 @@ struct ScopeTimer : ScopeTimerNode<Clock>
     {
         if (Man::INSTANCE().active)
         {
-            this->pscope         = Man::current_scope();
-            Man::current_scope() = this;
+            this->pscope                   = Man::current_scope();
+            Man::current_scope()           = this;
+            Man::local().report_stack_ptr = &r; // restored to parent by the destructor
         }
     }
 

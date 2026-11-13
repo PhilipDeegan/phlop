@@ -13,6 +13,7 @@
 #include "phlop/timing/scope.hpp"
 
 #include <atomic>
+#include <utility>
 #include <memory>
 #include <cstdlib>
 #include <iostream>
@@ -24,8 +25,7 @@
 #define PHLOP_DETAIL_SERIAL_SCOPE(ns, key, flags)                                                  \
     static ns::RunTimerReport PHLOP_STR_CAT(ridx_, __LINE__){key, __FILE__, __LINE__};             \
     PHLOP_NVTX_RANGE(PHLOP_STR_CAT(ridx_, __LINE__).k)                                             \
-    ns::Scope<flags> PHLOP_STR_CAT(_Scope_, __LINE__){PHLOP_STR_CAT(ridx_, __LINE__)};             \
-    ns::ScopeTimerMan::INSTANCE().report_stack_ptr = &PHLOP_STR_CAT(ridx_, __LINE__);
+    ns::Scope<flags> PHLOP_STR_CAT(_Scope_, __LINE__){PHLOP_STR_CAT(ridx_, __LINE__)};
 
 
 namespace phlop::detail
@@ -94,8 +94,8 @@ struct ScopeTimerMan
     // perf counters (PHLOP_PERF_LIGHT/ALL env) count the calling thread
     void init()
     {
-        active = true;
-        perf::Config::INSTANCE().init();
+        if (!std::exchange(active, true)) // a second init keeps the one acquire
+            perf::Config::INSTANCE().acquire();
         memory(_memory.load(std::memory_order_relaxed), _memory_peak);
         io(_io.load(std::memory_order_relaxed));
         _peak_carry = 0;
@@ -117,8 +117,8 @@ struct ScopeTimerMan
 
         if (auto const s = perf::summary(); !s.empty())
             std::cerr << "phlop perf counters: " << s << '\n';
-        perf::Config::INSTANCE().close();
-        active = false;
+        if (std::exchange(active, false))
+            perf::Config::INSTANCE().release();
     }
 
     auto& file_name(std::string const& fn)
@@ -269,8 +269,9 @@ struct ScopeTimer : ScopeTimerNode<Clock>
     {
         if (Man::INSTANCE().active)
         {
-            this->pscope         = Man::current_scope();
-            Man::current_scope() = this;
+            this->pscope                     = Man::current_scope();
+            Man::current_scope()             = this;
+            Man::INSTANCE().report_stack_ptr = &r; // restored to parent by the destructor
 
 #if defined(PHLOP_SCOPE_TIMER_SELF_STATS)
             detail::construct_stats.add(now() - _self_start);

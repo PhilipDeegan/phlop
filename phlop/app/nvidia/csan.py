@@ -205,6 +205,7 @@ def group(issues):
         g.count += i.count
         g.bytes += i.bytes
         g.ranks |= i.ranks
+        g.severe |= i.severe  # one severe note keeps the group severe, any order
     return sorted(out.values(), key=lambda i: (KINDS.index(i.kind), -i.count, -i.bytes))
 
 

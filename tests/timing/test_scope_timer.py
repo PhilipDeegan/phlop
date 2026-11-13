@@ -55,7 +55,8 @@ def _check_fn_mem(stf, name, other_mem=()):
         for n in walk(stf.roots)
         if n.has_mem and n is not fn_mem and stf(n.k) not in other_mem
     ]
-    assert not others, f"{name}: memory recorded on time only scopes {others}"
+    if others:  # not assert: sh/test.sh runs test_scope_timer with -O
+        raise AssertionError(f"{name}: memory recorded on time only scopes {others}")
 
     if os.environ.get("PHLOP_SCOPE_MEM") == "0":  # forced off, overrides memory()
         np.testing.assert_equal(fn_mem.has_mem, False)
@@ -187,11 +188,13 @@ def _check_io(stf):
         return
     MiB = 1024 * 1024
     (fn_io,) = [r for r in stf.roots if stf(r.k) == "fn_io"]
-    assert fn_io.has_io, "fn_io has no io: token"
+    if not fn_io.has_io:  # not assert: sh/test.sh runs test_scope_timer with -O
+        raise AssertionError("fn_io has no io: token")
     io = fn_io.io
     expected = {"wchar": 4 * MiB, "syscw": 4, "rchar": MiB, "syscr": 1}
     np.testing.assert_equal({k: io[k] for k in expected}, expected, err_msg=str(io))
-    assert not any(r.has_io for r in stf.roots if stf(r.k) != "fn_io")
+    if others := [stf(r.k) for r in stf.roots if r.has_io and stf(r.k) != "fn_io"]:
+        raise AssertionError(f"io recorded on roots other than fn_io {others}")
     print("test_scope_timer: io ok", scope_timer.io_str(io))
 
 
