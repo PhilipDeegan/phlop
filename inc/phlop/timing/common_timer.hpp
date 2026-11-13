@@ -9,7 +9,10 @@
 #include <fstream>
 #include <unordered_map>
 
+#include "phlop/os/io.hpp"
 #include "phlop/os/mem.hpp"
+
+#include <algorithm>
 
 namespace phlop
 {
@@ -27,6 +30,32 @@ struct MemSample
     std::uint64_t peak = 0; // process lifetime peak resident set size in bytes
 };
 
+// the calling thread's I/O accounting at a point in time, see phlop/os/io.hpp
+struct IoSample
+{
+    static IoSample now()
+    {
+        IoSample s;
+        s.ok = os::ThreadIo::local().read(s.counts, s.self_bytes);
+        return s;
+    }
+
+    // exit - entry, less what phlop itself read in between: the entry sample,
+    //  and any reads added to self_calls/self_bytes, eg perf counter reads
+    os::IoCounts operator-(IoSample const& in) const
+    {
+        auto d = counts - in.counts;
+        d.syscr -= (std::min)(d.syscr, in.self_calls);
+        d.rchar -= (std::min)(d.rchar, in.self_bytes);
+        return d;
+    }
+
+    os::IoCounts counts{};
+    std::uint64_t self_bytes = 0; // read by phlop after this sample, see above
+    std::uint64_t self_calls = 1; // this sample's own read
+    bool ok                  = false;
+};
+
 struct SteadyClock
 {
     static std::uint64_t now()
@@ -35,6 +64,51 @@ struct SteadyClock
                    std::chrono::steady_clock::now().time_since_epoch())
             .count();
     }
+};
+
+namespace mpi
+{
+    struct Clock; // MPI_Wtime, defined in mpi_timer.hpp: the timers only name it here
+} // namespace mpi
+
+
+
+// clock values taken at points every process passed together, eg just after a
+//  barrier, see phlop::mpi::sync_clock(). Written as "#clock sync=<t>,..." so
+//  starts in different files can be aligned in post-processing. global: whether
+//  the clock is already the same everywhere, 1/0, -1 unknown
+struct ClockSyncs
+{
+    void add(std::uint64_t const t, int const g = -1)
+    {
+        syncs.emplace_back(t);
+        if (g >= 0)
+            global = g;
+    }
+
+    // "#clock sync=<t>,... global=<0|1>" or none
+    std::vector<std::string> headers() const
+    {
+        if (syncs.empty())
+            return {};
+        std::string line = "#clock sync=";
+        for (std::size_t i = 0; i < syncs.size(); ++i)
+            line += (i ? "," : "") + std::to_string(syncs[i]);
+        if (global >= 0)
+            line += " global=" + std::to_string(global);
+        return {line};
+    }
+
+    bool empty() const { return syncs.empty(); }
+
+    void clear()
+    {
+        syncs.clear();
+        global = -1;
+    }
+
+    std::vector<std::uint64_t> syncs;
+    int global = -1;
 };
 
 
@@ -64,6 +138,10 @@ struct RunTimerReportSnapshotT
     // PHLOP_SCOPE mem: resident memory on entry/exit
     bool has_mem = false;
     MemSample mem_in{}, mem_out{};
+
+    // PHLOP_SCOPE io: the thread's I/O over the scope, exit - entry
+    bool has_io = false;
+    os::IoCounts io{};
 };
 
 
@@ -84,6 +162,8 @@ struct BinaryTimerFileNode
     std::vector<std::uint64_t> counts{};
     bool has_mem = false;
     MemSample mem_in{}, mem_out{};
+    bool has_io = false;
+    os::IoCounts io{};
 
     std::vector<BinaryTimerFileNode> kinder{};
 };
@@ -110,6 +190,8 @@ struct BinaryTimerFile
         node.has_mem  = c->has_mem;
         node.mem_in   = c->mem_in;
         node.mem_out  = c->mem_out;
+        node.has_io   = c->has_io;
+        node.io       = c->io;
         return node;
     }
 
@@ -188,6 +270,7 @@ struct BinaryTimerFile
         file << id_to_key.at(node.fn_id) << node.time;
         _write_counts(file, node);
         _write_mem(file, node);
+        _write_io(file, node);
         file << '\n';
         for (auto const& n : node.kinder)
             _write_strings(file, n, tabs + 1);
@@ -200,6 +283,7 @@ struct BinaryTimerFile
         file << node.fn_id << " " << node.start << ":" << node.time;
         _write_counts(file, node);
         _write_mem(file, node);
+        _write_io(file, node);
         file << '\n';
         for (auto const& n : node.kinder)
             _write(file, n, tabs + 1);
@@ -221,6 +305,17 @@ struct BinaryTimerFile
         if (node.has_mem)
             file << " m:" << node.mem_in.rss << "," << node.mem_out.rss << "," << node.mem_in.peak
                  << "," << node.mem_out.peak;
+    }
+
+    // " io:<rchar>,<wchar>,<syscr>,<syscw>,<read_bytes>,<write_bytes>,<cancelled_write_bytes>"
+    //  the scope's exit - entry, after any mem, only for io scopes
+    static void _write_io(std::ofstream& file, BinaryTimerFileNode const& node)
+    {
+        if (!node.has_io)
+            return;
+        auto const& io = node.io;
+        file << " io:" << io.rchar << "," << io.wchar << "," << io.syscr << "," << io.syscw << ","
+             << io.read_bytes << "," << io.write_bytes << "," << io.cancelled_write_bytes;
     }
 
     std::unordered_map<std::string, std::size_t> key_ids;
