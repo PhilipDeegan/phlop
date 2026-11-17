@@ -35,6 +35,7 @@ jobs:
         architecture: x64
 
     - run: |
+        sudo apt-get install -yq valgrind || echo "no valgrind, its tests are skipped"
         python3 -m pip install -r requirements.txt
         ./sh/lint.sh
         export PATH="$PWD:$PATH"

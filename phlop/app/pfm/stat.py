@@ -290,10 +290,15 @@ def list_sets(out=sys.stdout):
 ENV_LEVELS = {"perf_light": "PHLOP_PERF_LIGHT", "perf_all": "PHLOP_PERF_ALL"}
 
 
-def scope_env(set_name, sets=None, pmu=None):
+KERNEL_LABEL = "+kernel"  # label suffix, its counts include kernel space
+
+
+def scope_env(set_name, sets=None, pmu=None, kernel=False):
     """PHLOP_SCOPE env value for an event set, see perf_counters.hpp:
     "<pmu>/<set>;<alias>=<config>,...", config raw, or "hw:<id>" for perf
-    generic events (PERF_TYPE_HARDWARE)"""
+    generic events (PERF_TYPE_HARDWARE). kernel: every config "k:" prefixed,
+    counting user and kernel space, the label "<pmu>/<set>+kernel" so files
+    say so and scope_compare will not compare them with user only counts"""
     if sets is None:
         pmu, sets = sets_for(ce.detected_pmus())
     eset = sets[set_name]
@@ -304,21 +309,29 @@ def scope_env(set_name, sets=None, pmu=None):
         if spec.startswith("perf:"):
             if spec[5:] not in PERF_HW_IDS:
                 raise ValueError(f"{set_name}: {spec} is not a perf hardware event")
-            items.append(f"{alias}=hw:{PERF_HW_IDS[spec[5:]]:#x}")
-            continue
-        if spec.startswith("raw:"):
-            config = ce.pmu_terms_config(spec[4:])
+            config = f"hw:{PERF_HW_IDS[spec[5:]]:#x}"
+        elif spec.startswith("raw:"):
+            config = f"{ce.pmu_terms_config(spec[4:]):#x}"
         else:
-            config = enc[spec] & ce.perf_config_mask()
-        items.append(f"{alias}={config:#x}")
-    return f"{pmu}/{set_name};{','.join(items)}"
+            config = f"{enc[spec] & ce.perf_config_mask():#x}"
+        items.append(f"{alias}={'k:' if kernel else ''}{config}")
+    label = f"{pmu}/{set_name}{KERNEL_LABEL if kernel else ''}"
+    return f"{label};{','.join(items)}"
 
 
-def scope_env_exports(level_sets):
+def scope_env_exports(level_sets, kernel=False):
     """shell export lines for ["perf_light=light", "perf_all=topdown"].
+    kernel: counts include kernel space, see scope_env.
     Warnings go to stderr, stdout is for eval"""
     pmu, sets = sets_for(ce.detected_pmus())
-    for w in ce.pmu_warnings(pmu):
+    warnings = ce.pmu_warnings(pmu)
+    level = perf.paranoid_level()
+    if kernel and not perf.privileged() and level is not None and level > 1:
+        warnings.append(  # the timers' perf_event_open would fail, say so now
+            f"perf_event_paranoid={level}: --kernel scope counters will fail to "
+            "open, need <= 1 or CAP_PERFMON. sudo sysctl -w kernel.perf_event_paranoid=1"
+        )
+    for w in warnings:
         print(f"WARNING: {w}", file=sys.stderr)
     exports, costs = {}, {}  # per level, the last given wins as in the shell
     for item in level_sets:
@@ -327,7 +340,7 @@ def scope_env_exports(level_sets):
             raise ValueError(
                 f"--env {item}: want {'|'.join(ENV_LEVELS)}=<set>, sets: {list(sets)}"
             )
-        value = scope_env(set_name, sets, pmu)
+        value = scope_env(set_name, sets, pmu, kernel)
         configs = [c.split("=")[1] for c in value.split(";")[1].split(",")]
         costs[level] = {  # config -> counters it costs
             config: EventSet("", "", {"": spec}).counters_needed()
@@ -379,7 +392,11 @@ def cli_args_parser(description="perf stat with libpfm event sets"):
     parser.add_argument("-r", "--repeat", type=int, default=1, help="perf stat -r")
     parser.add_argument("-o", "--outfile", default=None, help="write results json")
     parser.add_argument(
-        "-k", "--kernel", action="store_true", help="count kernel space too"
+        "-k",
+        "--kernel",
+        action="store_true",
+        help="count kernel space too, also with --env: scope counts then include "
+        "kernel space, needs perf_event_paranoid <= 1 or CAP_PERFMON",
     )
     parser.add_argument(
         "-q", "--quiet", action="store_true", help="hide program stdout"
@@ -396,7 +413,7 @@ def main(argv=None):
         list_sets()
         return 0
     if cli_args.env:
-        print("\n".join(scope_env_exports(cli_args.env)))
+        print("\n".join(scope_env_exports(cli_args.env, cli_args.kernel)))
         return 0
     program = cli_args.remaining
     if program and program[0] == "--":

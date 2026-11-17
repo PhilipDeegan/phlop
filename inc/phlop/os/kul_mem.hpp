@@ -206,8 +206,39 @@ inline bool statm(std::uint64_t& size, std::uint64_t& resident) {
   return next(size) && next(resident);
 }
 
+#if defined(__linux__)
+// /proc/self/status "VmHWM:  <kB> kB", this mm's high-water mark: the one
+//  /proc/self/clear_refs resets. getrusage's ru_maxrss also keeps the peak of
+//  the image before exec(), eg a launcher's, which no reset clears
+inline bool vm_hwm(std::uint64_t& bytes) {
+  int const fd = open("/proc/self/status", O_RDONLY | O_CLOEXEC);
+  if (fd < 0) return false;
+  char buf[4096];
+  auto const n = read(fd, buf, sizeof(buf) - 1);
+  close(fd);
+  if (n <= 0) return false;
+  buf[n] = '\0';
+  for (char const* p = buf; *p; ++p) {
+    if ((p == buf || p[-1] == '\n') && p[0] == 'V' && p[1] == 'm' && p[2] == 'H' &&
+        p[3] == 'W' && p[4] == 'M' && p[5] == ':') {
+      p += 6;
+      while (*p == ' ' || *p == '\t') ++p;
+      if (*p < '0' || *p > '9') return false;
+      std::uint64_t v = 0;
+      for (; *p >= '0' && *p <= '9'; ++p) v = v * 10 + static_cast<std::uint64_t>(*p - '0');
+      bytes = v * 1024;  // kB
+      return true;
+    }
+  }
+  return false;
+}
+#endif
+
 // process high-water mark as reported by the OS, unclamped
 inline std::uint64_t raw_peak_bytes() {
+#if defined(__linux__)
+  if (std::uint64_t bytes = 0; vm_hwm(bytes)) return bytes;
+#endif
   struct rusage ru;
   if (getrusage(RUSAGE_SELF, &ru) != 0 || ru.ru_maxrss <= 0) return 0;
   return static_cast<std::uint64_t>(ru.ru_maxrss) * 1024;  // KiB

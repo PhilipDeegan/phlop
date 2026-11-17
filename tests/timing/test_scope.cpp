@@ -13,7 +13,7 @@
 using namespace std; // bare `time` below must still mean phlop::scope_key::time
 
 static_assert(phlop::scope_flags() == 1); // PHLOP_SCOPE_DEFAULT is time
-static_assert(sizeof(phlop::Scope<1>) == sizeof(phlop::ScopeTimer<>)); // time only: no extra
+static_assert(sizeof(phlop::Scope<1>) == sizeof(phlop::ScopeTimer)); // time only: no extra
 
 double fma_loop(std::vector<double>& c, std::vector<double> const& a, int const reps)
 {

@@ -107,7 +107,10 @@ def usable_cores():
     if hasattr(os, "process_cpu_count"):  # python >= 3.13
         cores = os.process_cpu_count() or 1
     elif hasattr(os, "sched_getaffinity"):
-        cores = len(os.sched_getaffinity(0)) or 1
+        try:  # seccomp sandboxes can refuse the syscall
+            cores = len(os.sched_getaffinity(0)) or 1
+        except OSError:
+            cores = os.cpu_count() or 1
     else:
         cores = os.cpu_count() or 1
     limit = cgroup_cpu_limit()
