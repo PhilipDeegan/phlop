@@ -12,6 +12,18 @@ python3 -m pip install phlop -U
 python3 -m phlop.run.test_cases -c 20 -i build --cmake
 ```
 
+#### keeping the CPU cool
+
+A command paused while the CPU is too hot (psutil's sensor, linux): every process of it,
+MPI ranks and their helpers included, stopped at `--high` and continued at `--low` (C):
+
+```shell
+python3 -m phlop.app.thermal --high 88 --low 78 -- make -j 16
+```
+
+The test runner holds back new jobs while hot (running ones go on): `PHLOP_THERMAL_MAX=88`
+(and `PHLOP_THERMAL_RESUME`, default 10 below it).
+
 #### etc
 
 ```shell
