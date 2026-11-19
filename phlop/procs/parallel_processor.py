@@ -26,6 +26,9 @@ STALL_TIMEOUT = float(os.environ.get("PHLOP_STALL_TIMEOUT", "3600"))
 # with psutil, seconds without output before a busy job is killed anyway, 0=off
 STALL_BUSY_TIMEOUT = float(os.environ.get("PHLOP_STALL_BUSY_TIMEOUT", "14400"))
 FAIL_FAST = bool(json.loads(os.environ.get("PHLOP_FAIL_FAST", "false")))
+# seconds between temperature checks while jobs are held (PHLOP_THERMAL_MAX,
+#  see phlop.app.thermal.Hold)
+THERMAL_POLL = 1.0
 # seconds cancelled jobs get to exit on SIGTERM before SIGKILL
 CANCEL_GRACE = 5
 
@@ -276,6 +279,15 @@ def process(
         default=None,
     )
 
+    # PHLOP_THERMAL_MAX: no new job while the CPU is too hot (running ones go
+    #  on), the queue polled meanwhile: nothing running may otherwise be waited on
+    from phlop.app.thermal import Hold
+
+    hot = Hold()
+    if hot.enabled:
+        queue_timeout = min(queue_timeout or THERMAL_POLL, THERMAL_POLL)
+    held_reported = False
+
     fail_fast = fail_fast if fail_fast is not None else FAIL_FAST
     n_cores = n_cores or usable_cores()
     max_cost = max(j.cores for j in jobs)
@@ -300,7 +312,13 @@ def process(
     last_no_output_print = 0.0
 
     def launch():
-        nonlocal cores_avail
+        nonlocal cores_avail, held_reported
+        if pending and hot():
+            if not held_reported:
+                print(f"phlop: CPU at or above {hot.high} C, {len(pending)} jobs held")
+                held_reported = True
+            return
+        held_reported = False
         skipped = deque()
         while pending:
             idx, job = pending.popleft()
