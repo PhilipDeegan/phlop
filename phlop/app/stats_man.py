@@ -135,25 +135,37 @@ def gpus_to_sample(flag=None):
 
 
 class _Sampler:
-    """One psutil.Process for the whole run: cpu_percent(None) then measures
-    the time since the previous sample rather than blocking on a short window"""
+    """The process and its descendants (an MPI launcher's ranks, a shell's
+    commands), each psutil.Process kept for the whole run: cpu_percent(None)
+    then measures the time since the previous sample rather than blocking on a
+    short window. A sample sums memory, cpu and fds over the processes alive
+    at that time"""
 
     def __init__(self, pid, gpus=()):
         self.proc = psutil.Process(pid)
         self.proc.cpu_percent(None)  # starts the first window
+        self.procs = {pid: self.proc}
         self.gpus = list(gpus)
         self.gpu_failed = False
 
-    def gpu_stats(self):
-        """smi.Samples, process memory summed over the process and its
-        children; empty Samples when nvidia-smi fails, warned once"""
-        pids = {self.proc.pid}
+    def tree(self):
+        """the process and its descendants alive now; a new one's cpu window
+        starts at its first sample (0% then)"""
         try:
-            pids |= {c.pid for c in self.proc.children(recursive=True)}
+            children = self.proc.children(recursive=True)
         except psutil.Error:
-            pass
+            children = []
+        procs = {self.proc.pid: self.proc}
+        for c in children:
+            procs[c.pid] = self.procs.get(c.pid, c)
+        self.procs = procs
+        return list(procs.values())
+
+    def gpu_stats(self, pids):
+        """smi.Samples, process memory summed over pids; empty Samples when
+        nvidia-smi fails, warned once"""
         try:
-            return smi.sample([g.index for g in self.gpus], pids)
+            return smi.sample([g.index for g in self.gpus], set(pids))
         except (subprocess.SubprocessError, OSError) as e:
             if not self.gpu_failed:
                 logger.warning(f"phlop stats_man: nvidia-smi failed: {e}")
@@ -161,18 +173,26 @@ class _Sampler:
             return [smi.Sample.failed(g.index) for g in self.gpus]
 
     def __call__(self):
-        p = self.proc
-        if p.status() == psutil.STATUS_ZOMBIE:  # exited, not yet reaped
-            raise psutil.NoSuchProcess(p.pid)
-        with p.oneshot():
-            fds = p.num_fds() if hasattr(p, "num_fds") else p.num_handles()
-            stats = {
-                "fds": fds,
-                "mem_used_mb": bytes_as_mb(p.memory_info().rss),
-                "cpu_usage": p.cpu_percent(None),
-            }
+        if self.proc.status() == psutil.STATUS_ZOMBIE:  # exited, not yet reaped
+            raise psutil.NoSuchProcess(self.proc.pid)
+        stats = {"fds": 0, "mem_used_mb": 0, "cpu_usage": 0.0}
+        rss, pids = 0, []
+        for p in self.tree():
+            try:
+                with p.oneshot():
+                    fds = p.num_fds() if hasattr(p, "num_fds") else p.num_handles()
+                    rss_p, cpu = p.memory_info().rss, p.cpu_percent(None)
+            except psutil.Error:  # gone since tree(): not counted
+                if p is self.proc:
+                    raise
+                continue
+            stats["fds"] += fds
+            stats["cpu_usage"] += cpu
+            rss += rss_p
+            pids.append(p.pid)
+        stats["mem_used_mb"] = bytes_as_mb(rss)
         if self.gpus:
-            stats["gpu"] = self.gpu_stats()
+            stats["gpu"] = self.gpu_stats(pids)
         return stats
 
 
