@@ -8,6 +8,10 @@ concurrency:
 on:
   pull_request:
 
+env:
+  CURL_GET: curl -fL --retry 3 --retry-delay 2
+  PATH_GET: https://github.com/mkn/mkn/releases/latest/download
+
 jobs:
   build:
     name: Python ${{ matrix.python-version }}
@@ -25,7 +29,7 @@ jobs:
         submodules: true
 
     - run: |
-        curl -fLo mkn https://github.com/mkn/mkn/releases/latest/download/mkn_nix
+        $CURL_GET -o mkn $PATH_GET/mkn_nix
         chmod +x mkn
         ./mkn clean build test run -p scope_timer,threaded_scope_timer,scope,threaded_scope -Oa "-fPIC -std=c++20" -W 9
 
