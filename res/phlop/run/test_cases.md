@@ -14,17 +14,17 @@ Invoked as `python3 -m phlop.run.test_cases [options]`.
 | `-i`, `--input` | `.` | Input file or directory to scan for tests. |
 | `--cmake` | `False` | Discover tests via `ctest --show-only=json-v1` in `--input` instead of scanning `.py` files directly (see [cmake/ctest discovery](#cmakectest-discovery) below). |
 | `-c`, `--cores` | `1` | Parallelism core/thread count. Accepts `a`/`all` for `multiprocessing.cpu_count()`. |
-| `-p`, `--print_only` | `False` | Print discovered tests and exit, no execution. |
+| `-p`, `--print_only` | `False` | Print discovered tests and exit, no execution. Fixtures print first, each with its setup and cleanup jobs and how many jobs require it, then the remaining tests (see [Fixtures](#fixtures)). |
 | `-v`, `--verbose` | `False` | With `--print_only`, print full per-test info (cores, tags, env, working_dir, log_file_path) instead of just the execution string. |
 | `--prefix` | `""` | Prepend this string to every execution command. |
 | `--postfix` | `""` | Append this string to every execution command. |
 | `--dump` | `None` | Dump discovered tests as a dill/hex blob to this filepath, no execution. Mutually exclusive with `--load`. |
-| `--load` | `None` | Globbing filepath for files previously written by `--dump`; loads and runs those instead of scanning. |
-| `-r`, `--regex` | `None` | Filter out tests whose execution string doesn't match this regex (falls back to plain substring search if the pattern is invalid). |
+| `--load` | `None` | Globbing filepath for files previously written by `--dump`; loads and runs those instead of scanning. Jobs with equal `cmd`, `env` and `working_dir` across the loaded files run once, with their fixtures merged (an `mpirun -n` count is part of `cmd`, so `-n 2` and `-n 4` stay separate). |
+| `-r`, `--regex` | `None` | Filter out tests whose execution string doesn't match this regex (falls back to plain substring search if the pattern is invalid). The setup jobs of fixtures the kept tests require are kept too (transitively), as are the cleanups of the fixtures they use, like `ctest -R`. |
 | `-R`, `--reverse` | `False` | Reverse batch order - higher core-count batches preferred/run first. |
 | `--rerun` | `1` | Number of times to re-execute each discovered test (duplicates the job, suffixing `log_file_path` with `_<i>`). |
-| `--logging` | `1` | `0`=off, `1`=on non-zero exit code, `2`=always. |
-| `--no-phlop-exec-yaml` | `False` | Ignore any `.phlop.exec.yaml` configs found while scanning; just run discovered tests once each, with defaults. Has no effect together with `--cmake` (cmake discovery never reads `.phlop.exec.yaml` - see below). |
+| `--logging` | `1` | `0`=off, `1`=on non-zero exit code, `2`=always. Logs go to `.phlop/<dir>/[mpirun_-n_<N>/]<file>/<Class>/<method>.stdout/.stderr` (a ctest entry run as-is: `.phlop/<working_dir>/[mpirun_-n_<N>/]<ctest name>`, entries running the same script there grouped as `<common start of their names>/<rest>`, e.g. `sample-data/1d-h5`); each `.stdout` starts with the exact command run. Setup and cleanup jobs of fixtures keep their logs only if they fail, unless `--logging 2`. |
+| `--no-phlop-exec-yaml` | `False` | Ignore any `.phlop.exec.yaml` configs found while scanning; just run discovered tests once each, with defaults. Has no effect together with `--cmake` (cmake discovery reads only fixtures from `.phlop.exec.yaml` - see below). |
 | `--tags` | `None` | Comma-separated tags to opt into running tagged `.phlop.exec.yaml` variants (tagged variants are otherwise skipped). Untagged/undeclared tests are unaffected and always run. |
 
 ## Discovery modes
@@ -34,8 +34,8 @@ paths, in this order:
 
 1. **`--cmake`** → `tc.load_cmake_tests(input)` - reads ctest's registered
    tests and expands Python ones into their individual `unittest` methods
-   (see [cmake/ctest discovery](#cmakectest-discovery)). `.phlop.exec.yaml`
-   is never consulted in this mode.
+   (see [cmake/ctest discovery](#cmakectest-discovery)). Only the fixtures
+   of a `.phlop.exec.yaml` are used in this mode, not its variants.
 2. **default** (no `--cmake`, no `--no-phlop-exec-yaml`) →
    `tc.load_config_tests(input, tags=...)` - scans `.py` files under `input`
    directly and honours `.phlop.exec.yaml` (see below).
@@ -148,5 +148,49 @@ command, then:
   the file for each such entry would both duplicate every test in the file
   per entry and discard the args that distinguish them.
 
-`.phlop.exec.yaml` is **not** consulted in cmake mode - variants/tags are a
-`load_config_tests`-only feature.
+Variants and tags in `.phlop.exec.yaml` are a `load_config_tests`-only
+feature; its [fixtures](#fixtures) apply in cmake mode too.
+
+## Fixtures
+
+Jobs can depend on other jobs' output, as ctest fixtures (CMake >= 3.7):
+
+- a job **requiring** a fixture starts only once every job **providing** it
+  has finished; if one of them failed it fails without running (`fixture X
+  failed`), and so do the jobs requiring a fixture *it* provides;
+- a job **cleaning** a fixture starts once every job providing or requiring
+  it is done, and runs whatever their outcome;
+- a required fixture that no loaded job provides is ignored;
+- a dependency cycle is an error before anything runs.
+
+Jobs are scheduled as each one finishes, not in waves: a test waits only for
+its own fixtures. Jobs others wait on (by how many, transitively) start
+first, then the widest.
+
+Fixtures come from:
+
+- **ctest**, with `--cmake`: the `FIXTURES_SETUP`, `FIXTURES_REQUIRED` and
+  `FIXTURES_CLEANUP` properties of an entry, given to every job made from it
+  (each `Class.method` a Python file is split into);
+- **`.phlop.exec.yaml`**, in both modes: a dict value on a file, class or
+  method key declares the fixtures of the tests it matches (every matching
+  level adds to the others, unlike variants), and a variant can declare its
+  own. With `--cmake` the yaml beside the Python file a job runs adds to the
+  ctest properties; its keys are not checked there, since the yaml may name
+  tests ctest doesn't register.
+
+```yaml
+gen_data.py:
+  provides: [amr_data]
+test_run_amr.py:
+  requires: [amr_data]
+test_run_amr.py:RunTest.test_cleanup:
+  cleans: [amr_data]
+test_mhd.py:MHDTest.test_2d:
+  - tags: [mpi]
+    prefix: mpirun -n 2
+    requires: [amr_data]
+```
+
+In Python, `phlop.procs.parallel_processor.Job` carries the fixture names as
+the sets `provides`, `requires` and `cleans`.

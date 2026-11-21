@@ -19,27 +19,35 @@ mkn_test(){
     mkn clean build test -p "$1" -Oa "-fPIC -std=c++20" -W 9
 }
 
-mkn_test scope_timer
-py -O tests/timing/test_scope_timer.py test_scope_timer -f "bin/scope_timer.txt"
-PHLOP_SCOPE_MEM=peak mkn test -p scope_timer # peak reset per mem scope
-PHLOP_SCOPE_MEM=peak py -O tests/timing/test_scope_timer.py test_scope_timer -f "bin/scope_timer.txt"
-py tests/timing/test_scope_timer.py test_mem_parse
-mkn_test threaded_scope_timer
-py tests/timing/test_scope_timer.py test_threaded_scope_timer -f "bin/threaded_scope_timer.txt"
-PHLOP_SCOPE_MEM=0 mkn test -p threaded_scope_timer
-PHLOP_SCOPE_MEM=0 py tests/timing/test_scope_timer.py test_threaded_scope_timer -f "bin/threaded_scope_timer.txt"
+# the scope timers built by mkn: without it the python tests above still count
+if command -v mkn > /dev/null; then
+    mkn_test scope_timer
+    py -O tests/timing/test_scope_timer.py test_scope_timer -f "bin/scope_timer.txt"
+    PHLOP_SCOPE_MEM=peak mkn test -p scope_timer # peak reset per mem scope
+    PHLOP_SCOPE_MEM=peak py -O tests/timing/test_scope_timer.py test_scope_timer -f "bin/scope_timer.txt"
+    py tests/timing/test_scope_timer.py test_mem_parse
+    mkn_test threaded_scope_timer
+    py tests/timing/test_scope_timer.py test_threaded_scope_timer -f "bin/threaded_scope_timer.txt"
+    PHLOP_SCOPE_MEM=0 mkn test -p threaded_scope_timer
+    PHLOP_SCOPE_MEM=0 py tests/timing/test_scope_timer.py test_threaded_scope_timer -f "bin/threaded_scope_timer.txt"
+else
+    echo "mkn missing, its scope timer tests skipped"
+fi
 ./sh/test_mpi.sh # skipped without mpicxx/mpirun
 ./sh/test_shared_libs.sh
 # serial and para timers in one program, one source
+mkdir -p bin
 ${CXX:-g++} -std=c++20 -Wall -Wextra -Werror -pthread -Iinc tests/timing/mixed/*.cpp \
     src/phlop/timing/scope_timer.cpp -o bin/mixed
 ./bin/mixed
 py tests/timing/test_scope_timer.py test_mixed
 ./sh/test_nvtx.sh # skipped without nsys and the nvtx3 headers
-mkn_test scope
-py tests/timing/test_scope_timer.py test_scope -f "bin/scope.txt" # no -O: asserts
-mkn_test threaded_scope
-py tests/timing/test_scope_timer.py test_threaded_scope -f "bin/threaded_scope.txt"
+if command -v mkn > /dev/null; then
+    mkn_test scope
+    py tests/timing/test_scope_timer.py test_scope -f "bin/scope.txt" # no -O: asserts
+    mkn_test threaded_scope
+    py tests/timing/test_scope_timer.py test_threaded_scope -f "bin/threaded_scope.txt"
+fi
 
 # exit codes checked, memcheck errors are 99. The shell's builtin echo: ubuntu
 #  26.04's /usr/bin/echo (rust coreutils) leaks, memcheck rightly fails it

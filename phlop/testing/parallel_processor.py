@@ -1,8 +1,10 @@
 # phlop/testing/parallel_processor.py
 
 from phlop.os import read_last_lines_of
+from phlop.procs.fixtures import fixtures_of
 from phlop.procs.parallel_processor import (
     LoggingMode,  # noqa: F401
+    NotEnoughCores,  # noqa: F401
     ProcessorFailure,
     ProcessorOptions,  # noqa: F401
     normalize,
@@ -43,6 +45,35 @@ def _print_job(job, verbose):
         print(f"  env: {job.env}")
     if job.working_dir:
         print(f"  working_dir: {job.working_dir}")
+    for name, fixtures in zip(("provides", "requires", "cleans"), fixtures_of(job)):
+        if fixtures:
+            print(f"  {name}: {','.join(sorted(fixtures))}")
+
+
+def _print_fixtures(jobs, verbose):
+    """every fixture, its setup and cleanup jobs printed as tests are (they run
+    like them), and how many jobs wait on it. Returns the ids of jobs printed"""
+    fixtures = {}  # name -> (setups, n requiring, cleanups)
+    for job in jobs:
+        provides, requires, cleans = fixtures_of(job)
+        for kind, names in ((0, provides), (1, requires), (2, cleans)):
+            for name in names:
+                fixture = fixtures.setdefault(name, ([], [], []))
+                fixture[kind].append(job)
+    shown = set()
+    if not fixtures:
+        return shown
+
+    print("fixtures:")
+    for name, (setups, requiring, cleanups) in sorted(fixtures.items()):
+        ignored = "" if setups else ", no setup loaded: not waited for"
+        print(f"{name}  # required by {len(requiring)}{ignored}")
+        for kind, kind_jobs in (("setup", setups), ("cleanup", cleanups)):
+            for job in kind_jobs:
+                print(f"  {kind}: ", end="")
+                _print_job(job, verbose)
+                shown.add(id(job))
+    return shown
 
 
 def process(
@@ -59,8 +90,13 @@ def process(
         return
 
     if print_only:
+        # fixtures first: they run before the tests needing them
+        shown = _print_fixtures(jobs, verbose)
+        if shown:
+            print("\ntests:")
         for job in jobs:
-            _print_job(job, verbose)
+            if id(job) not in shown:
+                _print_job(job, verbose)
         return
 
     for job in jobs:

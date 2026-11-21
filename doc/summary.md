@@ -46,18 +46,35 @@ behaviour and the performance notes behind past changes.
 - `load_config_tests()` is the default CLI path. It scans `*.py`, imports
   each file (`phlop.reflection.classes_in_file`) to find `unittest.TestCase`
   classes, and applies per-directory `.phlop.exec.yaml` variants
-  (prefix/env/working_dir/cores/threads/tags). Stale yaml keys raise.
+  (prefix/env/working_dir/cores/threads/tags) and fixtures (dict entries,
+  or `provides`/`requires`/`cleans` on a variant). Stale yaml keys raise.
 - Granularity (`GRANULARITY`, CLI `-g`): `method` (default) runs one process
   per test method. `class`/`file` group methods that share the same yaml
-  variants into one `python3 -um module Class ClassB.test_x` process. Each
+  variants and fixtures into one `python3 -um module Class ClassB.test_x`
+  process. Each
   process pays interpreter startup and imports, so grouping helps most with
   heavy imports, and least when tests are mostly sleeping.
 - `resolve_cores()` infers a job's cores from `mpirun -n N`,
   `OMP_NUM_THREADS` and yaml `threads`/`cores`.
 - `load_cmake_tests()` uses `ctest --show-only=json-v1`. Python ctest
-  entries are expanded per method, others run as-is.
+  entries are expanded per method, others run as-is. Every job made from an
+  entry gets its `FIXTURES_*` properties, plus the yaml fixtures beside its
+  Python file (`yaml_fixtures`).
+- `extract_load()` (`--load`) runs jobs equal in cmd/env/working_dir once,
+  fixtures merged (`merge_duplicates`).
+
+### `phlop/procs/fixtures.py` - job dependencies, as ctest fixtures
+- `FixtureGraph`: requirers wait for providers and fail unrun if one failed,
+  cleanups wait for providers and requirers, unprovided fixtures ignored,
+  cycles raise `FixtureCycleError`. `priority`: transitive dependents, the
+  processor starts those first. `with_providers()` widens `-r` like `ctest -R`.
 - Log files go to `$PHLOP_LOG_DIR/.phlop/<path>/<file>/<Class>/<method>`,
-  shortened for coarser granularity.
+  shortened for coarser granularity; a ctest entry run as-is to
+  `.phlop/<working_dir>/<ctest name>`, or `<common name start>/<rest>` for
+  entries running the same script there (`_ctest_log_paths`). Under `mpirun_-n_<N>/` after `<path>`
+  when launched so (`_launch_dir`). A job's `.stdout` starts with its exact
+  command (`RunTimer(log_header=)`), for the launcher args not in the path.
+  Fixture setups/cleanups remove theirs on success below `--logging 2`.
 
 ### `phlop/run/test_cases.py` - CLI (`python3 -m phlop.run.test_cases`)
 - `-c` defaults to usable cores (`phlop.os.usable_cores`, affinity aware).

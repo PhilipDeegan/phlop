@@ -189,6 +189,7 @@ class RunTimer:
         stall_timeout=None,  # seconds, see _StallMonitor (popen only)
         stall_busy_timeout=None,  # seconds, see _StallMonitor
         on_popen=None,  # called with the Popen once started (popen only)
+        log_header=None,  # first line of the .stdout log, e.g. the command run
         **kwargs,
     ):
         if working_dir and log_file_path:
@@ -224,9 +225,17 @@ class RunTimer:
             stdout_path = f"{log_file_path}.stdout"
             stderr_path = f"{log_file_path}.stderr"
             self.log_paths = [stdout_path, stderr_path]
+
+            def stdout():
+                f = open(stdout_path, "w")  # noqa: SIM115
+                if log_header:
+                    f.write(f"{log_header.rstrip()}\n")
+                    f.flush()  # before the child's own output
+                return f
+
             ekwargs.update(
                 {
-                    "stdout": lambda: open(stdout_path, "w"),  # noqa: SIM115
+                    "stdout": stdout,
                     "stderr": lambda: open(stderr_path, "w"),  # noqa: SIM115
                 }
             )
