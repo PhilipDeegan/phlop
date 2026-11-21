@@ -175,6 +175,107 @@ class NotEnoughCoresTest(unittest.TestCase):
         self.assertIn("run with -c 4 or more", p.stderr)
 
 
+def cli(d, *args):
+    """phlop.run.test_cases run in `d` on `.` (a scan wants a relative input)"""
+    import subprocess
+
+    return subprocess.run(
+        [sys.executable, "-m", "phlop.run.test_cases", "-i", ".", *args],
+        capture_output=True,
+        text=True,
+        cwd=d,
+        env={**os.environ, "PYTHONPATH": os.getcwd()},
+        check=False,
+    )
+
+
+class ExecYamlCliTest(unittest.TestCase):
+    """.phlop.exec.yaml fixtures end to end, no --cmake: the reader, first in
+    scan order, waits for the generator; a failed generator fails it unrun;
+    -p lists the fixture first"""
+
+    YAML = (
+        "test_gen.py:\n  provides: [data]\n"
+        "test_read.py:\n  requires: [data]\n"
+        "test_rm.py:\n  cleans: [data]\n"
+    )
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        d = Path(self.dir.name)
+        (d / ".phlop.exec.yaml").write_text(self.YAML)
+        test = (
+            "import os, time, unittest\n\n\nclass {0}(unittest.TestCase):\n{1}"
+            "\n\nif __name__ == '__main__':\n    unittest.main()\n"
+        )
+        (d / "test_gen.py").write_text(
+            test.format(
+                "Gen",
+                "    def test_gen(self):\n"
+                "        time.sleep(1)\n"
+                "        assert not os.environ.get('GEN_FAILS')\n"
+                "        open('data', 'w').close()\n",
+            )
+        )
+        (d / "test_read.py").write_text(
+            test.format(
+                "Read",
+                "    def test_read(self):\n        assert os.path.exists('data')\n",
+            )
+        )
+        (d / "test_rm.py").write_text(
+            test.format(
+                "Rm",
+                "    def test_rm(self):\n"
+                "        if os.path.exists('data'):\n            os.remove('data')\n",
+            )
+        )
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_reader_waits_for_generator_then_cleanup(self):
+        p = cli(self.dir.name, "-c", "4")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        order = [
+            name
+            for line in p.stdout.splitlines()
+            for name in ("Gen.test_gen", "Read.test_read", "Rm.test_rm")
+            if name in line and "finished" in line
+        ]
+        self.assertEqual(order, ["Gen.test_gen", "Read.test_read", "Rm.test_rm"])
+        self.assertFalse((Path(self.dir.name) / "data").exists())
+
+    def test_failed_generator_fails_reader_unrun(self):
+        os.environ["GEN_FAILS"] = "1"
+        try:
+            p = cli(self.dir.name, "-c", "4")
+        finally:
+            del os.environ["GEN_FAILS"]
+        self.assertEqual(p.returncode, 1)
+        self.assertRegex(
+            p.stdout, r"Read.test_read FAILED: fixture data failed \(.*Gen"
+        )
+        self.assertIn("Rm.test_rm finished", p.stdout)  # cleanups run anyway
+
+    def test_print_only_lists_the_fixture_first(self):
+        p = cli(self.dir.name, "-p")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        lines = p.stdout.splitlines()
+        self.assertEqual(
+            lines[:4],
+            [
+                "fixtures:",
+                "data  # required by 1",
+                "  setup: python3 -um test_gen Gen.test_gen",
+                "  cleanup: python3 -um test_rm Rm.test_rm",
+            ],
+        )
+        self.assertEqual(
+            lines[4:], ["", "tests:", "python3 -um test_read Read.test_read"]
+        )
+
+
 class LogHeaderTest(unittest.TestCase):
     def test_stdout_starts_with_the_command(self):
         with tempfile.TemporaryDirectory() as d:
