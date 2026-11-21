@@ -34,11 +34,13 @@ jobs:
         ./mkn clean build test run -p scope_timer,threaded_scope_timer,scope,threaded_scope -Oa "-fPIC -std=c++20" -W 9
 
     - uses: actions/setup-python@v6
+      if: ${{ !cancelled() }} # the python tests don't need mkn
       with:
         python-version: ${{ matrix.python-version }}
         architecture: x64
 
-    - run: |
+    - if: ${{ !cancelled() }} # mkn failing still fails the job
+      run: |
         sudo apt-get install -yq valgrind || echo "no valgrind, its tests are skipped"
         python3 -m pip install -r requirements.txt
         ./sh/lint.sh
