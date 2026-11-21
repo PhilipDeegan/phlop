@@ -9,6 +9,7 @@ from pathlib import Path
 
 from phlop.app.cmake import list_tests as get_cmake_tests
 from phlop.os import env_sep
+from phlop.procs.fixtures import fixtures_of
 from phlop.procs.parallel_processor import Job
 from phlop.reflection import class_file, classes_in_file
 from phlop.sys import extend_sys_path
@@ -54,6 +55,12 @@ class TestBatch:
             )
 
 
+def _fixture_kwargs(ctest_test):
+    """the fixtures of a ctest entry, for every job made from it"""
+    provides, requires, cleans = fixtures_of(ctest_test)
+    return {"provides": provides, "requires": requires, "cleans": cleans}
+
+
 class DefaultTestCaseExtractor:
     def __call__(self, ctest_test):
         return [
@@ -61,9 +68,10 @@ class DefaultTestCaseExtractor:
                 cmd=ctest_test.cmd,
                 env=ctest_test.env,
                 working_dir=ctest_test.working_dir,
-                log_file_path=_LOG_DIR
-                / ".phlop"
-                / _log_subpath(ctest_test.working_dir),
+                # set by load_cmake_tests, named after the ctest test
+                log_file_path=ctest_test.log_file_path
+                or _LOG_DIR / ".phlop" / _log_subpath(ctest_test.working_dir),
+                **_fixture_kwargs(ctest_test),
             )
         ]
 
@@ -162,11 +170,22 @@ def _unique_path(path, used):
     return f"{path}_g{n}" if n else path
 
 
-def _group_logfile(log_file_path, by_class, granularity):
-    """as logfile(), shortened to the class or file for coarser granularity"""
+def _launch_dir(cmd):
+    """a log path part for how a command is launched, `mpirun_-n_2`, None if
+    plainly: the same test run with different rank counts logs apart"""
+    m = _MPIRUN_CORES_RE.search(cmd)
+    return f"mpirun_-n_{m.group(1)}" if m else None
+
+
+def _group_logfile(log_file_path, by_class, granularity, launch=None):
+    """as logfile(), shortened to the class or file for coarser granularity,
+    under `launch` (see _launch_dir) if given"""
     test_class = next(iter(by_class))
     pyfile = Path(class_file(test_class))
-    path = log_file_path / _log_subpath(pyfile.parent) / pyfile.stem
+    path = log_file_path / _log_subpath(pyfile.parent)
+    if launch:
+        path = path / launch
+    path = path / pyfile.stem
     if granularity != "file":
         path = path / test_class.__name__
     if granularity == "method":
@@ -214,11 +233,12 @@ def load_test_cases_in(
         else:
             names = _test_names(by_class, all_methods)
             cmd = python3_test_cmd(test_class.__module__, names, python_flags)
+        cmd = f"{test_cmd_pre} {cmd} {test_cmd_post}".strip()
         tests += [
             Job(
-                cmd=f"{test_cmd_pre} {cmd} {test_cmd_post}".strip(),
+                cmd=cmd,
                 log_file_path=_group_logfile(
-                    _LOG_DIR / ".phlop", by_class, granularity
+                    _LOG_DIR / ".phlop", by_class, granularity, _launch_dir(cmd)
                 ),
                 test_names=_qualified_names(by_class),
                 **kwargs,
@@ -290,6 +310,7 @@ def load_py_test_cases_from_cmake(ctest_test):
             env=ctest_test.env,
             working_dir=ctest_test.working_dir,
             test_cmd_pre=CMD_PREFIX + prefix + CMD_POSTFIX,
+            **_fixture_kwargs(ctest_test),
         )
 
 
@@ -342,20 +363,121 @@ def binless(test_case):
     return test_case
 
 
+def _python_file_of(job):
+    """(the .py file a python3 job runs, its trailing args), None if not one"""
+    if "python3" not in job.cmd:
+        return None
+    try:
+        bits = shlex.split(job.cmd)
+        target, next_idx = _python_test_target(
+            bits, _python_invocation_index(bits, job.cmd), job.cmd
+        )
+    except ValueError:
+        return None
+    rel = target if target.endswith(".py") else target.replace(".", os.sep) + ".py"
+    ppath = (job.env or {}).get("PYTHONPATH", "")
+    for root in [job.working_dir or "."] + [p for p in ppath.split(env_sep()) if p]:
+        path = Path(root) / rel
+        if path.is_file():
+            return path, bits[next_idx:]
+    return None
+
+
+def yaml_fixtures(job, dir_configs=None):
+    """with --cmake: fixtures a .phlop.exec.yaml beside the python file a job
+    runs declares for it (its file, or the Class.method it was split into),
+    added to ctest's FIXTURES_* properties. Variants are not applied, and keys
+    are not checked: the yaml can name tests ctest does not register"""
+    found = _python_file_of(job)
+    if found is None:
+        return job
+    path, args = found
+    dir_configs = {} if dir_configs is None else dir_configs
+    directory = str(path.parent.resolve())
+    if directory not in dir_configs:
+        dir_configs[directory] = _load_dir_config(directory)
+    config = dir_configs[directory]
+    if not config:
+        return job
+    names = getattr(job, "test_names", None) or [a for a in args if "-" not in a[:1]]
+    for name in names or [""]:
+        class_name, _, method = name.partition(".")
+        _with_fixtures(job, _fixtures_for(config, path.name, class_name, method))
+    return job
+
+
 MUTATORS = [determine_cores_for_test_case, binless]
+
+
+def _ctest_script(cmake_test):
+    """what a ctest entry runs: its python file or module, else its program"""
+    cmd = " ".join(cmake_test.command)
+    if "python3" in cmd:
+        try:
+            bits = shlex.split(cmd)
+            return _python_test_target(bits, _python_invocation_index(bits, cmd), cmd)[
+                0
+            ]
+        except ValueError:
+            pass
+    return cmake_test.command[0] if cmake_test.command else ""
+
+
+def _ctest_log_paths(cmake_tests):
+    """log paths for ctest entries run as they are registered: under their
+    working directory and launch (see _launch_dir), named after the test (the
+    working directory is shared by every entry in it). Entries running the same
+    script there share a directory named for the common start of their names,
+    each logging as the rest: `sample-data-1d-h5` and `sample-data-2d-h5` log
+    to `sample-data/1d-h5` and `sample-data/2d-h5`"""
+    groups = {}
+    for i, t in enumerate(cmake_tests):
+        log_dir = _LOG_DIR / ".phlop" / _log_subpath(t.working_dir or ".")
+        if launch := _launch_dir(" ".join(t.command)):
+            log_dir = log_dir / launch
+        groups.setdefault((log_dir, _ctest_script(t)), []).append(i)
+
+    paths = [None] * len(cmake_tests)
+    for (log_dir, _), idxs in groups.items():
+        names = [re.sub(r"[^\w.+-]", "_", cmake_tests[i].name) for i in idxs]
+        words = [n.split("-") for n in names]
+        common = 0
+        if len(names) > 1:
+            shortest = min(len(w) for w in words)
+            # every name keeps at least one word of its own
+            while common < shortest - 1 and len({w[common] for w in words}) == 1:
+                common += 1
+        for i, w in zip(idxs, words):
+            if common:
+                paths[i] = str(log_dir / "-".join(w[:common]) / "-".join(w[common:]))
+            else:
+                paths[i] = str(log_dir / "-".join(w))
+    return paths
 
 
 def load_cmake_tests(cmake_dir, cores=1, test_cmd_pre="", test_cmd_post=""):
     cmake_tests = get_cmake_tests(cmake_dir)
     tests = []
-    for cmake_test in cmake_tests:
+    for cmake_test, log_file_path in zip(cmake_tests, _ctest_log_paths(cmake_tests)):
         cmd = f"{test_cmd_pre} " + " ".join(cmake_test.command) + f" {test_cmd_post}"
-        tests += [Job(cmd=cmd, env=cmake_test.env, working_dir=cmake_test.working_dir)]
+        tests += [
+            Job(
+                cmd=cmd,
+                env=cmake_test.env,
+                working_dir=cmake_test.working_dir,
+                log_file_path=log_file_path,
+                provides=cmake_test.fixtures_setup,
+                requires=cmake_test.fixtures_required,
+                cleans=cmake_test.fixtures_cleanup,
+            )
+        ]
 
     test_batches = {}
+    dir_configs = {}
 
     def _add(test_cases):
         for test_case in test_cases:
+            yaml_fixtures(test_case, dir_configs)
             for mutator in MUTATORS:
                 test_case = mutator(test_case)
             if test_case.cores not in test_batches:
@@ -399,25 +521,81 @@ def _variants_for(dir_config, filename, class_name, method_name, used_keys=None)
     `used_keys`, if given, collects whichever key actually matched - so
     callers can tell, after scanning every file, which declared keys never
     matched anything."""
-    qualified = f"{filename}:{class_name}.{method_name}"
-    if qualified in dir_config:
-        if used_keys is not None:
-            used_keys.add(qualified)
-        return dir_config[qualified] or None
-    bare = f"{filename}:{class_name}"
-    if bare in dir_config:
-        if used_keys is not None:
-            used_keys.add(bare)
-        return dir_config[bare] or None
-    if filename in dir_config:
-        if used_keys is not None:
-            used_keys.add(filename)
-        return dir_config[filename] or None
+    keys = [
+        f"{filename}:{class_name}.{method_name}",
+        f"{filename}:{class_name}",
+        filename,
+    ]
+    for key in keys:
+        # a dict entry only declares fixtures, see _fixtures_for
+        if key in dir_config and not isinstance(dir_config[key], dict):
+            if used_keys is not None:
+                used_keys.add(key)
+            return dir_config[key] or None
     return None
 
 
+FIXTURE_KEYS = ("provides", "requires", "cleans")
+
+
+def _fixture_names(value, where):
+    if value is None:
+        return frozenset()
+    if isinstance(value, str):
+        return frozenset([value])
+    if isinstance(value, list) and all(isinstance(v, str) for v in value):
+        return frozenset(value)
+    raise ValueError(f"{CONFIG_FILENAME} {where}: fixtures must be a list of names")
+
+
+def _fixtures_in(entry, where):
+    """(provides, requires, cleans) declared in a dict entry or a variant"""
+    return tuple(_fixture_names(entry.get(k), where) for k in FIXTURE_KEYS)
+
+
+def _fixtures_for(dir_config, filename, class_name, method_name, used_keys=None):
+    """fixtures declared for a test: a dict value (`provides`, `requires`,
+    `cleans` lists) on its file, class or method key, every level that matches
+    adds to the others (unlike variants, where the most specific key wins).
+    Empty `class_name`/`method_name`: only the file or class keys are looked at"""
+    keys = [filename]
+    if class_name:
+        keys.append(f"{filename}:{class_name}")
+        if method_name:
+            keys.append(f"{filename}:{class_name}.{method_name}")
+    found = (frozenset(), frozenset(), frozenset())
+    for key in keys:
+        entry = dir_config.get(key)
+        if not isinstance(entry, dict):
+            continue
+        unknown = sorted(set(entry) - set(FIXTURE_KEYS))
+        if unknown:
+            raise ValueError(
+                f"{CONFIG_FILENAME} {key}: unknown keys {unknown}, a dict entry "
+                f"declares fixtures only: {', '.join(FIXTURE_KEYS)}"
+            )
+        if used_keys is not None:
+            used_keys.add(key)
+        found = tuple(a | b for a, b in zip(found, _fixtures_in(entry, key)))
+    return found
+
+
+def _with_fixtures(job, fixtures):
+    """job with `fixtures` (provides, requires, cleans) added to its own"""
+    sets = zip(fixtures_of(job), fixtures)
+    job.provides, job.requires, job.cleans = (set(a | b) for a, b in sets)
+    return job
+
+
 def _variant_job(
-    base_cmd, log_file_path, variant, index, test_cmd_pre, test_cmd_post, test_names
+    base_cmd,
+    log_file_path,
+    variant,
+    index,
+    test_cmd_pre,
+    test_cmd_post,
+    test_names,
+    fixtures=(),
 ):
     prefix = variant.get("prefix", "")
     env = dict(variant.get("env") or {})
@@ -430,7 +608,7 @@ def _variant_job(
     if log_file_path:
         log_file_path = f"{log_file_path}_{'-'.join(tags) if tags else index}"
 
-    return Job(
+    job = Job(
         cmd=cmd,
         env=env,
         working_dir=working_dir,
@@ -441,6 +619,8 @@ def _variant_job(
         meta=tags or None,
         test_names=test_names,
     )
+    _with_fixtures(job, fixtures)
+    return _with_fixtures(job, _fixtures_in(variant, cmd))
 
 
 def load_config_tests(
@@ -509,11 +689,19 @@ def load_config_tests(
                     method,
                     used_keys[directory],
                 )
-                key = None
+                vkey = None
                 if variants:
-                    key = id(variants)
-                    variant_lists[key] = variants
-                entries.append((test_class, method, key))
+                    vkey = id(variants)
+                    variant_lists[vkey] = variants
+                fixtures = _fixtures_for(
+                    dir_config,
+                    py_file.name,
+                    test_class.__name__,
+                    method,
+                    used_keys[directory],
+                )
+                # tests grouped into one process share their fixtures
+                entries.append((test_class, method, (vkey, fixtures)))
 
         used_paths = {}
         for key, by_class in _group_tests(entries, granularity):
@@ -524,18 +712,18 @@ def load_config_tests(
             log_file_path = _unique_path(
                 _group_logfile(_LOG_DIR / ".phlop", by_class, granularity), used_paths
             )
-            variants = variant_lists.get(key)
+            vkey, fixtures = key
+            variants = variant_lists.get(vkey)
 
             if not variants:
                 cmd = f"{test_cmd_pre} {base_cmd} {test_cmd_post}".strip()
-                _add(
-                    Job(
-                        cmd=cmd,
-                        log_file_path=log_file_path,
-                        cores=resolve_cores(cmd),
-                        test_names=test_names,
-                    )
+                job = Job(
+                    cmd=cmd,
+                    log_file_path=log_file_path,
+                    cores=resolve_cores(cmd),
+                    test_names=test_names,
                 )
+                _add(_with_fixtures(job, fixtures))
                 continue
 
             for index, variant in enumerate(variants):
@@ -551,6 +739,7 @@ def load_config_tests(
                         test_cmd_pre,
                         test_cmd_post,
                         test_names,
+                        fixtures,
                     )
                 )
 
@@ -582,10 +771,36 @@ def deserialize(s):
     return dill.loads(codecs.decode(s, "hex"))
 
 
+def _job_key(job):
+    """jobs equal in what runs, and where: an `mpirun -n` count is in the cmd"""
+    env = getattr(job, "env", None) or {}
+    return job.cmd, tuple(sorted(env.items())), getattr(job, "working_dir", None)
+
+
+def merge_duplicates(test_batches):
+    """one job per cmd, env and working_dir, the first seen, with the union of
+    the fixtures: dumps loaded together can each hold the same test (e.g. a
+    serial and an MPI build both registering the same data generator), which
+    would otherwise run twice, concurrently, into the same directory"""
+    first = {}
+    merged = {}
+    for batch in test_batches:
+        for job in batch.tests:
+            key = _job_key(job)
+            if key not in first:
+                first[key] = job
+                merged.setdefault(batch.cores, []).append(job)
+                continue
+            kept = first[key]
+            sets = zip(fixtures_of(kept), fixtures_of(job))
+            kept.provides, kept.requires, kept.cleans = (a | b for a, b in sets)
+    return [TestBatch(v, k) for k, v in merged.items()]
+
+
 def extract_load(directory, globbing):
     test_batches = {}
 
-    file_paths = list(Path(directory).glob(globbing))
+    file_paths = sorted(Path(directory).glob(globbing))
 
     if not file_paths:
         raise ValueError("No load files found")
@@ -597,4 +812,4 @@ def extract_load(directory, globbing):
                 batch.check_cores()  # unpickling skips __post_init__
                 test_batches.setdefault(batch.cores, []).extend(batch.tests)
 
-    return [TestBatch(v, k) for k, v in test_batches.items()]
+    return merge_duplicates([TestBatch(v, k) for k, v in test_batches.items()])

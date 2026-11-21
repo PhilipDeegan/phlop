@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import inspect
 import json
@@ -18,6 +19,7 @@ from enum import Enum
 from typing import Any
 
 from phlop.os import usable_cores
+from phlop.procs.fixtures import FixtureGraph
 
 # seconds without output before a job is killed as stalled, 0=off; with psutil
 # only if it's also idle (below runtimer.BUSY_CPU_FRACTION of a cpu), see
@@ -34,6 +36,14 @@ CANCEL_GRACE = 5
 
 
 class ProcessorFailure(Exception): ...
+
+
+class NotEnoughCores(ProcessorFailure):
+    """a job needs more cores than the processor may use, before anything runs"""
+
+    def __init__(self, msg, needed):
+        super().__init__(msg)
+        self.needed = needed
 
 
 class LoggingMode(Enum):
@@ -53,8 +63,15 @@ class Job:
     id: str = ""  # display label; defaults to cmd
     meta: Any = field(default=None)
     test_names: list = field(default_factory=list)  # Class.method, for --regex
+    # fixture names, see phlop.procs.fixtures: jobs requiring one wait for its
+    #  providers, jobs cleaning one for its providers and requirers
+    provides: set = field(default_factory=set)
+    requires: set = field(default_factory=set)
+    cleans: set = field(default_factory=set)
 
     def __post_init__(self):
+        self.provides, self.requires = set(self.provides), set(self.requires)
+        self.cleans = set(self.cleans)
         self.cmd = self.cmd.strip()
         if not self.id:
             self.id = self.cmd
@@ -79,12 +96,28 @@ class Job:
             stall_timeout=STALL_TIMEOUT or None,
             stall_busy_timeout=STALL_BUSY_TIMEOUT or float("inf"),
             on_popen=on_popen,
+            # the exact command: its launcher's args (mpirun --bind-to ...) are
+            #  not in the log path
+            log_header=self.cmd,
         )
         if self.run.stalled:
             raise ProcessorFailure(f"{self.run.stalled}, killed")
         if self.run.exitcode != 0:
             raise ProcessorFailure(f"exited {self.run.exitcode}")
+        if self.logging < LoggingMode.ALWAYS.value and (self.provides or self.cleans):
+            _remove_logs(self.run.log_paths)  # a fixture's log only on failure
         return self
+
+
+def _remove_logs(paths):
+    """the files (written while running, for the stall monitor), then their
+    directory if that leaves it empty"""
+    for path in paths:
+        with contextlib.suppress(OSError):
+            os.remove(path)
+    for parent in {os.path.dirname(path) for path in paths}:
+        with contextlib.suppress(OSError):
+            os.rmdir(parent)  # only if empty
 
 
 @dataclass
@@ -262,7 +295,8 @@ def process(
     options: ProcessorOptions | None = None,
 ) -> list:
     """Run items as Jobs on threads, at most n_cores cores in use at once,
-    widest jobs first. Returns results in input order. Any failure raises
+    widest jobs first, a job waiting for the fixtures it requires (see
+    phlop.procs.fixtures). Returns results in input order. Any failure raises
     ProcessorFailure: at once with fail_fast (running jobs are cancelled),
     else after every job has finished."""
     jobs = normalize(items)
@@ -292,13 +326,26 @@ def process(
     n_cores = n_cores or usable_cores()
     max_cost = max(j.cores for j in jobs)
     if n_cores < max_cost:
-        raise ProcessorFailure(f"need {max_cost} cores, have {n_cores}")
+        wide = sorted({j.id for j in jobs if j.cores > n_cores})
+        shown = ", ".join(wide[:3]) + (
+            f" (+{len(wide) - 3} more)" if len(wide) > 3 else ""
+        )
+        raise NotEnoughCores(
+            f"need at least {max_cost} cores, have {n_cores}: {len(wide)} job(s) "
+            f"wider, e.g. {shown}",
+            max_cost,
+        )
+
+    graph = FixtureGraph(jobs)  # FixtureCycleError before anything runs
 
     cores_avail = n_cores
-    # widest first: a wide job left until the narrow ones are done would only
-    # find free cores at the end, and then run alone. Stable, so input order
-    # is kept between jobs of the same width. Results keep input order.
-    pending = deque(sorted(enumerate(jobs), key=lambda ij: -ij[1].cores))
+    # jobs others wait for first (most waiting, transitively), then widest
+    # first: a wide job left until the narrow ones are done would only find
+    # free cores at the end, and then run alone. Stable, so input order is
+    # kept between equal jobs. Results keep input order.
+    pending = deque(
+        sorted(enumerate(jobs), key=lambda ij: (-graph.priority[ij[0]], -ij[1].cores))
+    )
     running = {}  # idx -> (Thread, Job)
     popens = {}  # idx -> Popen, written by job threads
     cancelled = threading.Event()
@@ -311,8 +358,44 @@ def process(
     last_output_time = time.time()
     last_no_output_print = 0.0
 
+    def finish(idx, job, value, error):
+        graph.done(idx, error is None)
+        r = JobResult(job=job, value=value, error=error)
+        if error is not None:
+            msg = f"{job.id} FAILED: {error}"
+            failures.append(msg)
+            if on_failure:
+                on_failure(r)
+            else:
+                print(msg)
+            if fail_fast:
+                raise ProcessorFailure(msg)  # cancels the rest, see below
+        else:
+            results[idx] = r
+            if on_success:
+                on_success(r)
+            else:
+                run_time = getattr(getattr(r.value, "run", None), "run_time", None)
+                timing = f" in {run_time:.2f}s" if run_time is not None else ""
+                print(f"{job.id} finished{timing}")
+
+    def fail_doomed():
+        """pending jobs requiring a fixture whose provider failed fail unrun,
+        which can doom the jobs requiring a fixture they provide"""
+        while graph.doomed:
+            doomed = [ij for ij in pending if ij[0] in graph.doomed]
+            if not doomed:
+                return
+            keep = [ij for ij in pending if ij[0] not in graph.doomed]
+            pending.clear()
+            pending.extend(keep)
+            for idx, job in doomed:
+                error = ProcessorFailure(graph.doomed[idx])
+                finish(idx, job, None, error)
+
     def launch():
         nonlocal cores_avail, held_reported
+        fail_doomed()
         if pending and hot():
             if not held_reported:
                 print(f"phlop: CPU at or above {hot.high} C, {len(pending)} jobs held")
@@ -322,7 +405,7 @@ def process(
         skipped = deque()
         while pending:
             idx, job = pending.popleft()
-            if job.cores <= cores_avail:
+            if graph.ready(idx) and job.cores <= cores_avail:
                 cores_avail -= job.cores
                 t = threading.Thread(
                     target=_runner,
@@ -336,6 +419,10 @@ def process(
             else:
                 skipped.append((idx, job))
         pending.extend(skipped)
+        if pending and not running:  # an acyclic graph never gets here
+            raise ProcessorFailure(
+                "no job can start: " + ", ".join(job.id for _, job in pending)
+            )
 
     def cancel_running():
         from phlop.procs.runtimer import _descendants, _signal_all
@@ -389,25 +476,7 @@ def process(
             last_output_time = time.time()
             _, job = running.pop(job_idx)
             cores_avail += job.cores
-            r = JobResult(job=job, value=value, error=error)
-
-            if error is not None:
-                msg = f"{job.id} FAILED: {error}"
-                failures.append(msg)
-                if on_failure:
-                    on_failure(r)
-                else:
-                    print(msg)
-                if fail_fast:
-                    raise ProcessorFailure(msg)  # cancels the rest, see below
-            else:
-                results[job_idx] = r
-                if on_success:
-                    on_success(r)
-                else:
-                    run_time = getattr(getattr(r.value, "run", None), "run_time", None)
-                    timing = f" in {run_time:.2f}s" if run_time is not None else ""
-                    print(f"{job.id} finished{timing}")
+            finish(job_idx, job, value, error)
 
             launch()
 

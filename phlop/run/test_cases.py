@@ -13,6 +13,7 @@ from phlop import reflection as refl
 from phlop.dict import ValDict
 from phlop.logger import getLogger
 from phlop.os import usable_cores
+from phlop.procs.fixtures import with_providers
 from phlop.procs.parallel_processor import LoggingMode
 from phlop.testing import parallel_processor as pp
 from phlop.testing import test_cases as tc
@@ -176,7 +177,8 @@ def dump_batches(cli_args):
 
 def filter_out_regex_fails(cli_args, test_batches):
     """keep jobs whose cmd, or any Class.method grouped into them, matches
-    --regex (a plain substring if it doesn't compile)"""
+    --regex (a plain substring if it doesn't compile), and the jobs providing
+    the fixtures they require, and cleaning them up (as `ctest -R`)"""
     if not cli_args.regex:
         return test_batches
     try:
@@ -191,12 +193,15 @@ def filter_out_regex_fails(cli_args, test_batches):
         def op(x):
             return cli_args.regex in x
 
+    def matches(test):
+        names = getattr(test, "test_names", None) or ()
+        return op(test.cmd) or any(op(name) for name in names)
+
+    every = [test for tb in test_batches for test in tb.tests]
+    kept = {id(t) for t in with_providers(filter(matches, every), every)}
     filtered = {tb.cores: [] for tb in test_batches}
     for tb in test_batches:
-        for test in tb.tests:
-            names = getattr(test, "test_names", None) or ()
-            if op(test.cmd) or any(op(name) for name in names):
-                filtered[tb.cores].append(test)
+        filtered[tb.cores] += [test for test in tb.tests if id(test) in kept]
     return [tc.TestBatch(v, k) for k, v in filtered.items() if v]
 
 
@@ -289,7 +294,10 @@ def main():
             ),
         )
 
-    except pp.TestCaseFailure:
+    except pp.NotEnoughCores as e:  # before anything ran, nothing printed yet
+        print(f"phlop: {e}, run with -c {e.needed} or more", file=sys.stderr)
+        sys.exit(1)
+    except pp.TestCaseFailure:  # failures already printed
         sys.exit(1)
     except (Exception, SystemExit):
         logger.exception("error in main")

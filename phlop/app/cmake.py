@@ -42,9 +42,22 @@ class CTest_test:
 
     env: dict = field(default_factory=dict)  # dict[str, str] # eventually
     working_dir: str = field(default_factory=lambda: None)
+    # ctest fixtures, see phlop.procs.fixtures
+    fixtures_setup: set = field(default_factory=set)
+    fixtures_required: set = field(default_factory=set)
+    fixtures_cleanup: set = field(default_factory=set)
 
     def __post_init__(self):
+        fixtures = {
+            "FIXTURES_SETUP": self.fixtures_setup,
+            "FIXTURES_REQUIRED": self.fixtures_required,
+            "FIXTURES_CLEANUP": self.fixtures_cleanup,
+        }
         for p in self.properties:
+            if p["name"] in fixtures:
+                value = p["value"]  # a list, a string if cmake gives one
+                names = [value] if isinstance(value, str) else value
+                fixtures[p["name"]].update(n for v in names for n in v.split(";") if n)
             if p["name"] == "ENVIRONMENT":
                 for item in p["value"]:
                     bits = item.split("=")
