@@ -8,3 +8,7 @@ import unittest
 class ImportedBaseTest(unittest.TestCase):
     def test_shared(self):
         pass
+
+
+if __name__ == "__main__":
+    unittest.main()
