@@ -10,6 +10,7 @@ from phlop.procs.parallel_processor import (
     normalize,
 )
 from phlop.procs.parallel_processor import process as _process
+from phlop.testing.exec_scope import phase_fixtures, phase_label
 
 TestCaseFailure = ProcessorFailure
 
@@ -33,6 +34,9 @@ def _print_job(job, verbose):
             info.append(f"cores={job.cores}")
         if job.meta:
             info.append(f"tags={','.join(job.meta)}")
+        phase = phase_label(getattr(job, "phase", None))
+        if phase:
+            info.append(f"phase={phase}")
         print(f"{job.cmd}  # {', '.join(info)}" if info else job.cmd)
         return
 
@@ -41,6 +45,9 @@ def _print_job(job, verbose):
         print(f"  cores: {job.cores}")
     if job.meta:
         print(f"  tags: {','.join(job.meta)}")
+    phase = phase_label(getattr(job, "phase", None))
+    if phase:
+        print(f"  phase: {phase}")
     if job.env:
         print(f"  env: {job.env}")
     if job.working_dir:
@@ -101,6 +108,7 @@ def process(
 
     for job in jobs:
         job.logging = logging
+    phase_fixtures(jobs)  # after any filtering: an earlier phase is not pulled in
 
     _process(
         jobs,

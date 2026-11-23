@@ -13,6 +13,10 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
+[project.optional-dependencies]
+# killing a stalled job's descendants (mpi ranks), cpu use in stall detection
+psutil = [ "psutil" ]
+
 [project.urls]
 "Homepage" = "https://github.com/PhilipDeegan/phlop/"
 "Bug Tracker" = "https://github.com/PhilipDeegan/phlop/issues"
