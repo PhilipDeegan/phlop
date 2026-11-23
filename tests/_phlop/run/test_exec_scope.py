@@ -378,8 +378,8 @@ class ConfigChainTest(unittest.TestCase):
         self.assertEqual(
             logs,
             [
-                "one.sh_mpi-mpirun_n_2",
-                "one.sh_mpi-mpirun_n_8",
+                "one.sh_mpi_mpirun_n_2",
+                "one.sh_mpi_mpirun_n_8",
                 "one.sh_2",
                 "one.sh_3",
             ],

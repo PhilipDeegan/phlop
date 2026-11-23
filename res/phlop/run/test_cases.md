@@ -81,7 +81,7 @@ extra env/prefix/working_dir.
   the yaml's directory (e.g. a gtest binary; `{a,b}` alternatives expanded),
   with the same variants: one job per executable file matched per variant,
   logged under `.phlop/<path of the binary>_<variant>`, `<variant>` being its
-  own tags and launch (`mpi-mpirun_n_8`), else its index.
+  own tags and launch (`mpi_mpirun_n_8`), joined with `_`, else its index.
 
 **Every key must reference something that actually exists.** After
 scanning a directory, `load_config_tests` raises `ValueError` if any

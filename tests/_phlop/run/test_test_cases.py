@@ -408,7 +408,7 @@ class LoadConfigTestsTest(unittest.TestCase):
         self.assertEqual(large.cores, 8)
         self.assertIn("mpirun -n 2", large.cmd)
         self.assertEqual(large.working_dir, "tests/_phlop/run")
-        self.assertTrue(large.log_file_path.endswith("_large-high_load-mpirun_n_2"))
+        self.assertTrue(large.log_file_path.endswith("_large_high_load_mpirun_n_2"))
 
     def test_tags_opts_into_thread_pool_variant(self):
         jobs = self._by_cmd_substr(self._jobs(tags=["thread_pool"]), "test_scaled")

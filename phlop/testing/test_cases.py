@@ -709,11 +709,11 @@ def _launcher(scope, test_cmd_pre=""):
 
 def _variant_suffix(variant, scope, index):
     """a variant's log name: its own tags and how it is launched
-    (`mpi-mpirun_n_8`), its index if neither"""
+    (`mpi_mpirun_n_8`), its index if neither"""
     own = list(scope.get("tags") or []) if "tags" in variant else []
     launch = _launch_dir(_launcher(scope))
     parts = [str(t) for t in own] + ([launch] if launch else [])
-    return "-".join(parts) if parts else index
+    return "_".join(parts) if parts else index
 
 
 def _scoped_job(base_cmd, log_file_path, scope, test_cmd_pre, test_cmd_post, phase):
