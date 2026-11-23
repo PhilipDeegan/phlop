@@ -1,5 +1,6 @@
 # phlop/testing/test_cases.py
 
+import glob as globmod
 import os
 import re
 import shlex
@@ -13,6 +14,7 @@ from phlop.procs.fixtures import fixtures_of
 from phlop.procs.parallel_processor import Job
 from phlop.reflection import class_file, classes_in_file
 from phlop.sys import extend_sys_path
+from phlop.testing.exec_scope import RESERVED_KEYS, nest, scope_of
 
 _LOG_DIR = Path(os.environ.get("PHLOP_LOG_DIR", os.getcwd()))
 CMD_PREFIX = ""
@@ -587,40 +589,356 @@ def _with_fixtures(job, fixtures):
     return job
 
 
-def _variant_job(
-    base_cmd,
-    log_file_path,
-    variant,
-    index,
-    test_cmd_pre,
-    test_cmd_post,
-    test_names,
-    fixtures=(),
-):
-    prefix = variant.get("prefix", "")
-    env = dict(variant.get("env") or {})
-    working_dir = variant.get("working_dir")
-    cmd = " ".join(
-        p for p in (test_cmd_pre, prefix, base_cmd, test_cmd_post) if p
-    ).strip()
-    tags = variant.get("tags") or []
+def _is_py_key(key):
+    """`file.py[:Class[.method]]`, else an executable glob"""
+    return key.partition(":")[0].endswith(".py")
 
-    if log_file_path:
-        log_file_path = f"{log_file_path}_{'-'.join(tags) if tags else index}"
 
+def _read_config(config_path):
+    config_path = Path(config_path)
+    if not config_path.exists():
+        return {}
+    import yaml
+
+    with open(config_path) as f:
+        body = yaml.safe_load(f) or {}
+    if not isinstance(body, dict):
+        raise ValueError(f"{config_path}: not a mapping")  # noqa: TRY004
+    return body
+
+
+def _config_paths(body, where):
+    """the `paths:` (or `path:`) of a scope, as a list"""
+    found = []
+    for key in ("path", "paths"):
+        value = body.get(key)
+        if value is None:
+            continue
+        value = [value] if isinstance(value, str) else value
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            raise ValueError(f"{where}: {key} must be a path or a list of paths")
+        found += value
+    return found
+
+
+def _phases_of(body, where):
+    phases = body.get("phases") or []
+    if not isinstance(phases, list) or not all(isinstance(p, dict) for p in phases):
+        raise ValueError(f"{where}: phases must be a list of mappings")
+    return phases
+
+
+def _phase_name(phase, index):
+    return str(phase.get("name") or index)
+
+
+def _entry(value, where):
+    """(variants, fixtures) of a key's value: a list of variants, or a dict
+    declaring fixtures only, or nothing (run once)"""
+    if value is None:
+        return None, (frozenset(), frozenset(), frozenset())
+    if isinstance(value, dict):
+        unknown = sorted(set(value) - set(FIXTURE_KEYS))
+        if unknown:
+            raise ValueError(
+                f"{CONFIG_FILENAME} {where}: unknown keys {unknown}, a dict entry "
+                f"declares fixtures only: {', '.join(FIXTURE_KEYS)}"
+            )
+        return None, _fixtures_in(value, where)
+    if not isinstance(value, list) or not all(isinstance(v, dict) for v in value):
+        raise ValueError(f"{CONFIG_FILENAME} {where}: must be a list of variants")
+    return value or None, (frozenset(), frozenset(), frozenset())
+
+
+def _scoped_job(base_cmd, log_file_path, scope, test_cmd_pre, test_cmd_post, phase):
+    """a job running `base_cmd` in `scope` (a scope with a variant nested in)"""
+    parts = (test_cmd_pre, scope.get("prefix"), base_cmd, scope.get("postfix"))
+    cmd = " ".join(p for p in (*parts, test_cmd_post) if p).strip()
+    env = dict(scope.get("env") or {})
+    tags = list(scope.get("tags") or [])
     job = Job(
         cmd=cmd,
         env=env,
-        working_dir=working_dir,
+        working_dir=scope.get("working_dir"),
         log_file_path=log_file_path,
         cores=resolve_cores(
-            cmd, env, explicit=variant.get("cores"), threads=variant.get("threads")
+            cmd, env, explicit=scope.get("cores"), threads=scope.get("threads")
         ),
         meta=tags or None,
-        test_names=test_names,
     )
-    _with_fixtures(job, fixtures)
-    return _with_fixtures(job, _fixtures_in(variant, cmd))
+    if phase:
+        job.phase = list(phase)  # see phlop.testing.exec_scope
+    return job
+
+
+class _Keys:
+    """the test keys of one scope of a config: its python and executable keys,
+    the scope they run in, which python keys matched a test"""
+
+    def __init__(self, directory, label, keys, scope, phase):
+        self.directory = directory
+        self.label = label
+        self.keys = keys
+        self.scope = scope
+        self.phase = phase
+        self.used = set()
+
+    def match(self, filename, class_name, method):
+        """None if no key names the test, else its (variants, fixtures): the
+        most specific variants key, the fixtures of every key"""
+        names = [f"{filename}:{class_name}.{method}", f"{filename}:{class_name}"]
+        names.append(filename)
+        claimed, variants = False, None
+        for key in names:
+            if key in self.keys and not isinstance(self.keys[key], dict):
+                self.used.add(key)
+                variants, _ = _entry(self.keys[key], key)
+                claimed = True
+                break
+        fixtures = _fixtures_for(self.keys, filename, class_name, method, self.used)
+        claimed |= any(isinstance(self.keys.get(key), dict) for key in names)
+        return (variants, fixtures) if claimed else None
+
+
+class _ConfigWalk:
+    """the jobs of directories and the .phlop.exec.yaml files chained from them,
+    see load_config_tests"""
+
+    def __init__(self, tags, granularity, test_cmd_pre, test_cmd_post, python_flags):
+        self.tags = tags
+        self.granularity = granularity
+        self.test_cmd_pre = test_cmd_pre
+        self.test_cmd_post = test_cmd_post
+        self.python_flags = python_flags
+        self.loader = unittest.TestLoader()
+        self.jobs = []
+        self.keys = []  # every _Keys, for the stale check
+        self.exe_keys = []  # (label, key, matched anything)
+        self.scanned = {}  # directory -> names of the python files scanned
+        self.seen = set()  # (directory, config) walked
+        self.seen_files = set()  # python files scanned
+        self.loading = []  # configs being read, for cycles
+        self.used_logs = {}
+
+    def directory(self, directory, scope, phase, config_path=None, py_files=None):
+        """the tests of `directory` (only `py_files` of it if given, and then
+        none of its executables, chained paths or subdirectories) with its
+        config (or `config_path`) nested in `scope`"""
+        directory = Path(directory)
+        config_path = Path(config_path or directory / CONFIG_FILENAME)
+        whole = py_files is None
+        resolved = config_path.resolve()
+        if resolved in self.loading:
+            chain = [*self.loading[self.loading.index(resolved) :], resolved]
+            raise ValueError(
+                f"{CONFIG_FILENAME} cycle: " + " -> ".join(str(c) for c in chain)
+            )
+        if whole:
+            if (directory.resolve(), resolved) in self.seen:
+                return  # reached before, runs once
+            self.seen.add((directory.resolve(), resolved))
+
+        body = _read_config(config_path)
+        self.loading.append(resolved)
+        try:
+            keys = []
+            top = nest(scope, scope_of(body))
+            self._scope(directory, body, top, phase, str(config_path), keys, whole)
+            files = sorted(directory.glob("*.py")) if whole else py_files
+            self._python(directory, files, keys)
+            if whole:
+                for sub in sorted(p for p in directory.iterdir() if p.is_dir()):
+                    self.directory(sub, keys[0].scope, keys[0].phase)
+        finally:
+            self.loading.pop()
+
+    def _scope(self, directory, body, scope, phase, label, keys, follow):
+        """a scope (`body` already nested into `scope`) and its phases"""
+        phases = _phases_of(body, label)
+        outer = phase
+        if phases:  # its unphased entries run first
+            phase = (*phase, (label, 0, None, bool(scope.get("ignore_errors"))))
+        own = {str(k): v for k, v in body.items() if k not in RESERVED_KEYS}
+        py_keys = {k: v for k, v in own.items() if _is_py_key(k)}
+        keys.append(_Keys(directory, label, py_keys, scope, phase))
+        self.keys.append(keys[-1])
+        if follow:
+            for key, value in own.items():
+                if not _is_py_key(key):
+                    self._executables(directory, key, value, scope, phase, label)
+            for entry in _config_paths(body, label):
+                self._path(directory, entry, scope, phase, label)
+        for i, sub in enumerate(phases, 1):
+            sub_scope = nest(scope, scope_of(sub))
+            ignore = bool(sub_scope.get("ignore_errors"))
+            sub_phase = (*outer, (label, i, _phase_name(sub, i), ignore))
+            sub_label = f"{label}[{i}]"
+            self._scope(directory, sub, sub_scope, sub_phase, sub_label, keys, follow)
+
+    def _path(self, directory, entry, scope, phase, label):
+        """a `paths:` entry: directories, config files, python test files"""
+        pattern = entry if os.path.isabs(entry) else str(directory / entry)
+        if re.search(r"[*?[]", pattern):
+            matches = sorted(globmod.glob(pattern))
+        else:
+            matches = [pattern] if os.path.exists(pattern) else []
+        if not matches:
+            raise ValueError(f"{label}: paths entry {entry!r} matches nothing")
+        py_files = {}
+        for match in map(Path, matches):
+            if match.is_dir():
+                self.directory(match, scope, phase)
+            elif match.suffix in (".yaml", ".yml"):
+                self.directory(match.parent, scope, phase, config_path=match)
+            elif match.suffix == ".py":
+                py_files.setdefault(match.parent, []).append(match)
+            else:
+                raise ValueError(f"{label}: paths entry {entry!r} matches {match}")
+        for parent, files in py_files.items():
+            self.directory(parent, scope, phase, py_files=files)
+
+    def _executables(self, directory, key, value, scope, phase, label):
+        pattern = key if os.path.isabs(key) else str(directory / key)
+        exes = sorted(
+            p
+            for p in globmod.glob(pattern)
+            if os.path.isfile(p) and os.access(p, os.X_OK)
+        )
+        self.exe_keys.append((label, key, bool(exes)))
+        variants, fixtures = _entry(value, key)
+        for exe in exes:
+
+            def base(scope, exe=exe):
+                # elsewhere than here, a relative path would not be found
+                return shlex.quote(
+                    os.path.abspath(exe) if scope.get("working_dir") else exe
+                )
+
+            log = _LOG_DIR / ".phlop" / _log_subpath(exe)
+            log = _unique_path(str(log), self.used_logs)
+            self._jobs(base, log, variants, scope, phase, [], fixtures)
+
+    def _python(self, directory, files, keys):
+        top, phased = keys[0], keys[1:]
+        scanned = self.scanned.setdefault(directory.resolve(), set())
+        for py_file in files:
+            if py_file.resolve() in self.seen_files:
+                continue  # reached before, runs once
+            self.seen_files.add(py_file.resolve())
+            scanned.add(py_file.name)
+            classes = classes_in_file(py_file, unittest.TestCase)
+            all_methods = {c: _test_methods(self.loader, c) for c in classes}
+
+            variant_lists = {}  # id -> variants list from a config
+            entries = []
+            for test_class in classes:
+                for method in all_methods[test_class]:
+                    names = py_file.name, test_class.__name__, method
+                    # named in a phase: runs there, else unphased
+                    claims = [(i, k.match(*names)) for i, k in enumerate(phased, 1)]
+                    claims = [(i, found) for i, found in claims if found]
+                    if not claims:
+                        found = top.match(*names)
+                        claims = [(0, found or (None, _entry(None, "")[1]))]
+                    for i, (variants, fixtures) in claims:
+                        vkey = None
+                        if variants:
+                            vkey = id(variants)
+                            variant_lists[vkey] = variants
+                        # tests grouped into one process share their fixtures
+                        entries.append((test_class, method, (i, vkey, fixtures)))
+
+            for key, by_class in _group_tests(entries, self.granularity):
+                test_class = next(iter(by_class))
+                names = _test_names(by_class, all_methods)
+                base_cmd = python3_test_cmd(
+                    test_class.__module__, names, self.python_flags
+                )
+                log = _unique_path(
+                    _group_logfile(_LOG_DIR / ".phlop", by_class, self.granularity),
+                    self.used_logs,
+                )
+                i, vkey, fixtures = key
+                self._jobs(
+                    lambda _, cmd=base_cmd: cmd,
+                    log,
+                    variant_lists.get(vkey),
+                    keys[i].scope,
+                    keys[i].phase,
+                    _qualified_names(by_class),
+                    fixtures,
+                )
+
+    def _jobs(self, base, log, variants, scope, phase, test_names, fixtures):
+        """a job per variant nested in `scope` (one if no variants), tagged
+        ones only if asked for with `tags`"""
+        runs = [(None, {})] if not variants else list(enumerate(variants))
+        for index, variant in runs:
+            run_scope = nest(scope, variant)
+            run_tags = set(run_scope.get("tags") or [])
+            if run_tags and not (self.tags and (run_tags & self.tags)):
+                continue
+            path = log
+            if log and index is not None:
+                own = "tags" in variant and run_scope.get("tags")
+                suffix = "-".join(map(str, own)) if own else index
+                path = _unique_path(f"{log}_{suffix}", self.used_logs)
+            job = _scoped_job(
+                base(run_scope),
+                path,
+                run_scope,
+                self.test_cmd_pre,
+                self.test_cmd_post,
+                phase,
+            )
+            job.test_names = test_names
+            _with_fixtures(job, fixtures)
+            self.jobs.append(_with_fixtures(job, _fixtures_in(variant, job.cmd)))
+
+    def check_stale(self):
+        """every declared key matched something: a python key whose file was
+        scanned (or does not exist), an executable key"""
+        used = {(k.label, key) for k in self.keys for key in k.used}
+        stale = []
+        for k in self.keys:
+            scanned = self.scanned.get(k.directory.resolve(), set())
+            for key in k.keys:
+                filename = key.partition(":")[0]
+                if (k.label, key) in used:
+                    continue
+                if filename in scanned or not (k.directory / filename).exists():
+                    stale.append(f"{k.label}: {key}")
+        stale += [f"{label}: {key}" for label, key, ok in self.exe_keys if not ok]
+        if stale:
+            raise ValueError(
+                f"{CONFIG_FILENAME} references tests that were never found "
+                f"while scanning - {'; '.join(sorted(set(stale)))}"
+            )
+
+
+def _select_phases(jobs, config_path, phases):
+    """the jobs in `phases` (names, or 1-based indices) of `config_path`"""
+    listed = _phases_of(_read_config(config_path), str(config_path))
+    if not listed:
+        raise ValueError(f"phases {phases} asked for, {config_path} has none")
+    names = {_phase_name(p, i): i for i, p in enumerate(listed, 1)}
+    wanted = set()
+    for token in phases:
+        token = str(token).strip()
+        if token in names:
+            wanted.add(names[token])
+        elif token.isdigit() and 1 <= int(token) <= len(listed):
+            wanted.add(int(token))
+        else:
+            raise ValueError(
+                f"phase {token!r} not in {config_path}: {', '.join(names)}"
+            )
+
+    def selected(job):
+        phase = getattr(job, "phase", None)
+        return phase and phase[0][0] == str(config_path) and phase[0][1] in wanted
+
+    return [job for job in jobs if selected(job)]
 
 
 def load_config_tests(
@@ -630,23 +948,35 @@ def load_config_tests(
     python_flags=None,
     tags=None,
     granularity=None,
+    phases=None,
 ):
-    """Scan a file or directory for tests, honouring per-directory
-    `.phlop.exec.yaml` configs that fan a test out into tagged execution
-    variants with their own prefix/env/working_dir/cores/threads. Tests/files
-    not declared in a config (or with no config present at all) run once, as
-    normal.
+    """Scan a file or directory for tests, honouring `.phlop.exec.yaml` configs.
 
-    Tagged variants are opt-in: they only run when `tags` is given and
-    intersects with the variant's own tags. Untagged variants and undeclared
-    (default) tests are unaffected and always run, regardless of `tags` - this
-    keeps anything that needs e.g. mpirun or other unavailable/heavy resources
-    from running unless explicitly requested.
+    A config is a scope: `env prefix postfix tags cores threads working_dir
+    ignore_errors`, inherited by the scopes nested in it (see
+    phlop.testing.exec_scope for how), holding any mix of:
+      - python test keys `file.py[:Class[.method]]` of its own directory, and
+        executable globs (any other key), each with a list of variants (the
+        innermost scope, each a run) or a dict declaring fixtures
+      - `paths:` (`path:`): directories, config files, python test files
+        (globs too), relative to it, run as nested scopes
+      - `phases:`: scopes run one after the other, a failing one stopping the
+        rest unless `ignore_errors`; its other entries run before them
+    A directory's subdirectories are scanned in its scope, except those reached
+    through `paths:` (a directory or file reached twice runs once). A config
+    reached from itself through `paths:` is an error.
 
-    Every key declared in a directory's `.phlop.exec.yaml` must match a real
-    `file:Class(.method)` found while scanning that directory - a stale or
-    mistyped entry (wrong filename, missing `:`, renamed class/method) raises
-    a ValueError rather than silently doing nothing.
+    Tests/files not declared in a config (or with no config present at all)
+    run once, as normal. Tagged runs are opt-in: they only run when `tags` is
+    given and intersects with their tags. Untagged ones always run.
+
+    Every key must match: a python key one of the tests scanned (or name a file
+    not scanned, as when one file is given), an executable key an executable
+    file. A stale or mistyped entry raises a ValueError rather than silently
+    doing nothing.
+
+    `phases` (names, or 1-based indices) of the input directory's config: only
+    those run, not its unphased entries.
 
     With a coarser `granularity` than "method", tests sharing a class/file
     and the same declared variants run in one process per variant.
@@ -654,107 +984,21 @@ def load_config_tests(
     granularity = _check_granularity(granularity)
     tags = set(tags) if tags else None
     path = Path(input_path)
-    py_files = [path] if path.is_file() else sorted(path.glob("**/*.py"))
+    walk = _ConfigWalk(tags, granularity, test_cmd_pre, test_cmd_post, python_flags)
+    if path.is_file():
+        walk.directory(path.parent, {}, (), py_files=[path])
+    else:
+        walk.directory(path, {}, ())
+    walk.check_stale()
 
-    dir_configs = {}
-    used_keys = {}
+    jobs = walk.jobs
+    if phases:
+        root = path.parent if path.is_file() else path
+        jobs = _select_phases(jobs, root / CONFIG_FILENAME, phases)
 
-    def dir_config_for(directory):
-        directory = str(directory)
-        if directory not in dir_configs:
-            dir_configs[directory] = _load_dir_config(directory)
-            used_keys[directory] = set()
-        return dir_configs[directory]
-
-    loader = unittest.TestLoader()
     test_batches = {}
-
-    def _add(job):
+    for job in jobs:
         test_batches.setdefault(job.cores, []).append(job)
-
-    for py_file in py_files:
-        directory = str(py_file.parent)
-        dir_config = dir_config_for(directory)
-        classes = classes_in_file(py_file, unittest.TestCase)
-        all_methods = {c: _test_methods(loader, c) for c in classes}
-
-        variant_lists = {}  # id -> variants list from dir_config
-        entries = []
-        for test_class in classes:
-            for method in all_methods[test_class]:
-                variants = _variants_for(
-                    dir_config,
-                    py_file.name,
-                    test_class.__name__,
-                    method,
-                    used_keys[directory],
-                )
-                vkey = None
-                if variants:
-                    vkey = id(variants)
-                    variant_lists[vkey] = variants
-                fixtures = _fixtures_for(
-                    dir_config,
-                    py_file.name,
-                    test_class.__name__,
-                    method,
-                    used_keys[directory],
-                )
-                # tests grouped into one process share their fixtures
-                entries.append((test_class, method, (vkey, fixtures)))
-
-        used_paths = {}
-        for key, by_class in _group_tests(entries, granularity):
-            test_class = next(iter(by_class))
-            names = _test_names(by_class, all_methods)
-            test_names = _qualified_names(by_class)
-            base_cmd = python3_test_cmd(test_class.__module__, names, python_flags)
-            log_file_path = _unique_path(
-                _group_logfile(_LOG_DIR / ".phlop", by_class, granularity), used_paths
-            )
-            vkey, fixtures = key
-            variants = variant_lists.get(vkey)
-
-            if not variants:
-                cmd = f"{test_cmd_pre} {base_cmd} {test_cmd_post}".strip()
-                job = Job(
-                    cmd=cmd,
-                    log_file_path=log_file_path,
-                    cores=resolve_cores(cmd),
-                    test_names=test_names,
-                )
-                _add(_with_fixtures(job, fixtures))
-                continue
-
-            for index, variant in enumerate(variants):
-                variant_tags = set(variant.get("tags") or [])
-                if variant_tags and not (tags and (variant_tags & tags)):
-                    continue
-                _add(
-                    _variant_job(
-                        base_cmd,
-                        log_file_path,
-                        variant,
-                        index,
-                        test_cmd_pre,
-                        test_cmd_post,
-                        test_names,
-                        fixtures,
-                    )
-                )
-
-    stale = {
-        directory: sorted(set(config) - used_keys[directory])
-        for directory, config in dir_configs.items()
-        if set(config) - used_keys[directory]
-    }
-    if stale:
-        details = "; ".join(f"{d}: {keys}" for d, keys in stale.items())
-        raise ValueError(
-            f"{CONFIG_FILENAME} references tests that were never found "
-            f"while scanning - {details}"
-        )
-
     return [TestBatch(v, k) for k, v in test_batches.items()]
 
 

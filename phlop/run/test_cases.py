@@ -60,6 +60,10 @@ def cli_args_parser():
             "variants (tagged variants are skipped unless requested here); "
             "untagged/undeclared tests are unaffected and always run"
         ),
+        phases=(
+            "Comma-separated phases (names, or 1-based indices) of the input "
+            "directory's .phlop.exec.yaml to run, without its unphased entries"
+        ),
         verbose=(
             "With --print_only, print full per-test info (cores, tags, env, "
             "working_dir, log_file_path) instead of just the execution string"
@@ -103,6 +107,7 @@ def cli_args_parser():
         help=_help.no_phlop_exec_yaml,
     )
     parser.add_argument("--tags", default=None, help=_help.tags)
+    parser.add_argument("--phases", default=None, help=_help.phases)
     parser.add_argument(
         "-v", "--verbose", action="store_true", default=False, help=_help.verbose
     )
@@ -123,6 +128,8 @@ def verify_cli_args(cli_args):
 
 def get_test_cases(cli_args):
     tc.GRANULARITY = cli_args.granularity  # for paths without the parameter
+    if cli_args.phases and (cli_args.cmake or cli_args.no_phlop_exec_yaml):
+        raise ValueError("--phases needs .phlop.exec.yaml, not with --cmake")
     if cli_args.cmake:
         return tc.load_cmake_tests(
             cli_args.input, test_cmd_pre=cli_args.prefix, test_cmd_post=cli_args.postfix
@@ -135,6 +142,7 @@ def get_test_cases(cli_args):
             test_cmd_post=cli_args.postfix,
             tags=tags,
             granularity=cli_args.granularity,
+            phases=cli_args.phases.split(",") if cli_args.phases else None,
         )
     if os.path.isfile(cli_args.input):
         return [

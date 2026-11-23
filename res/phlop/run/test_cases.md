@@ -26,6 +26,7 @@ Invoked as `python3 -m phlop.run.test_cases [options]`.
 | `--logging` | `1` | `0`=off, `1`=on non-zero exit code, `2`=always. Logs go to `.phlop/<dir>/[mpirun_-n_<N>/]<file>/<Class>/<method>.stdout/.stderr` (a ctest entry run as-is: `.phlop/<working_dir>/[mpirun_-n_<N>/]<ctest name>`, entries running the same script there grouped as `<common start of their names>/<rest>`, e.g. `sample-data/1d-h5`); each `.stdout` starts with the exact command run. Setup and cleanup jobs of fixtures keep their logs only if they fail, unless `--logging 2`. |
 | `--no-phlop-exec-yaml` | `False` | Ignore any `.phlop.exec.yaml` configs found while scanning; just run discovered tests once each, with defaults. Has no effect together with `--cmake` (cmake discovery reads only fixtures from `.phlop.exec.yaml` - see below). |
 | `--tags` | `None` | Comma-separated tags to opt into running tagged `.phlop.exec.yaml` variants (tagged variants are otherwise skipped). Untagged/undeclared tests are unaffected and always run. |
+| `--phases` | `None` | Comma-separated phases (names, or 1-based indices) of the input directory's `.phlop.exec.yaml` to run; its unphased entries are skipped (see [Scopes, chaining and phases](#scopes-chaining-and-phases)). |
 
 ## Discovery modes
 
@@ -76,11 +77,16 @@ extra env/prefix/working_dir.
   its tags are opted into (or unconditionally, if untagged).
 - An empty list (`[]`) is equivalent to no entry: the test runs once, as
   normal.
+- Any key not naming a `.py` file is a glob of **executables** relative to
+  the yaml's directory (e.g. a gtest binary), with the same variants: one job
+  per executable file matched per variant, logged under
+  `.phlop/<path of the binary>_<variant tags or index>`.
 
 **Every key must reference something that actually exists.** After
 scanning a directory, `load_config_tests` raises `ValueError` if any
 declared key never matched a real `Class`/`Class.method` found in that
-directory - this catches typos, wrong separators (`.` instead of `:`),
+directory (or an executable key matched no executable file; keys of every
+chained file are checked) - this catches typos, wrong separators (`.` instead of `:`),
 missing `.py` extensions, and stale entries left over after a rename, rather
 than silently doing nothing.
 
@@ -99,6 +105,56 @@ Core-count resolution order (`resolve_cores`, `phlop/testing/test_cases.py`):
 `cores` (explicit) wins outright → otherwise `threads` × any detected
 `mpirun -n`/`-np`/`--np` rank count → otherwise an `OMP_NUM_THREADS` in
 `env` → otherwise defaults to `1`.
+
+### Scopes, chaining and phases
+
+A file's top level is a **scope**: `env prefix postfix tags cores threads
+working_dir ignore_errors` there apply to everything in it. Scopes nest - a
+subdirectory's file, a file reached through `paths:`, a phase, and finally a
+variant - each inheriting the one above, mkn style: an inner key replaces the
+outer one, `${key}` in it is the outer value.
+
+```yaml
+prefix: timeout 600
+env: {PHLOP_STALL_BUSY_TIMEOUT: 300}
+tags: [gpu]
+# ... in a nested scope (a phase, a subdirectory's yaml, a variant):
+prefix: ${prefix} mpirun -n 2   # timeout 600 mpirun -n 2
+env: {PATH: /opt/x/bin:${PATH}} # per variable; the process env if no outer one
+tags: ["${tags}", mpi]          # [gpu, mpi]
+```
+
+A scope also holds:
+
+- `paths:` (`path:` for one): directories, other yaml files, python test files
+  (globs too), relative to the yaml, run as scopes nested in this one. A
+  directory reached this way is not scanned again as a subdirectory; a
+  directory or file reached twice runs once; a file chaining back to itself is
+  an error.
+- `phases:` a list of scopes (optionally `name:`d) run one after the other:
+  each starts once the previous has finished. A failing phase stops the later
+  ones (their jobs fail unrun, like a failed fixture's), unless it has
+  `ignore_errors: true`. The scope's other entries (its own tests, its
+  directory's other python files and subdirectories, its executables) run
+  before the first phase. A python key inside a phase moves those tests into it.
+
+```yaml
+# tst/.phlop.exec.yaml
+env: {PHLOP_STALL_BUSY_TIMEOUT: 300}
+phases:
+  - name: core
+    "../bin/test_core/*": [{}]
+  - name: mpi
+    tags: [mpi]
+    "../bin/test_mpi/*":
+      - {prefix: "mpirun --oversubscribe -n 2"}
+      - {prefix: "mpirun --oversubscribe -n 8"}
+  - name: hdf5
+    ignore_errors: true
+    path: hdf5
+```
+
+`--phases mpi,hdf5` runs just those (in order); `-p` shows each job's phase.
 
 ### Example
 

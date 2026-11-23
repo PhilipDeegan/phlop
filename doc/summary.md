@@ -48,6 +48,11 @@ behaviour and the performance notes behind past changes.
   classes, and applies per-directory `.phlop.exec.yaml` variants
   (prefix/env/working_dir/cores/threads/tags) and fixtures (dict entries,
   or `provides`/`requires`/`cleans` on a variant). Stale yaml keys raise.
+  A yaml is a scope (`phlop/testing/exec_scope.py`: mkn-style nesting,
+  `${key}` = outer value) holding python keys, executable globs, `paths:`
+  (chained dirs/yamls/py files) and `phases:` (run in order via reserved
+  fixtures `phase <list>#<n>`, added in `phlop/testing/parallel_processor.py`
+  after filtering; `ignore_errors` cleans instead of requires). `--phases`.
 - Granularity (`GRANULARITY`, CLI `-g`): `method` (default) runs one process
   per test method. `class`/`file` group methods that share the same yaml
   variants and fixtures into one `python3 -um module Class ClassB.test_x`
