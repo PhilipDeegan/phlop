@@ -49,6 +49,69 @@ class NestTest(unittest.TestCase):
         self.assertEqual(nest({}, {"requires": ["a"]}), {"requires": ["a"]})
 
 
+class BracesTest(unittest.TestCase):
+    def test_expanded(self):
+        self.assertEqual(
+            tc._braces("b/{x,y}/t{1,2}"), ["b/x/t1", "b/x/t2", "b/y/t1", "b/y/t2"]
+        )
+        self.assertEqual(tc._braces("a{b,{c,d}}e"), ["abe", "ace", "ade"])
+        self.assertEqual(tc._braces("{,x}y"), ["y", "xy"])
+
+    def test_no_alternatives_kept(self):
+        self.assertEqual(tc._braces("a{b}c"), ["a{b}c"])
+        self.assertEqual(tc._braces("a{b"), ["a{b"])
+
+
+class LogSubpathTest(unittest.TestCase):
+    def test_outside_log_dir_relative_to_cwd(self):
+        with mock.patch("phlop.testing.test_cases._LOG_DIR", Path("/nowhere")):
+            self.assertEqual(tc._log_subpath("bin/x"), Path("bin/x"))
+
+
+class StallEnvTest(unittest.TestCase):
+    def test_job_env_first(self):
+        job = Job(cmd="x", env={"PHLOP_STALL_TIMEOUT": "60"})
+        self.assertEqual(job._stall("PHLOP_STALL_TIMEOUT", 3600), 60)
+        self.assertEqual(job._stall("PHLOP_STALL_BUSY_TIMEOUT", 7), 7)
+
+    def test_job_killed_by_its_env_timeout(self):
+        job = Job(cmd="sleep 30", env={"PHLOP_STALL_TIMEOUT": "1"})
+        with tempfile.TemporaryDirectory() as tmp:
+            job.log_file_path = os.path.join(tmp, "job")
+            with self.assertRaisesRegex(ProcessorFailure, "killed"):
+                job()  # idle: killed with or without psutil
+
+
+class MpirunCoresTest(unittest.TestCase):
+    def test_options_before_n(self):
+        for cmd, n in (
+            ("mpirun --oversubscribe -n 8 ./x", 8),
+            ("mpirun --bind-to none -np 4 ./x", 4),
+            ("mpirun --np=3 ./x", 3),
+            ("mpirun -n 2 ./x -n 5", 2),  # the program's own -n is not mpirun's
+            ("./x -n 5", 1),
+            ("mpiexec -n 6 ./x", 6),
+            ("mpiexec --bind-to core -np 4 ./x", 4),
+            ("srun -n 3 ./x", 3),
+            ("srun --exclusive --ntasks=5 ./x", 5),
+            ("srun -n7 ./x", 7),
+        ):
+            self.assertEqual(tc.resolve_cores(cmd), n, cmd)
+        self.assertEqual(tc._launch_dir("mpirun --oversubscribe -n 8 x"), "mpirun_n_8")
+        self.assertEqual(tc._launch_dir("mpiexec -n 2 x"), "mpiexec_n_2")
+        self.assertEqual(tc._launch_dir("srun --ntasks 4 x"), "srun_n_4")
+
+
+class EnvStringsTest(unittest.TestCase):
+    def test_yaml_scalars(self):
+        env = Job(cmd="x", env={"A": 60, "B": 1.5, "C": True, "D": "s"}).env
+        self.assertEqual(env, {"A": "60", "B": "1.5", "C": "true", "D": "s"})
+
+    def test_other_values_name_the_key(self):
+        with self.assertRaisesRegex(TypeError, "BAD"):
+            Job(cmd="x", env={"BAD": [1]})
+
+
 def _job(cmd, phase):
     job = Job(cmd=cmd)
     job.phase = phase
@@ -281,6 +344,29 @@ class ConfigChainTest(unittest.TestCase):
         self.config("test_sub.py:Nope: [{}]\n", "sub")
         with self.assertRaisesRegex(ValueError, "Nope"):
             self.jobs()
+
+    def test_executable_paths(self):
+        self.config(
+            "sub/../bin/{one,two}.sh:\n"
+            "  - {tags: [mpi], prefix: mpirun -n 2}\n"
+            "  - {tags: [mpi], prefix: mpirun -n 8}\n"
+            "  - {}\n"
+            "  - {}\n"
+        )
+        jobs = self.by_name(tags=["mpi"])
+        one = jobs["one.sh"]
+        self.assertEqual(len(jobs["two.sh"]), 4)
+        self.assertEqual(one[2].cmd, str(self.dir / "bin" / "one.sh"))  # no sub/..
+        logs = [Path(j.log_file_path).name for j in one]
+        self.assertEqual(
+            logs,
+            [
+                "one.sh_mpi-mpirun_n_2",
+                "one.sh_mpi-mpirun_n_8",
+                "one.sh_2",
+                "one.sh_3",
+            ],
+        )
 
     def test_missing_path(self):
         self.config("path: nowhere\n")

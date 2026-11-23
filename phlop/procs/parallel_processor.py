@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import contextlib
 import copy
 import inspect
 import json
 import os
 import queue as queue_module
 import shlex
+import shutil
+import tempfile
 import threading
 import time
 from collections import deque
@@ -52,6 +53,23 @@ class LoggingMode(Enum):
     ALWAYS = 2
 
 
+def _env_strings(env, cmd):
+    """env values as strings, yaml's `60` or `true` (as `true`) too: a process
+    environment holds only strings"""
+    out = {}
+    for name, value in (env or {}).items():
+        if isinstance(value, bool):
+            value = "true" if value else "false"
+        elif isinstance(value, (int, float)):
+            value = str(value)
+        elif not isinstance(value, str):
+            raise TypeError(
+                f"env {name}={value!r} of {cmd!r}: values must be strings or numbers"
+            )
+        out[str(name)] = value
+    return out
+
+
 @dataclass
 class Job:
     cmd: str = ""
@@ -70,6 +88,7 @@ class Job:
     cleans: set = field(default_factory=set)
 
     def __post_init__(self):
+        self.env = _env_strings(self.env, self.cmd)
         self.provides, self.requires = set(self.provides), set(self.requires)
         self.cleans = set(self.cleans)
         self.cmd = self.cmd.strip()
@@ -80,7 +99,37 @@ class Job:
         if self.cores < 1:
             raise ValueError(f"Job.cores must be >= 1, got {self.cores}")
 
+    def _stall(self, name, default):
+        """a stall timeout from the job's own env (a .phlop.exec.yaml `env:`),
+        else phlop's"""
+        value = (self.env or {}).get(name)
+        return default if value is None else float(value)
+
+    def _final_log_path(self):
+        """where the logs belong: a relative path is under working_dir, as
+        RunTimer has it"""
+        path = self.log_file_path
+        if path and self.working_dir and not os.path.isabs(path):
+            return os.path.join(self.working_dir, path)
+        return path
+
     def __call__(self, on_popen=None):
+        if not self.log_file_path or self.logging >= LoggingMode.ALWAYS.value:
+            return self._run(self.log_file_path, on_popen)
+        # logs only on failure: written while running (the stall check watches
+        #  them) in a directory of its own, moved to log_file_path if it fails
+        tmp = tempfile.mkdtemp(prefix="phlop-log-")
+        passed = False
+        try:
+            self._run(os.path.join(tmp, "job"), on_popen)
+            passed = True
+            return self
+        finally:
+            if not passed:  # failed, stalled, cancelled
+                _move_logs(os.path.join(tmp, "job"), self._final_log_path())
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def _run(self, log_file_path, on_popen):
         from phlop.proc import run
 
         self.run = run(
@@ -91,10 +140,13 @@ class Job:
             print_cmd=False,
             env=self.env,
             working_dir=self.working_dir,
-            log_file_path=self.log_file_path,
+            log_file_path=log_file_path,
             logging=self.logging,
-            stall_timeout=STALL_TIMEOUT or None,
-            stall_busy_timeout=STALL_BUSY_TIMEOUT or float("inf"),
+            stall_timeout=self._stall("PHLOP_STALL_TIMEOUT", STALL_TIMEOUT) or None,
+            stall_busy_timeout=self._stall(
+                "PHLOP_STALL_BUSY_TIMEOUT", STALL_BUSY_TIMEOUT
+            )
+            or float("inf"),
             on_popen=on_popen,
             # the exact command: its launcher's args (mpirun --bind-to ...) are
             #  not in the log path
@@ -104,20 +156,15 @@ class Job:
             raise ProcessorFailure(f"{self.run.stalled}, killed")
         if self.run.exitcode != 0:
             raise ProcessorFailure(f"exited {self.run.exitcode}")
-        if self.logging < LoggingMode.ALWAYS.value and (self.provides or self.cleans):
-            _remove_logs(self.run.log_paths)  # a fixture's log only on failure
         return self
 
 
-def _remove_logs(paths):
-    """the files (written while running, for the stall monitor), then their
-    directory if that leaves it empty"""
-    for path in paths:
-        with contextlib.suppress(OSError):
-            os.remove(path)
-    for parent in {os.path.dirname(path) for path in paths}:
-        with contextlib.suppress(OSError):
-            os.rmdir(parent)  # only if empty
+def _move_logs(src, dst):
+    """`src`.stdout/.stderr to `dst`.stdout/.stderr, its directory made"""
+    for suffix in (".stdout", ".stderr"):
+        if os.path.exists(src + suffix):
+            os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
+            shutil.move(src + suffix, dst + suffix)
 
 
 @dataclass

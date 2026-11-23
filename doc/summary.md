@@ -76,7 +76,7 @@ behaviour and the performance notes behind past changes.
 - Log files go to `$PHLOP_LOG_DIR/.phlop/<path>/<file>/<Class>/<method>`,
   shortened for coarser granularity; a ctest entry run as-is to
   `.phlop/<working_dir>/<ctest name>`, or `<common name start>/<rest>` for
-  entries running the same script there (`_ctest_log_paths`). Under `mpirun_-n_<N>/` after `<path>`
+  entries running the same script there (`_ctest_log_paths`). Under `mpirun_n_<N>/` after `<path>`
   when launched so (`_launch_dir`). A job's `.stdout` starts with its exact
   command (`RunTimer(log_header=)`), for the launcher args not in the path.
   Fixture setups/cleanups remove theirs on success below `--logging 2`.

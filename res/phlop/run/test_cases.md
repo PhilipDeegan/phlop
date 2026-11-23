@@ -23,7 +23,7 @@ Invoked as `python3 -m phlop.run.test_cases [options]`.
 | `-r`, `--regex` | `None` | Filter out tests whose execution string doesn't match this regex (falls back to plain substring search if the pattern is invalid). The setup jobs of fixtures the kept tests require are kept too (transitively), as are the cleanups of the fixtures they use, like `ctest -R`. |
 | `-R`, `--reverse` | `False` | Reverse batch order - higher core-count batches preferred/run first. |
 | `--rerun` | `1` | Number of times to re-execute each discovered test (duplicates the job, suffixing `log_file_path` with `_<i>`). |
-| `--logging` | `1` | `0`=off, `1`=on non-zero exit code, `2`=always. Logs go to `.phlop/<dir>/[mpirun_-n_<N>/]<file>/<Class>/<method>.stdout/.stderr` (a ctest entry run as-is: `.phlop/<working_dir>/[mpirun_-n_<N>/]<ctest name>`, entries running the same script there grouped as `<common start of their names>/<rest>`, e.g. `sample-data/1d-h5`); each `.stdout` starts with the exact command run. Setup and cleanup jobs of fixtures keep their logs only if they fail, unless `--logging 2`. |
+| `--logging` | `1` | `0`=off, `1`=on non-zero exit code, `2`=always. Logs go to `.phlop/<dir>/[<mpirun|mpiexec|srun>_n_<N>/]<file>/<Class>/<method>.stdout/.stderr` (a ctest entry run as-is: `.phlop/<working_dir>/[<mpirun|mpiexec|srun>_n_<N>/]<ctest name>`, entries running the same script there grouped as `<common start of their names>/<rest>`, e.g. `sample-data/1d-h5`); each `.stdout` starts with the exact command run. With `1` a job's logs are written to a temporary directory while it runs (the stall check watches them) and moved under `.phlop/` only if it fails: nothing is written there for a job that passes. |
 | `--no-phlop-exec-yaml` | `False` | Ignore any `.phlop.exec.yaml` configs found while scanning; just run discovered tests once each, with defaults. Has no effect together with `--cmake` (cmake discovery reads only fixtures from `.phlop.exec.yaml` - see below). |
 | `--tags` | `None` | Comma-separated tags to opt into running tagged `.phlop.exec.yaml` variants (tagged variants are otherwise skipped). Untagged/undeclared tests are unaffected and always run. |
 | `--phases` | `None` | Comma-separated phases (names, or 1-based indices) of the input directory's `.phlop.exec.yaml` to run; its unphased entries are skipped (see [Scopes, chaining and phases](#scopes-chaining-and-phases)). |
@@ -78,9 +78,10 @@ extra env/prefix/working_dir.
 - An empty list (`[]`) is equivalent to no entry: the test runs once, as
   normal.
 - Any key not naming a `.py` file is a glob of **executables** relative to
-  the yaml's directory (e.g. a gtest binary), with the same variants: one job
-  per executable file matched per variant, logged under
-  `.phlop/<path of the binary>_<variant tags or index>`.
+  the yaml's directory (e.g. a gtest binary; `{a,b}` alternatives expanded),
+  with the same variants: one job per executable file matched per variant,
+  logged under `.phlop/<path of the binary>_<variant>`, `<variant>` being its
+  own tags and launch (`mpi-mpirun_n_8`), else its index.
 
 **Every key must reference something that actually exists.** After
 scanning a directory, `load_config_tests` raises `ValueError` if any
@@ -99,11 +100,11 @@ than silently doing nothing.
 | `env` | dict | Extra environment variables for this run (merged into the job's env). |
 | `working_dir` | str | Working directory for this run. |
 | `cores` | int | Explicit total core count. Always wins outright over everything below. |
-| `threads` | int | Threads-per-rank for parallelism phlop can't introspect from the command itself (e.g. a `std::thread`/thread-pool size passed via `env`/args). Multiplies with any `mpirun` rank count detected from `prefix` (`mpirun -n 2` + `threads: 4` ⇒ 8 total cores); on its own (no mpirun) it's just the total core count directly. |
+| `threads` | int | Threads-per-rank for parallelism phlop can't introspect from the command itself (e.g. a `std::thread`/thread-pool size passed via `env`/args). Multiplies with any `mpirun`/`mpiexec`/`srun` rank count detected from `prefix` (`mpirun -n 2` + `threads: 4` ⇒ 8 total cores); on its own (no mpirun) it's just the total core count directly. |
 
 Core-count resolution order (`resolve_cores`, `phlop/testing/test_cases.py`):
 `cores` (explicit) wins outright → otherwise `threads` × any detected
-`mpirun -n`/`-np`/`--np` rank count → otherwise an `OMP_NUM_THREADS` in
+`mpirun`/`mpiexec`/`srun` rank count (`-n`/`-np`/`--np`/`--ntasks`, other options before it) → otherwise an `OMP_NUM_THREADS` in
 `env` → otherwise defaults to `1`.
 
 ### Scopes, chaining and phases
@@ -127,7 +128,7 @@ tags: ["${tags}", mpi]          # [gpu, mpi]
 A scope also holds:
 
 - `paths:` (`path:` for one): directories, other yaml files, python test files
-  (globs too), relative to the yaml, run as scopes nested in this one. A
+  (globs and `{a,b}` too), relative to the yaml, run as scopes nested in this one. A
   directory reached this way is not scanned again as a subdirectory; a
   directory or file reached twice runs once; a file chaining back to itself is
   an error.
@@ -178,6 +179,22 @@ test_test_cases.py:ExecConfigDemoTest.test_scaled:
   thread_pool,high_load` would opt in the second and third.
 - Any other test in `test_test_cases.py`, or any test in a different file in
   the same directory, is unaffected and runs once, as normal.
+
+## Stalled jobs, logs and CI
+
+- `PHLOP_STALL_TIMEOUT` (default 3600, 0=off): seconds without a job's log
+  files changing before it is killed as stalled; with psutil only while it is
+  also idle. `PHLOP_STALL_BUSY_TIMEOUT` (default 14400, 0=off): with psutil, a
+  busy job without output is killed after this anyway. Both are read from a
+  job's own env first, so a `.phlop.exec.yaml` `env:` sets them per scope or
+  variant, else from phlop's environment.
+- psutil is optional (`pip install phlop[psutil]`), and a CI running MPI jobs
+  wants it: without it a stalled `mpirun`'s ranks are not killed with it, and
+  the stall check cannot tell a busy job from a hung one.
+- Logs go under `$PHLOP_LOG_DIR/.phlop/` (default the current directory), at
+  each file's path relative to `PHLOP_LOG_DIR`, else to the current directory,
+  else its absolute path. Upload that directory from CI, e.g.
+  `actions/upload-artifact` with `if: always()`.
 
 ## cmake/ctest discovery
 

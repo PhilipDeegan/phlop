@@ -408,7 +408,7 @@ class LoadConfigTestsTest(unittest.TestCase):
         self.assertEqual(large.cores, 8)
         self.assertIn("mpirun -n 2", large.cmd)
         self.assertEqual(large.working_dir, "tests/_phlop/run")
-        self.assertTrue(large.log_file_path.endswith("_large-high_load"))
+        self.assertTrue(large.log_file_path.endswith("_large-high_load-mpirun_n_2"))
 
     def test_tags_opts_into_thread_pool_variant(self):
         jobs = self._by_cmd_substr(self._jobs(tags=["thread_pool"]), "test_scaled")
@@ -773,6 +773,42 @@ def _has_psutil():
         return True
     except ImportError:
         return False
+
+
+class PrintOnlyTest(unittest.TestCase):
+    def test_writes_no_log_directories(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = dict(os.environ, PHLOP_LOG_DIR=tmp, PYTHONPATH=os.getcwd())
+            subprocess.run(
+                [sys.executable, "-m", "phlop.run.test_cases"]
+                + ["-i", "tests/_phlop/run", "-p"],
+                env=env,
+                check=True,
+                capture_output=True,
+            )
+            self.assertEqual(os.listdir(tmp), [])
+
+
+class LoggingOneTest(unittest.TestCase):
+    """--logging 1: logs only of the jobs that failed"""
+
+    def run_cli(self, tmp, fail):
+        env = dict(os.environ, PHLOP_LOG_DIR=tmp, PYTHONPATH=os.getcwd())
+        env["PHLOP_FORCE_TEST_CASE_FAILURE"] = "1" if fail else "0"
+        cmd = [sys.executable, "-m", "phlop.run.test_cases", "-c", "2"]
+        cmd += ["-i", "tests/_phlop/run/test_test_cases.py", "-r", "test_fails"]
+        return subprocess.run(cmd, env=env, capture_output=True, check=False)
+
+    def test_passing_leaves_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self.run_cli(tmp, fail=False).returncode, 0)
+            self.assertEqual(os.listdir(tmp), [])
+
+    def test_failing_keeps_its_logs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertNotEqual(self.run_cli(tmp, fail=True).returncode, 0)
+            logs = sorted(p.name for p in Path(tmp).rglob("*") if p.is_file())
+            self.assertEqual(logs, ["test_fails.stderr", "test_fails.stdout"])
 
 
 if __name__ == "__main__":

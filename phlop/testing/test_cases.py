@@ -1,6 +1,7 @@
 # phlop/testing/test_cases.py
 
 import glob as globmod
+import itertools
 import os
 import re
 import shlex
@@ -31,12 +32,15 @@ GRANULARITY = "method"
 
 
 def _log_subpath(path):
-    """`path` relative to _LOG_DIR, or the full path without its root if outside"""
+    """`path` relative to _LOG_DIR, else to the current directory, else the
+    full path without its root"""
     path = Path(path).resolve()
-    try:
-        return path.relative_to(_LOG_DIR.resolve())
-    except ValueError:
-        return path.relative_to(path.anchor)
+    for base in (_LOG_DIR, Path.cwd()):
+        try:
+            return path.relative_to(base.resolve())
+        except ValueError:
+            pass
+    return path.relative_to(path.anchor)
 
 
 @dataclass
@@ -173,10 +177,11 @@ def _unique_path(path, used):
 
 
 def _launch_dir(cmd):
-    """a log path part for how a command is launched, `mpirun_-n_2`, None if
+    """a log path part for how a command is launched, `mpirun_n_2` (or
+    `mpiexec_n_2`, `srun_n_2`), None if
     plainly: the same test run with different rank counts logs apart"""
     m = _MPIRUN_CORES_RE.search(cmd)
-    return f"mpirun_-n_{m.group(1)}" if m else None
+    return f"{m.group(1)}_n_{m.group(2)}" if m else None
 
 
 def _group_logfile(log_file_path, by_class, granularity, launch=None):
@@ -316,12 +321,17 @@ def load_py_test_cases_from_cmake(ctest_test):
         )
 
 
-_MPIRUN_CORES_RE = re.compile(r"mpirun\s+(?:-n|-np|--np)\s+(\d+)")
+# the rank count of an mpirun, mpiexec or srun: its first -n/-np/--np/--ntasks
+#  (`-n 8`, `-n8`, `--ntasks=8`), other options before it (`mpirun
+#  --oversubscribe --bind-to none -n 8`): (launcher, ranks)
+_MPIRUN_CORES_RE = re.compile(
+    r"\b(mpirun|mpiexec|srun)(?:\s+\S+)*?\s+(?:-n|-np|--np|--ntasks)(?:\s+|=)?(\d+)\b"
+)
 
 
 def mpirun_cores(cmd, env):
     m = _MPIRUN_CORES_RE.search(cmd)
-    return int(m.group(1)) if m else None
+    return int(m.group(2)) if m else None
 
 
 def omp_num_threads_cores(cmd, env):
@@ -589,6 +599,47 @@ def _with_fixtures(job, fixtures):
     return job
 
 
+def _braces(pattern):
+    """`pattern` with its `{a,b}` groups expanded (nested too), as a shell
+    does: python's glob does not"""
+    depth, start = 0, None
+    for i, c in enumerate(pattern):
+        if c == "{":
+            if depth == 0:
+                start, commas = i, []
+            depth += 1
+        elif c == "," and depth == 1:
+            commas.append(i)
+        elif c == "}" and depth:
+            depth -= 1
+            if depth == 0 and commas:
+                cuts = [start, *commas, i]
+                rest = _braces(pattern[i + 1 :])
+                return [
+                    pattern[:start] + alt + tail
+                    for a, b in itertools.pairwise(cuts)
+                    for alt in _braces(pattern[a + 1 : b])
+                    for tail in rest
+                ]
+            if depth == 0:  # `{x}`: no alternatives, kept as is
+                return [pattern[: i + 1] + tail for tail in _braces(pattern[i + 1 :])]
+    return [pattern]
+
+
+def _glob(directory, pattern):
+    """paths matching `pattern` (relative to `directory`), `{a,b}` expanded,
+    normalised (`tst/../bin` -> `bin`), sorted, each once"""
+    if not os.path.isabs(pattern):
+        pattern = os.path.join(directory, pattern)
+    found = set()
+    for each in _braces(os.path.normpath(pattern)):
+        if re.search(r"[*?[]", each):
+            found.update(globmod.glob(each))
+        elif os.path.exists(each):
+            found.add(each)
+    return sorted(os.path.normpath(p) for p in found)
+
+
 def _is_py_key(key):
     """`file.py[:Class[.method]]`, else an executable glob"""
     return key.partition(":")[0].endswith(".py")
@@ -648,6 +699,15 @@ def _entry(value, where):
     if not isinstance(value, list) or not all(isinstance(v, dict) for v in value):
         raise ValueError(f"{CONFIG_FILENAME} {where}: must be a list of variants")
     return value or None, (frozenset(), frozenset(), frozenset())
+
+
+def _variant_suffix(variant, scope, base_cmd, index):
+    """a variant's log name: its own tags and how it is launched
+    (`mpi-mpirun_n_8`), its index if neither"""
+    own = list(scope.get("tags") or []) if "tags" in variant else []
+    launch = _launch_dir(f"{scope.get('prefix') or ''} {base_cmd}")
+    parts = [str(t) for t in own] + ([launch] if launch else [])
+    return "-".join(parts) if parts else index
 
 
 def _scoped_job(base_cmd, log_file_path, scope, test_cmd_pre, test_cmd_post, phase):
@@ -777,11 +837,7 @@ class _ConfigWalk:
 
     def _path(self, directory, entry, scope, phase, label):
         """a `paths:` entry: directories, config files, python test files"""
-        pattern = entry if os.path.isabs(entry) else str(directory / entry)
-        if re.search(r"[*?[]", pattern):
-            matches = sorted(globmod.glob(pattern))
-        else:
-            matches = [pattern] if os.path.exists(pattern) else []
+        matches = _glob(directory, entry)
         if not matches:
             raise ValueError(f"{label}: paths entry {entry!r} matches nothing")
         py_files = {}
@@ -798,12 +854,11 @@ class _ConfigWalk:
             self.directory(parent, scope, phase, py_files=files)
 
     def _executables(self, directory, key, value, scope, phase, label):
-        pattern = key if os.path.isabs(key) else str(directory / key)
-        exes = sorted(
+        exes = [
             p
-            for p in globmod.glob(pattern)
+            for p in _glob(directory, key)
             if os.path.isfile(p) and os.access(p, os.X_OK)
-        )
+        ]
         self.exe_keys.append((label, key, bool(exes)))
         variants, fixtures = _entry(value, key)
         for exe in exes:
@@ -880,8 +935,7 @@ class _ConfigWalk:
                 continue
             path = log
             if log and index is not None:
-                own = "tags" in variant and run_scope.get("tags")
-                suffix = "-".join(map(str, own)) if own else index
+                suffix = _variant_suffix(variant, run_scope, base(run_scope), index)
                 path = _unique_path(f"{log}_{suffix}", self.used_logs)
             job = _scoped_job(
                 base(run_scope),

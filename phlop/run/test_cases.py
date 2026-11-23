@@ -278,7 +278,9 @@ def main():
 
         if cli_args.logging == 0:
             test_batches = noLog(test_batches)
-        else:
+        elif cli_args.logging == 2 and not cli_args.print_only:
+            # every log written in place; with 1 only a failure's, its
+            #  directory made then. A dry run writes nothing
             test_batches = log(test_batches)
 
         test_batches = duplicate_reruns(cli_args, test_batches)

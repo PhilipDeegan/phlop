@@ -281,14 +281,37 @@ class LogHeaderTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             log = str(Path(d) / "job")
             cmd = py("print('out'); import sys; print('err', file=sys.stderr)")
-            Job(cmd=cmd, log_file_path=log)()
+            Job(cmd=cmd, log_file_path=log, logging=2)()  # kept though it passed
             self.assertEqual(Path(f"{log}.stdout").read_text(), f"{cmd}\nout\n")
             self.assertEqual(Path(f"{log}.stderr").read_text(), "err\n")
 
 
+class LogOnFailureTest(unittest.TestCase):
+    """logging 1: a job's logs are written elsewhere while it runs, moved to
+    its log path only if it fails"""
+
+    def test_nothing_in_place_while_running(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "sub" / "job"
+            Job(cmd=f"sh -c 'test ! -e {log}.stdout'", log_file_path=str(log))()
+            self.assertFalse((Path(d) / "sub").exists())
+
+    def test_failure_moved_in_place(self):
+        with tempfile.TemporaryDirectory() as d:
+            job = Job(
+                cmd="sh -c 'echo out; exit 3'",
+                log_file_path="sub/job",  # relative: under working_dir
+                working_dir=d,
+            )
+            with self.assertRaisesRegex(ProcessorFailure, "exited 3"):
+                job()
+            stdout = Path(d) / "sub" / "job.stdout"
+            self.assertEqual(stdout.read_text(), f"{job.cmd}\nout\n")
+            self.assertTrue((Path(d) / "sub" / "job.stderr").exists())
+
+
 class FixtureLogTest(unittest.TestCase):
-    """a setup or cleanup job keeps its log only if it failed (or --logging 2),
-    a test always"""
+    """a job keeps its log only if it failed (or --logging 2)"""
 
     def logs(self, logging=1, **kw):
         with tempfile.TemporaryDirectory() as d:
@@ -311,11 +334,8 @@ class FixtureLogTest(unittest.TestCase):
             run(list(jobs.values()))
             return sorted(p.name for p in Path(d).glob("sub/*"))
 
-    def test_only_failed_fixtures_keep_logs(self):
-        self.assertEqual(
-            self.logs(),
-            ["gen_bad.stderr", "gen_bad.stdout", "test.stderr", "test.stdout"],
-        )
+    def test_only_failed_jobs_keep_logs(self):
+        self.assertEqual(self.logs(), ["gen_bad.stderr", "gen_bad.stdout"])
 
     def test_logging_always_keeps_them(self):
         self.assertEqual(len(self.logs(logging=2)), 8)
@@ -393,8 +413,8 @@ class CTestTest(unittest.TestCase):
         self.assertEqual(
             logs,
             [
-                f"{x}/mpirun_-n_3/sample-data-mpi3/h5",
-                f"{x}/mpirun_-n_3/sample-data-mpi3/vtk",
+                f"{x}/mpirun_n_3/sample-data-mpi3/h5",
+                f"{x}/mpirun_n_3/sample-data-mpi3/vtk",
                 f"{x}/other-1d",
                 f"{x}/sample-data-1d",
                 f"{x}/sample-data/1d-h5",
@@ -424,7 +444,7 @@ class CTestTest(unittest.TestCase):
             logs,
             [
                 f".phlop/tests/_phlop/run/{method}",
-                f".phlop/tests/_phlop/run/mpirun_-n_2/{method}",
+                f".phlop/tests/_phlop/run/mpirun_n_2/{method}",
             ],
         )
 
