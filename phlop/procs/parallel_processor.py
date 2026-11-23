@@ -119,14 +119,16 @@ class Job:
         # logs only on failure: written while running (the stall check watches
         #  them) in a directory of its own, moved to log_file_path if it fails
         tmp = tempfile.mkdtemp(prefix="phlop-log-")
+        self.active_log_path = os.path.join(tmp, "job")  # for _print_jobs
         passed = False
         try:
-            self._run(os.path.join(tmp, "job"), on_popen)
+            self._run(self.active_log_path, on_popen)
             passed = True
             return self
         finally:
             if not passed:  # failed, stalled, cancelled
-                _move_logs(os.path.join(tmp, "job"), self._final_log_path())
+                _move_logs(self.active_log_path, self._final_log_path())
+            self.active_log_path = None
             shutil.rmtree(tmp, ignore_errors=True)
 
     def _run(self, log_file_path, on_popen):
@@ -208,9 +210,11 @@ def _print_jobs(jobs, verbose):
     print("pending jobs start")
     for job in jobs:
         print("cmd:", job.id)
-        if job.log_file_path:
+        # while running, logging 1 writes elsewhere, see Job.__call__
+        log = getattr(job, "active_log_path", None) or job.log_file_path
+        if log:
             for suffix in (".stdout", ".stderr"):
-                lines = read_last_lines_of(f"{job.log_file_path}{suffix}")
+                lines = read_last_lines_of(f"{log}{suffix}")
                 if lines:
                     print(f"  {suffix[1:]}:", "\n".join(lines))
     print("pending jobs end")
@@ -484,6 +488,11 @@ def process(
         for t, _ in running.values():
             t.join(timeout=max(0, deadline - time.monotonic()))
         _signal_all(procs, "kill")
+        # killed: their threads finish (a failed job's logs moved in place),
+        #  each bounded, a descendant outside the tree may hold its pipes
+        deadline = time.monotonic() + CANCEL_GRACE
+        for t, _ in running.values():
+            t.join(timeout=max(0, deadline - time.monotonic()))
 
     def run():
         nonlocal cores_avail, last_output_time, last_no_output_print

@@ -129,7 +129,9 @@ def verify_cli_args(cli_args):
 def get_test_cases(cli_args):
     tc.GRANULARITY = cli_args.granularity  # for paths without the parameter
     if cli_args.phases and (cli_args.cmake or cli_args.no_phlop_exec_yaml):
-        raise ValueError("--phases needs .phlop.exec.yaml, not with --cmake")
+        raise ValueError(
+            "--phases needs .phlop.exec.yaml: not with --cmake or --no-phlop-exec-yaml"
+        )
     if cli_args.cmake:
         return tc.load_cmake_tests(
             cli_args.input, test_cmd_pre=cli_args.prefix, test_cmd_post=cli_args.postfix
@@ -264,6 +266,8 @@ def main():
     try:
         if cli_args.dump and cli_args.load:
             raise ValueError("Cannot use 'dump' and 'load' options simultaneously.")
+        if cli_args.phases and cli_args.load:
+            raise ValueError("--phases selects while discovering, not with --load")
 
         if cli_args.dump:
             dump_batches(cli_args)

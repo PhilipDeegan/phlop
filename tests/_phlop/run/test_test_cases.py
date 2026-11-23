@@ -811,5 +811,15 @@ class LoggingOneTest(unittest.TestCase):
             self.assertEqual(logs, ["test_fails.stderr", "test_fails.stdout"])
 
 
+class PhasesWithLoadTest(unittest.TestCase):
+    def test_rejected(self):
+        env = dict(os.environ, PYTHONPATH=os.getcwd())
+        cmd = [sys.executable, "-m", "phlop.run.test_cases", "-i", "tests"]
+        cmd += ["--load", "nothing*", "--phases", "1"]
+        p = subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("not with --load", p.stdout + p.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

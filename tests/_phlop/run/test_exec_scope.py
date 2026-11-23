@@ -68,6 +68,23 @@ class LogSubpathTest(unittest.TestCase):
             self.assertEqual(tc._log_subpath("bin/x"), Path("bin/x"))
 
 
+class ActiveLogTest(unittest.TestCase):
+    def test_running_job_tail_from_its_temp_log(self):
+        import contextlib
+        import io
+
+        from phlop.procs.parallel_processor import _print_jobs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            job = Job(cmd="x", log_file_path=os.path.join(tmp, "final"))
+            job.active_log_path = os.path.join(tmp, "active")
+            Path(f"{job.active_log_path}.stdout").write_text("live line\n")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                _print_jobs([job], verbose=True)
+            self.assertIn("live line", out.getvalue())
+
+
 class StallEnvTest(unittest.TestCase):
     def test_job_env_first(self):
         job = Job(cmd="x", env={"PHLOP_STALL_TIMEOUT": "60"})
@@ -367,6 +384,32 @@ class ConfigChainTest(unittest.TestCase):
                 "one.sh_3",
             ],
         )
+
+    def test_own_python_file_in_paths(self):
+        self.config("phases:\n  - name: late\n    path: test_top.py\n")
+        (top,) = self.by_name()["TestTop.test_a"]  # no cycle, runs once
+        self.assertEqual(phase_label(top.phase), "late")
+
+    def test_braces_before_normalising(self):
+        self.config("'{sub/../bin,bin}/one.sh': [{}]\n")
+        self.assertEqual(len(self.by_name()["one.sh"]), 1)
+
+    def test_bare_executable_not_from_path(self):
+        (self.dir / "bin" / ".phlop.exec.yaml").write_text("one.sh: [{}]\n")
+        here = os.getcwd()
+        os.chdir(self.dir / "bin")
+        self.addCleanup(os.chdir, here)
+        (job,) = [j for b in tc.load_config_tests(".") for j in b.tests]
+        self.assertEqual(job.cmd, "./one.sh")
+
+    def test_ranks_from_launcher_only(self):
+        self.config(
+            "bin/one.sh:\n"
+            "  - {prefix: mpirun --oversubscribe, postfix: -n 5}\n"
+            "  - {prefix: mpirun --oversubscribe -n 2, postfix: -n 5}\n"
+        )
+        cores = [j.cores for j in self.jobs() if "one.sh -n 5" in j.cmd]
+        self.assertEqual(cores, [1, 2])
 
     def test_missing_path(self):
         self.config("path: nowhere\n")

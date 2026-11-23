@@ -629,10 +629,11 @@ def _braces(pattern):
 def _glob(directory, pattern):
     """paths matching `pattern` (relative to `directory`), `{a,b}` expanded,
     normalised (`tst/../bin` -> `bin`), sorted, each once"""
-    if not os.path.isabs(pattern):
-        pattern = os.path.join(directory, pattern)
     found = set()
-    for each in _braces(os.path.normpath(pattern)):
+    for each in _braces(pattern):  # before normpath: `{sub/..,x}` is one part
+        if not os.path.isabs(each):
+            each = os.path.join(directory, each)
+        each = os.path.normpath(each)
         if re.search(r"[*?[]", each):
             found.update(globmod.glob(each))
         elif os.path.exists(each):
@@ -701,11 +702,16 @@ def _entry(value, where):
     return value or None, (frozenset(), frozenset(), frozenset())
 
 
-def _variant_suffix(variant, scope, base_cmd, index):
+def _launcher(scope, test_cmd_pre=""):
+    """what a command is launched with: --prefix and the scope's prefix"""
+    return " ".join(p for p in (test_cmd_pre, scope.get("prefix")) if p)
+
+
+def _variant_suffix(variant, scope, index):
     """a variant's log name: its own tags and how it is launched
     (`mpi-mpirun_n_8`), its index if neither"""
     own = list(scope.get("tags") or []) if "tags" in variant else []
-    launch = _launch_dir(f"{scope.get('prefix') or ''} {base_cmd}")
+    launch = _launch_dir(_launcher(scope))
     parts = [str(t) for t in own] + ([launch] if launch else [])
     return "-".join(parts) if parts else index
 
@@ -721,8 +727,12 @@ def _scoped_job(base_cmd, log_file_path, scope, test_cmd_pre, test_cmd_post, pha
         env=env,
         working_dir=scope.get("working_dir"),
         log_file_path=log_file_path,
+        # ranks from the launcher, not the program's own args (`./x -n 5`)
         cores=resolve_cores(
-            cmd, env, explicit=scope.get("cores"), threads=scope.get("threads")
+            _launcher(scope, test_cmd_pre),
+            env,
+            explicit=scope.get("cores"),
+            threads=scope.get("threads"),
         ),
         meta=tags or None,
     )
@@ -788,6 +798,14 @@ class _ConfigWalk:
         config_path = Path(config_path or directory / CONFIG_FILENAME)
         whole = py_files is None
         resolved = config_path.resolve()
+        if resolved in self.loading and not whole:
+            # a python file of a config being read, in its own `paths:`: runs
+            #  in the scope naming it (a `file.py:` key there gives it variants)
+            label = str(config_path)
+            self._python(
+                directory, py_files, [_Keys(directory, label, {}, scope, phase)]
+            )
+            return
         if resolved in self.loading:
             chain = [*self.loading[self.loading.index(resolved) :], resolved]
             raise ValueError(
@@ -864,10 +882,11 @@ class _ConfigWalk:
         for exe in exes:
 
             def base(scope, exe=exe):
-                # elsewhere than here, a relative path would not be found
-                return shlex.quote(
-                    os.path.abspath(exe) if scope.get("working_dir") else exe
-                )
+                # elsewhere than here, a relative path would not be found; a
+                #  bare name would be looked up in PATH
+                if scope.get("working_dir"):
+                    return shlex.quote(os.path.abspath(exe))
+                return shlex.quote(exe if os.path.dirname(exe) else f"./{exe}")
 
             log = _LOG_DIR / ".phlop" / _log_subpath(exe)
             log = _unique_path(str(log), self.used_logs)
@@ -935,7 +954,7 @@ class _ConfigWalk:
                 continue
             path = log
             if log and index is not None:
-                suffix = _variant_suffix(variant, run_scope, base(run_scope), index)
+                suffix = _variant_suffix(variant, run_scope, index)
                 path = _unique_path(f"{log}_{suffix}", self.used_logs)
             job = _scoped_job(
                 base(run_scope),
